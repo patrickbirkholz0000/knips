@@ -23,6 +23,13 @@ import ScreenCaptureKit
         }
         // SwiftUI und das Einstellungsfenster vorwärmen — das erste Öffnen kostet sonst ~0,4 s.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { SettingsWindowController.prewarm() }
+        // Test-Sandbox: Befehle per Distributed Notification (URL-Aufrufe landen sonst bei der installierten App).
+        if Paths.testRoot != nil {
+            DistributedNotificationCenter.default().addObserver(forName: Notification.Name("de.birkgroup.knips.test"), object: nil, queue: .main) { note in
+                guard let command = note.object as? String, let url = URL(string: "knips://\(command)") else { return }
+                MainActor.assumeIsolated { (NSApp.delegate as? AppDelegate)?.application(NSApp, open: [url]) }
+            }
+        }
         Log.info("Knips gestartet")
     }
 
@@ -38,6 +45,7 @@ import ScreenCaptureKit
             case "record": CaptureCoordinator.shared.perform(.toggleRecording)
             case "pin": CaptureCoordinator.shared.perform(.pinClipboard)
             case "settings": SettingsWindowController.show()
+            case "menu": StatusBarController.shared?.togglePanel()
             case "debug-sample" where Paths.testRoot != nil:
                 if let item = try? CaptureStore.shared.addImage(SelfTest.sampleImage(), scale: 2) {
                     QuickAccessController.shared.show(item, on: NSScreen.main ?? NSScreen.withMouse)

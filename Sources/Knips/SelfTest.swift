@@ -24,6 +24,9 @@ import Vision
             case "live":
                 NSApp.setActivationPolicy(.accessory)
                 try runAsync { try await live(out) }
+            case "menu":
+                NSApp.setActivationPolicy(.accessory)
+                try runAsync { try await menu(out) }
             case "settings":
                 NSApp.setActivationPolicy(.accessory)
                 try runAsync { try await settings(out, panes: args.count > 2 ? args[2].split(separator: ",").compactMap { SettingsPane(rawValue: String($0)) } : SettingsPane.allCases) }
@@ -365,6 +368,29 @@ import Vision
         let image = try await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: scw), configuration: config)
         try write(image, url)
         print("   Fensterposition: \(window.frame.origin)")
+    }
+
+    static func menu(_ out: URL) async throws {
+        let store = CaptureStore.shared
+        for (w, h) in [(1400, 880), (900, 1200), (1600, 700)] {
+            let item = try store.addImage(sampleImage(width: w, height: h), scale: 2)
+            await store.waitUntilWritten(item.id)
+        }
+        let model = MenuPanelModel()
+        model.recent = Array(store.recent.prefix(4))
+        let view = MenuHostingView(rootView: MenuPanelView(model: model, actions: MenuActions(
+            capture: { _ in }, openImage: {}, openFolder: {}, openRecent: { _ in }, settings: {}, quit: {})))
+        view.model = model
+        let size = view.fittingSize
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: .borderless, backing: .buffered, defer: false)
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.contentView = view
+        try await windowShot(window, out.appendingPathComponent("menu.png"))
+        model.hovered = "full"
+        try await windowShot(window, out.appendingPathComponent("menu-hover.png"))
+        print("   Panelgröße \(Int(size.width))×\(Int(size.height)), Hover-Flächen: \(model.frames.keys.sorted().joined(separator: ", "))")
+        window.orderOut(nil)
     }
 
     static func settings(_ out: URL, panes: [SettingsPane]) async throws {

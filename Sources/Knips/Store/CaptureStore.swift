@@ -130,10 +130,18 @@ struct VideoDocument: Codable {
         pendingCount[id] = n > 0 ? n : nil
     }
 
+    /// Ein 4K-Original belegt ~37 MB. Nach einer Minute zählt der Zeitvorteil nicht mehr —
+    /// dann lädt der Editor in ~50 ms von der Platte.
+    private var evictWork: DispatchWorkItem?
+
     private func remember(_ image: CGImage, for id: UUID) {
         memory.removeAll { $0.0 == id }
         memory.insert((id, image), at: 0)
         if memory.count > 4 { memory.removeLast() }
+        evictWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.memory.removeAll() }
+        evictWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60, execute: work)
     }
 
     func addVideo(from tempURL: URL, scale: CGFloat) async throws -> CaptureItem {

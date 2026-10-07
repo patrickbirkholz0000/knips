@@ -196,9 +196,13 @@ enum Clipboard {
         copy(ImagePromise(image), fileURL: fileURL)
     }
 
+    /// Tests in der Sandbox dürfen die echte Zwischenablage nie anfassen.
+    private static var disabled: Bool { Paths.testRoot != nil }
+
     /// Sofort zurück: die Daten werden erst beim Einfügen geliefert. PNG und TIFF gibt es immer
     /// (manche Apps lesen nur diese), bei JPEG-Ausgabe zusätzlich und bevorzugt JPEG.
     static func copy(_ promise: ImagePromise, fileURL: URL?) {
+        guard !disabled else { return }
         let pb = NSPasteboard.general
         pb.clearContents()
         let item = NSPasteboardItem()
@@ -224,7 +228,15 @@ enum Clipboard {
         copy(ImagePromise(image: image, data: data, format: format), fileURL: url)
     }
 
+    static func copy(text: String) {
+        guard !disabled else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+    }
+
     static func copy(fileURL: URL) {
+        guard !disabled else { return }
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.writeObjects([fileURL as NSURL])

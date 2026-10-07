@@ -600,7 +600,13 @@ import Vision
         await store.waitUntilWritten(item.id)
         let saved = store.item(with: item.id)!
         print("Editor gespeichert: \(describe(saved.fileURL)) · Original \(describe(store.originalURL(for: saved))) · Dokument \(store.loadImageDocument(for: saved).annotations.count) Balken")
-        if let img = ImageIOHelper.load(saved.fileURL) { try write(img, out.appendingPathComponent("ausgabe-editor.png")) }
+        if let img = ImageIOHelper.load(saved.fileURL) {
+            try write(img, out.appendingPathComponent("ausgabe-editor.png"))
+            // Gleicher Weg wie „Text kopieren“ auf der Karte: Erkennung auf der zensierten Datei.
+            let text = TextLayout.plainText(TextLayout.lines(in: img))
+            print("Text kopieren (Karte):\n" + text.split(separator: "\n").map { "     | " + $0 }.joined(separator: "\n"))
+            print(text.contains("@") ? "FEHLER: E-Mail trotz Balken im Text" : "   ✓ keine E-Mail im kopierten Text")
+        }
     }
 
     // MARK: Echte Aufnahme (nur Metadaten, keine Bildinhalte)

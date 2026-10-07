@@ -61,6 +61,7 @@ import SwiftUI
             save: { [weak self] in self?.save(close: false) },
             done: { [weak self] in self?.save(close: true) },
             copy: { [weak self] in self?.copyImage() },
+            copyText: { [weak self] in self?.copyText() },
             pin: { [weak self] in self?.pin() },
             reveal: { [weak self] in self?.reveal() }
         )
@@ -112,6 +113,21 @@ import SwiftUI
         model.showToast("In die Zwischenablage kopiert")
     }
 
+    func copyText() {
+        canvas.commitPendingEdits()
+        Task {
+            await model.waitForText()
+            let text = model.visibleText()
+            if text.isEmpty {
+                model.showToast("Kein Text gefunden")
+            } else {
+                Clipboard.copy(text: text)
+                let lines = text.split(separator: "\n").count
+                model.showToast("Text kopiert · \(lines) Zeile\(lines == 1 ? "" : "n")")
+            }
+        }
+    }
+
     func pin() {
         canvas.commitPendingEdits()
         let full = model.fullResolutionPromise()
@@ -147,6 +163,7 @@ struct EditorActions {
     var save: () -> Void
     var done: () -> Void
     var copy: () -> Void
+    var copyText: () -> Void
     var pin: () -> Void
     var reveal: () -> Void
 }
@@ -356,6 +373,7 @@ struct EditorToolbar: View {
                 iconButton("arrow.uturn.backward", help: "Widerrufen (⌘Z)", enabled: model.canUndo) { model.undo() }
                 iconButton("arrow.uturn.forward", help: "Wiederholen (⇧⌘Z)", enabled: model.canRedo) { model.redo() }
             }
+            iconButton("text.viewfinder", help: "Text kopieren — zensierte Wörter werden zu █", enabled: true, action: actions.copyText)
             iconButton("pin", help: "Anpinnen (schwebt über allen Fenstern)", enabled: true, action: actions.pin)
             Button { actions.copy() } label: { Label("Kopieren", systemImage: "doc.on.doc") }
                 .buttonStyle(ToolbarButtonStyle(prominent: false))

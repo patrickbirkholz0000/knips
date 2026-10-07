@@ -48,6 +48,7 @@ import UniformTypeIdentifiers
                 }
             },
             reveal: { item in NSWorkspace.shared.activateFileViewerSelecting([item.fileURL]) },
+            copyText: { item in Self.copyText(of: item) },
             delete: { [weak self] item in
                 self?.dismiss(item.id)
                 CaptureStore.shared.delete(item)
@@ -55,6 +56,25 @@ import UniformTypeIdentifiers
             close: { [weak self] item in self?.dismiss(item.id) },
             closeAll: { [weak self] in self?.dismissAll() }
         )
+    }
+
+    /// Texterkennung auf der gespeicherten (bereits zensierten) Datei — Zensiertes kann so nie mitkommen.
+    static func copyText(of item: CaptureItem) {
+        Task {
+            await CaptureStore.shared.waitUntilWritten(item.id)
+            let url = item.fileURL
+            let text = await Task.detached(priority: .userInitiated) { () -> String in
+                guard let image = ImageIOHelper.load(url) else { return "" }
+                return TextLayout.plainText(TextLayout.lines(in: image))
+            }.value
+            if text.isEmpty {
+                HUD.show("Kein Text gefunden", symbol: "text.magnifyingglass")
+            } else {
+                Clipboard.copy(text: text)
+                let lines = text.split(separator: "\n").count
+                HUD.show("Text kopiert · \(lines) Zeile\(lines == 1 ? "" : "n")", symbol: "text.viewfinder")
+            }
+        }
     }
 
     static func edit(_ item: CaptureItem, tool: EditorTool?) {
@@ -175,6 +195,7 @@ struct QuickAccessActions {
     var redact: (CaptureItem) -> Void
     var pin: (CaptureItem) -> Void
     var reveal: (CaptureItem) -> Void
+    var copyText: (CaptureItem) -> Void
     var delete: (CaptureItem) -> Void
     var close: (CaptureItem) -> Void
     var closeAll: () -> Void
@@ -359,6 +380,9 @@ struct QuickAccessCard: View {
                 Spacer()
                 HStack {
                     corner("folder", help: "Im Finder zeigen") { actions.reveal(item) }
+                    if item.kind == .image {
+                        corner("text.viewfinder", help: "Text kopieren (ohne zensierte Stellen)") { actions.copyText(item) }
+                    }
                     Spacer()
                     corner("trash", help: "Löschen") { actions.delete(item) }
                 }

@@ -44,12 +44,16 @@ import ScreenCaptureKit
             case "fullscreen": CaptureCoordinator.shared.perform(.captureFullscreen)
             case "record": CaptureCoordinator.shared.perform(.toggleRecording)
             case "pin": CaptureCoordinator.shared.perform(.pinClipboard)
+            case "last": CaptureCoordinator.shared.perform(.captureLastArea)
+            case "text": CaptureCoordinator.shared.perform(.captureText)
             case "settings": SettingsWindowController.show()
             case "menu": StatusBarController.shared?.togglePanel()
             case "debug-sample" where Paths.testRoot != nil:
                 if let item = try? CaptureStore.shared.addImage(SelfTest.sampleImage(), scale: 2) {
                     QuickAccessController.shared.show(item, on: NSScreen.main ?? NSScreen.withMouse)
                 }
+            case "debug-lastarea" where Paths.testRoot != nil:
+                CaptureCoordinator.shared.debugSetLastArea(CGRect(x: 100, y: 100, width: 400, height: 300))
             case "debug-snapshot" where Paths.testRoot != nil:
                 Task { await Self.snapshotOwnWindows() }
             default: Log.info("Unbekannter Befehl: \(url.absoluteString)")

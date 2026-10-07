@@ -268,6 +268,8 @@ struct MenuPanelView: View {
             tile("full", "Bildschirm", "display", .captureFullscreen) { actions.capture(.captureFullscreen) }
             tile("record", recording ? "Stoppen" : "Video", recording ? "stop.circle.fill" : "record.circle",
                  .toggleRecording, tint: recording ? .red : nil) { actions.capture(.toggleRecording) }
+            tile("last", "Letzter Bereich", "arrow.counterclockwise", .captureLastArea) { actions.capture(.captureLastArea) }
+            tile("text", "Text erfassen", "text.viewfinder", .captureText) { actions.capture(.captureText) }
             tile("pin", "Anpinnen", "pin", .pinClipboard) { actions.capture(.pinClipboard) }
             tile("open", "Bild öffnen", "photo.on.rectangle", nil, action: actions.openImage)
             tile("folder", "Ordner", "folder", nil, action: actions.openFolder)

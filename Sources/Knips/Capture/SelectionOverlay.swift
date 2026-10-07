@@ -1,7 +1,7 @@
 import AppKit
 import QuartzCore
 
-enum SelectionPurpose { case screenshot, recording }
+enum SelectionPurpose { case screenshot, recording, text }
 
 enum SelectionResult {
     /// Rechteck in Punkten relativ zum Bildschirm, Ursprung unten links.
@@ -408,7 +408,11 @@ final class SelectionView: NSView {
     private func updateHint(visible: Bool) {
         hintBG.isHidden = !visible
         guard visible else { return }
-        let prefix = overlay.purpose == .recording ? "Aufnahme  ·  " : ""
+        let prefix = switch overlay.purpose {
+        case .recording: "Aufnahme  ·  "
+        case .text: "Text erfassen  ·  "
+        case .screenshot: ""
+        }
         let text = overlay.windowMode
             ? prefix + "Fenster anklicken  ·  Leertaste: Bereich  ·  ⏎ ganzer Bildschirm  ·  Esc: Abbrechen"
             : prefix + "Bereich ziehen  ·  Leertaste: Fenster  ·  ⏎ ganzer Bildschirm  ·  Esc: Abbrechen"

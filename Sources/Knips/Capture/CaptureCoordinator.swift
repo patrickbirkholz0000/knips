@@ -5,12 +5,16 @@ import ScreenCaptureKit
     static let shared = CaptureCoordinator()
 
     private var overlay: SelectionOverlay?
+    /// Zuletzt aufgenommener Bereich (Bildschirm + Rechteck in Punkten) für „Letzten Bereich wiederholen“.
+    private var lastArea: (displayID: CGDirectDisplayID, rect: CGRect)?
 
     func perform(_ action: HotkeyAction) {
         switch action {
         case .captureArea: captureInteractive(windowMode: false)
         case .captureWindow: captureInteractive(windowMode: true)
         case .captureFullscreen: captureFullscreen()
+        case .captureLastArea: captureLastArea()
+        case .captureText: captureText()
         case .toggleRecording: toggleRecording()
         case .pinClipboard: pinClipboard()
         }
@@ -91,6 +95,7 @@ import ScreenCaptureKit
                 finish(image: f.image, scale: f.scale, screen: screen)
             case .area(let screen, let rect):
                 guard let f = still(for: screen), let image = ScreenCapture.crop(f, localRect: rect) else { return }
+                lastArea = (screen.displayID, rect)
                 finish(image: image, scale: f.scale, screen: screen)
             case .window(let w, let screen):
                 guard let f = still(for: screen) else { return }
@@ -101,6 +106,60 @@ import ScreenCaptureKit
                     let local = w.frame.offsetBy(dx: -screen.frame.minX, dy: -screen.frame.minY)
                         .intersection(CGRect(origin: .zero, size: screen.frame.size))
                     if let image = ScreenCapture.crop(f, localRect: local) { finish(image: image, scale: f.scale, screen: screen) }
+                }
+            }
+        }
+    }
+
+    /// Nur Test-Sandbox: letzten Bereich setzen, ohne Maus.
+    func debugSetLastArea(_ rect: CGRect) {
+        guard Paths.testRoot != nil, let screen = NSScreen.main else { return }
+        lastArea = (screen.displayID, rect)
+    }
+
+    /// Gleicher Ausschnitt wie beim letzten Mal — ohne Overlay.
+    func captureLastArea() {
+        guard overlay == nil, ensurePermission() else { return }
+        guard let last = lastArea, let screen = NSScreen.screens.first(where: { $0.displayID == last.displayID }) else {
+            HUD.show("Noch kein Bereich aufgenommen", symbol: "rectangle.dashed")
+            captureInteractive(windowMode: false)
+            return
+        }
+        Task {
+            do {
+                let content = try await ScreenCapture.content()
+                guard let frozen = try await ScreenCapture.freeze([screen], content: content).first,
+                      let image = ScreenCapture.crop(frozen, localRect: last.rect) else { return }
+                Sounds.playShutter()
+                finish(image: image, scale: frozen.scale, screen: screen)
+            } catch {
+                report(error)
+            }
+        }
+    }
+
+    /// Bereich ziehen → erkannter Text in die Zwischenablage, keine Datei.
+    func captureText() {
+        presentOverlay(purpose: .text, windowMode: false) { result, freeze in
+            Task {
+                guard let frozen = try? await freeze.value else { return }
+                let image: CGImage?
+                switch result {
+                case .cancelled: return
+                case .area(let s, let r): image = frozen.screens.first { $0.screen == s }.flatMap { ScreenCapture.crop($0, localRect: r) }
+                case .fullScreen(let s): image = frozen.screens.first { $0.screen == s }?.image
+                case .window(let w, let s):
+                    let local = w.frame.offsetBy(dx: -s.frame.minX, dy: -s.frame.minY).intersection(CGRect(origin: .zero, size: s.frame.size))
+                    image = frozen.screens.first { $0.screen == s }.flatMap { ScreenCapture.crop($0, localRect: local) }
+                }
+                guard let image else { return }
+                let text = await Task.detached(priority: .userInitiated) { TextLayout.plainText(TextLayout.lines(in: image)) }.value
+                if text.isEmpty {
+                    HUD.show("Kein Text gefunden", symbol: "text.magnifyingglass")
+                } else {
+                    Clipboard.copy(text: text)
+                    let lines = text.split(separator: "\n").count
+                    HUD.show("Text kopiert · \(lines) Zeile\(lines == 1 ? "" : "n")", symbol: "text.viewfinder")
                 }
             }
         }

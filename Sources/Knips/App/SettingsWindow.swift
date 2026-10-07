@@ -289,7 +289,7 @@ private struct ShortcutsPane: View {
     @State private var conflictTick = 0
 
     private let groups: [(String, [HotkeyAction])] = [
-        ("Bildschirmfotos", [.captureArea, .captureWindow, .captureFullscreen]),
+        ("Bildschirmfotos", [.captureArea, .captureWindow, .captureFullscreen, .captureLastArea, .captureText]),
         ("Bildschirmaufnahme", [.toggleRecording]),
         ("Sonstiges", [.pinClipboard]),
     ]

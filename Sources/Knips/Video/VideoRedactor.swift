@@ -126,17 +126,31 @@ enum VideoRedactor {
         guard let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.gif.identifier as CFString, count, nil) else { throw ExportError.gif }
         CGImageDestinationSetProperties(dest, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
         let delay = 1.0 / Double(fps)
-        let frameProps = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: delay, kCGImagePropertyGIFUnclampedDelayTime: delay]] as CFDictionary
+        func props(_ d: Double) -> CFDictionary {
+            [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: d, kCGImagePropertyGIFUnclampedDelayTime: d]] as CFDictionary
+        }
+        // Unveränderte Bilder (Bildschirmaufnahmen stehen oft still) nicht wiederholen,
+        // sondern die Anzeigedauer des vorigen Bildes verlängern.
+        var pending: (image: CGImage, signature: ExactSignature, duration: Double)?
         var size = CGSize.zero
+        var written = 0
         for i in 0..<count {
             try Task.checkCancellation()
             let t = CMTime(seconds: start + Double(i) * delay, preferredTimescale: 600)
             let image = try await generator.image(at: t).image
             size = CGSize(width: image.width, height: image.height)
-            CGImageDestinationAddImage(dest, image, frameProps)
+            let signature = ExactSignature(image)
+            if let p = pending, p.signature.matches(signature) {
+                pending?.duration += delay
+            } else {
+                if let p = pending { CGImageDestinationAddImage(dest, p.image, props(p.duration)); written += 1 }
+                pending = (image, signature, delay)
+            }
             progress(Double(i + 1) / Double(count))
         }
+        if let p = pending { CGImageDestinationAddImage(dest, p.image, props(p.duration)); written += 1 }
         guard CGImageDestinationFinalize(dest) else { throw ExportError.gif }
+        Log.info("GIF: \(written) von \(count) Bildern geschrieben")
         return size
     }
 
@@ -240,5 +254,28 @@ struct FrameSignature {
         var diff = 0
         for i in pixels.indices { diff += abs(Int(pixels[i]) - Int(other.pixels[i])) }
         return Double(diff) / Double(pixels.count) < 1.5
+    }
+}
+
+/// Vergleich auf 160×90 Graustufen: Kompressionsrauschen bleibt unter 24 Helligkeitsstufen, ein
+/// bewegter Mauszeiger oder ein getipptes Zeichen liegt deutlich darüber und gilt als Änderung.
+struct ExactSignature {
+    let pixels: [UInt8]
+
+    init(_ image: CGImage) {
+        let w = 160, h = 90
+        var buffer = [UInt8](repeating: 0, count: w * h)
+        if let ctx = CGContext(data: &buffer, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                               space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) {
+            ctx.interpolationQuality = .low
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        }
+        pixels = buffer
+    }
+
+    func matches(_ other: ExactSignature) -> Bool {
+        guard pixels.count == other.pixels.count else { return false }
+        for i in pixels.indices where abs(Int(pixels[i]) - Int(other.pixels[i])) > 24 { return false }
+        return true
     }
 }

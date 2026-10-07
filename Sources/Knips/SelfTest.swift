@@ -276,7 +276,8 @@ import Vision
 
     // MARK: Video
 
-    static func makeSampleVideo(_ url: URL, seconds: Int = 3, fps: Int = 30, hevc: Bool = false) async throws -> CGRect {
+    /// `movingFrames`: ab diesem Bild steht das Video still (wie eine ruhige Bildschirmaufnahme).
+    static func makeSampleVideo(_ url: URL, seconds: Int = 3, fps: Int = 30, hevc: Bool = false, movingFrames: Int? = nil) async throws -> CGRect {
         try? FileManager.default.removeItem(at: url)
         let w = 1280, h = 720
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
@@ -302,9 +303,10 @@ import Vision
             NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
             ctx.setFillColor(CGColor(srgbRed: 0.95, green: 0.95, blue: 0.97, alpha: 1))
             ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            let f = min(i, movingFrames ?? i)
             ctx.setFillColor(NSColor.systemBlue.cgColor)
-            ctx.fill(CGRect(x: 100 + i * 8, y: 520, width: 120, height: 80))
-            NSAttributedString(string: "Frame \(i)", attributes: [.font: NSFont.systemFont(ofSize: 32, weight: .bold)]).draw(at: CGPoint(x: 120, y: 120))
+            ctx.fill(CGRect(x: 100 + f * 8, y: 520, width: 120, height: 80))
+            NSAttributedString(string: "Frame \(f)", attributes: [.font: NSFont.systemFont(ofSize: 32, weight: .bold)]).draw(at: CGPoint(x: 120, y: 120))
             NSAttributedString(string: "Mail: max.muster@example.org", attributes: [.font: NSFont.systemFont(ofSize: 34)]).draw(at: CGPoint(x: 124, y: 304))
             NSGraphicsContext.restoreGraphicsState()
             CVPixelBufferUnlockBaseAddress(buffer, [])
@@ -333,6 +335,32 @@ import Vision
         // Exportzeit 1,3 s = Quellzeit 1,5 s (zensiert), Exportzeit 0,1 s = Quelle 0,3 s (noch nicht zensiert)
         try write(try await gen.image(at: CMTime(seconds: 1.3, preferredTimescale: 600)).image, out.appendingPathComponent("video-frame-zensiert.png"))
         try write(try await gen.image(at: CMTime(seconds: 0.1, preferredTimescale: 600)).image, out.appendingPathComponent("video-frame-vorher.png"))
+
+        // Ruhiges Video: 1 s Bewegung, 3 s Stillstand → wenige GIF-Bilder
+        let calm = out.appendingPathComponent("video-ruhig.mp4")
+        _ = try await makeSampleVideo(calm, seconds: 4, movingFrames: 30)
+        let calmGIF = out.appendingPathComponent("video-ruhig.gif")
+        let calmAsset = AVURLAsset(url: calm)
+        _ = try await VideoRedactor.exportGIF(asset: calmAsset, state: RedactionState(scale: 1),
+                                              range: CMTimeRange(start: .zero, duration: try await calmAsset.load(.duration)),
+                                              fps: 10, width: 640, to: calmGIF) { _ in }
+        let calmSrc = CGImageSourceCreateWithURL(calmGIF as CFURL, nil)!
+        let calmFrames = CGImageSourceGetCount(calmSrc)
+        let total = (0..<calmFrames).reduce(0.0) { sum, i in
+            let p = CGImageSourceCopyPropertiesAtIndex(calmSrc, i, nil) as? [String: Any]
+            let g = p?[kCGImagePropertyGIFDictionary as String] as? [String: Any]
+            return sum + ((g?[kCGImagePropertyGIFUnclampedDelayTime as String] as? Double) ?? 0)
+        }
+        let calmKB = ((try? FileManager.default.attributesOfItem(atPath: calmGIF.path)[.size] as? Int) ?? 0) / 1024
+        print("Ruhiges GIF: \(calmFrames) statt 40 Bilder, Gesamtdauer \(String(format: "%.1f", total)) s, \(calmKB) KB")
+        // Kleine Änderung (12×18 px „Mauszeiger“ auf 1280 px Breite) muss erkannt werden
+        let base = sampleImage(width: 1280, height: 720, scale: 1)
+        let ctx = CGContext(data: nil, width: 1280, height: 720, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue)!
+        ctx.draw(base, in: CGRect(x: 0, y: 0, width: 1280, height: 720))
+        ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+        ctx.fill(CGRect(x: 900, y: 200, width: 12, height: 18))
+        print("Kleiner Mauszeiger erkannt: \(!ExactSignature(base).matches(ExactSignature(ctx.makeImage()!)))")
 
         let gif = out.appendingPathComponent("video.gif")
         let size = try await VideoRedactor.exportGIF(asset: asset, state: state, range: range, fps: 10, width: 640, to: gif) { _ in }

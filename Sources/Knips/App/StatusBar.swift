@@ -22,6 +22,7 @@ import Combine
             .sink { [weak self] _ in self?.refreshRecordingState() }
             .store(in: &cancellables)
         AppSettings.shared.$hotkeys
+            .combineLatest(AppSettings.shared.$disabledHotkeys)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.refreshMenu() }
             .store(in: &cancellables)
@@ -68,7 +69,7 @@ import Combine
 
     func refreshMenu() {
         menu.removeAllItems()
-        let keys = AppSettings.shared.hotkeys
+        let keys = AppSettings.shared.activeHotkeys
         func add(_ title: String, _ symbol: String, action: Selector, combo: KeyCombo? = nil) {
             let mi = NSMenuItem(title: title, action: action, keyEquivalent: combo?.menuKeyEquivalent ?? "")
             if let combo { mi.keyEquivalentModifierMask = combo.cocoaModifiers }

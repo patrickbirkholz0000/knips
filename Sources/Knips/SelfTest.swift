@@ -23,6 +23,9 @@ import SwiftUI
             case "live":
                 NSApp.setActivationPolicy(.accessory)
                 try runAsync { try await live(out) }
+            case "settings":
+                NSApp.setActivationPolicy(.accessory)
+                try runAsync { try await settings(out, panes: args.count > 2 ? args[2].split(separator: ",").compactMap { SettingsPane(rawValue: String($0)) } : SettingsPane.allCases) }
             case "video": try runAsync { try await video(out) }
             case "capture": try runAsync { try await capture() }
             case "record": try runAsync { try await record(out, seconds: Double(args.count > 2 ? args[2] : "3") ?? 3) }
@@ -207,12 +210,6 @@ import SwiftUI
         panelWindow.contentView = backdrop
         try snapshot(backdrop, out.appendingPathComponent("ui-karten.png"))
 
-        // Einstellungen
-        let settingsHost = NSHostingView(rootView: SettingsView(settings: AppSettings.shared))
-        settingsHost.frame = NSRect(x: 0, y: 0, width: 560, height: 470)
-        let settingsWindow = NSWindow(contentRect: settingsHost.frame, styleMask: [.titled], backing: .buffered, defer: false)
-        settingsWindow.contentView = settingsHost
-        try snapshot(settingsHost, out.appendingPathComponent("ui-einstellungen.png"))
     }
 
     static func selection(_ out: URL) throws {
@@ -339,6 +336,21 @@ import SwiftUI
         let image = try await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: scw), configuration: config)
         try write(image, url)
         print("   Fensterposition: \(window.frame.origin)")
+    }
+
+    static func settings(_ out: URL, panes: [SettingsPane]) async throws {
+        let controller = SettingsWindowController()
+        let window = controller.window!
+        for pane in panes {
+            SettingsNavigation.shared.pane = pane
+            try await windowShot(window, out.appendingPathComponent("einstellungen-\(pane.rawValue).png"))
+            if pane == .shortcuts {
+                HotkeyRecorderState.shared.recording = .captureArea
+                try await windowShot(window, out.appendingPathComponent("einstellungen-shortcuts-eingabe.png"))
+                HotkeyRecorderState.shared.recording = nil
+            }
+        }
+        window.orderOut(nil)
     }
 
     static func live(_ out: URL) async throws {

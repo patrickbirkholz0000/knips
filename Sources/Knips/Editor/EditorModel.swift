@@ -267,8 +267,9 @@ enum EditorTool: String, CaseIterable, Identifiable {
         let image = base
         let style = redactStyle
         let scale = scale
+        let kinds = AppSettings.shared.autoRedactKinds
         Task {
-            let findings = await SensitiveDetector.detect(in: image)
+            let findings = await SensitiveDetector.detect(in: image, kinds: kinds)
             busy = nil
             let existing = annotations.filter { $0.kind == .redact }.map(\.rect)
             let fresh = findings.filter { f in !existing.contains { $0.intersection(f.rect).area > f.rect.area * 0.6 } }

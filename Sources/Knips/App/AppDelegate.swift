@@ -11,7 +11,7 @@ import ScreenCaptureKit
         _ = QuickAccessController.shared
 
         HotkeyManager.shared.onAction = { action in CaptureCoordinator.shared.perform(action) }
-        HotkeyManager.shared.apply(AppSettings.shared.hotkeys)
+        HotkeyManager.shared.apply(AppSettings.shared.activeHotkeys)
 
         if UserDefaults.standard.object(forKey: "didFirstLaunch") == nil {
             UserDefaults.standard.set(true, forKey: "didFirstLaunch")

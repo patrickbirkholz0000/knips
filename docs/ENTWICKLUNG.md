@@ -27,6 +27,7 @@ nach jedem Build neu erteilt werden.
 | `detect` | Auto-Zensur (Vision + Muster) am Testbild |
 | `ui` / `selection` | Karten, Einstellungen, Auswahl-Overlay offscreen |
 | `live` | Bild- und Video-Editor als echtes Fenster, 1 pt in der Bildschirmecke, per SCK fotografiert |
+| `settings [bereich,…]` | Einstellungsfenster (Stil Systemeinstellungen) je Bereich, inkl. Kürzel-Eingabe |
 | `video` | Video-Zensur mit Zeitbereich, Kürzen, MP4- und GIF-Export, Auto-Zensur im Video |
 | `capture` / `record 3` | echte Aufnahme — gibt nur Maße/Dauer aus, speichert keine Inhalte |
 

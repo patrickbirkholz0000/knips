@@ -46,6 +46,16 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
     @Published var gifFPS: Int { didSet { d.set(gifFPS, forKey: "gifFPS") } }
     @Published var gifWidth: Int { didSet { d.set(gifWidth, forKey: "gifWidth") } }
     @Published var redactStyle: RedactStyle { didSet { d.set(redactStyle.rawValue, forKey: "redactStyle") } }
+    /// Welche Datenarten die Auto-Zensur sucht.
+    @Published var autoRedactKinds: Set<SensitiveDetector.Kind> {
+        didSet { d.set(autoRedactKinds.map(\.rawValue).sorted(), forKey: "autoRedactKinds") }
+    }
+    /// Tage, die Originale + Bearbeitungsstand behalten werden (0 = unbegrenzt).
+    @Published var retentionDays: Int { didSet { d.set(retentionDays, forKey: "retentionDays") } }
+    /// Abgehakte Kürzel bleiben gespeichert, werden aber nicht registriert (wie die Häkchen in macOS).
+    @Published var disabledHotkeys: Set<HotkeyAction> {
+        didSet { d.set(disabledHotkeys.map(\.rawValue).sorted(), forKey: "disabledHotkeys") }
+    }
     @Published var hotkeys: [HotkeyAction: KeyCombo] {
         didSet {
             if let data = try? JSONEncoder().encode(Dictionary(uniqueKeysWithValues: hotkeys.map { ($0.key.rawValue, $0.value) })) {
@@ -69,6 +79,12 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
         gifFPS = d.object(forKey: "gifFPS") as? Int ?? 15
         gifWidth = d.object(forKey: "gifWidth") as? Int ?? 960
         redactStyle = RedactStyle(rawValue: d.string(forKey: "redactStyle") ?? "") ?? .pixelate
+        if let raw = d.stringArray(forKey: "autoRedactKinds") {
+            autoRedactKinds = Set(raw.compactMap(SensitiveDetector.Kind.init(rawValue:)))
+        } else {
+            autoRedactKinds = Set(SensitiveDetector.Kind.allCases)
+        }
+        retentionDays = d.object(forKey: "retentionDays") as? Int ?? 30
         var keys: [HotkeyAction: KeyCombo] = [:]
         if let data = d.data(forKey: "hotkeys"),
            let stored = try? JSONDecoder().decode([String: KeyCombo].self, from: data) {
@@ -77,6 +93,16 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
             for a in HotkeyAction.allCases { if let c = a.defaultCombo { keys[a] = c } }
         }
         hotkeys = keys
+        disabledHotkeys = Set((d.stringArray(forKey: "disabledHotkeys") ?? []).compactMap(HotkeyAction.init(rawValue:)))
+    }
+
+    /// Tatsächlich registrierte Kürzel.
+    var activeHotkeys: [HotkeyAction: KeyCombo] { hotkeys.filter { !disabledHotkeys.contains($0.key) } }
+
+    static var defaultHotkeys: [HotkeyAction: KeyCombo] {
+        var keys: [HotkeyAction: KeyCombo] = [:]
+        for a in HotkeyAction.allCases { if let c = a.defaultCombo { keys[a] = c } }
+        return keys
     }
 
     var saveFolder: URL {

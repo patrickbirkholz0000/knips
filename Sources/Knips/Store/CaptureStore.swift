@@ -47,8 +47,6 @@ struct VideoDocument: Codable {
     static let shared = CaptureStore()
 
     @Published private(set) var items: [CaptureItem] = []
-    /// Nach 30 Tagen werden Originale + Bearbeitungsstand entfernt; die Dateien im Ablageordner bleiben.
-    private let retention: TimeInterval = 30 * 24 * 3600
 
     private init() {
         Paths.ensure(Paths.items)
@@ -171,6 +169,24 @@ struct VideoDocument: Codable {
 
     func item(with id: UUID) -> CaptureItem? { items.first { $0.id == id } }
 
+    /// Platzbedarf der Originale in Bytes.
+    func storageSize() -> Int64 {
+        let fm = FileManager.default
+        guard let e = fm.enumerator(at: Paths.items, includingPropertiesForKeys: [.totalFileAllocatedSizeKey]) else { return 0 }
+        var total: Int64 = 0
+        for case let url as URL in e {
+            total += Int64((try? url.resourceValues(forKeys: [.totalFileAllocatedSizeKey]).totalFileAllocatedSize) ?? 0)
+        }
+        return total
+    }
+
+    /// Entfernt alle Originale (Bearbeitung danach nicht mehr umkehrbar). Dateien im Ablageordner bleiben.
+    func purgeOriginals() {
+        try? FileManager.default.removeItem(at: Paths.items)
+        Paths.ensure(Paths.items)
+        items.removeAll()
+    }
+
     // MARK: Intern
 
     private func bump(_ item: CaptureItem, _ change: (inout CaptureItem) -> Void) -> CaptureItem {
@@ -194,7 +210,9 @@ struct VideoDocument: Codable {
         let fm = FileManager.default
         guard let dirs = try? fm.contentsOfDirectory(at: Paths.items, includingPropertiesForKeys: nil) else { return }
         var loaded: [CaptureItem] = []
-        let cutoff = Date().addingTimeInterval(-retention)
+        // Originale + Bearbeitungsstand verfallen nach der eingestellten Frist; die Dateien im Ablageordner bleiben.
+        let days = AppSettings.shared.retentionDays
+        let cutoff = days > 0 ? Date().addingTimeInterval(-Double(days) * 24 * 3600) : .distantPast
         for dir in dirs {
             guard let data = try? Data(contentsOf: dir.appendingPathComponent("item.json")),
                   let item = try? JSONDecoder().decode(CaptureItem.self, from: data) else {

@@ -140,6 +140,7 @@ enum VideoRedactor {
 
     /// Texterkennung auf Einzelbildern (alle `step` Sekunden), Treffer werden zu Zeitbereichen verbunden.
     static func detect(asset: AVAsset, range: CMTimeRange, step: Double, style: RedactStyle,
+                       kinds: Set<SensitiveDetector.Kind> = Set(SensitiveDetector.Kind.allCases),
                        progress: @escaping @Sendable (Double) -> Void) async throws -> [VideoRedaction] {
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
@@ -155,7 +156,7 @@ enum VideoRedactor {
             try Task.checkCancellation()
             let t = min(end, start + Double(i) * step)
             guard let frame = try? await generator.image(at: CMTime(seconds: t, preferredTimescale: 600)).image else { continue }
-            let findings = SensitiveDetector.detectSync(in: frame)
+            let findings = SensitiveDetector.detectSync(in: frame, kinds: kinds)
             var seen = Set<Int>()
             for f in findings {
                 if let idx = open.firstIndex(where: { $0.text == f.text && iou($0.rect, f.rect) > 0.3 }) {

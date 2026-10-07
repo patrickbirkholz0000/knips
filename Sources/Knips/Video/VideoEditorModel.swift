@@ -195,9 +195,10 @@ import Combine
         busy = "Suche sensible Daten im Video …"
         progress = 0
         let asset = asset, range = trimRange, style = style
+        let kinds = AppSettings.shared.autoRedactKinds
         work = Task {
             do {
-                let found = try await VideoRedactor.detect(asset: asset, range: range, step: 0.5, style: style) { p in
+                let found = try await VideoRedactor.detect(asset: asset, range: range, step: 0.5, style: style, kinds: kinds) { p in
                     Task { @MainActor in self.progress = p }
                 }
                 busy = nil

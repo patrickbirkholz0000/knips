@@ -52,11 +52,12 @@ enum SensitiveDetector {
     /// Lange Zeichenketten aus Buchstaben UND Ziffern ohne Leerzeichen: typisch für Tokens/Hashes.
     private static let generic = try! NSRegularExpression(pattern: #"\b[A-Za-z0-9_\-]{28,}\b"#)
 
-    static func detect(in image: CGImage) async -> [Finding] {
-        await Task.detached(priority: .userInitiated) { detectSync(in: image) }.value
+    static func detect(in image: CGImage, kinds: Set<Kind> = Set(Kind.allCases)) async -> [Finding] {
+        await Task.detached(priority: .userInitiated) { detectSync(in: image, kinds: kinds) }.value
     }
 
-    static func detectSync(in image: CGImage) -> [Finding] {
+    static func detectSync(in image: CGImage, kinds: Set<Kind> = Set(Kind.allCases)) -> [Finding] {
+        guard !kinds.isEmpty else { return [] }
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
@@ -71,7 +72,7 @@ enum SensitiveDetector {
         for observation in request.results ?? [] {
             guard let candidate = observation.topCandidates(1).first else { continue }
             let text = candidate.string
-            for (kind, range) in matches(in: text) {
+            for (kind, range) in matches(in: text, kinds: kinds) {
                 guard let box = try? candidate.boundingBox(for: range)?.boundingBox else { continue }
                 let rect = CGRect(x: box.minX * w, y: (1 - box.maxY) * h, width: box.width * w, height: box.height * h)
                 let snippet = String(text[range])
@@ -82,7 +83,7 @@ enum SensitiveDetector {
         return findings
     }
 
-    static func matches(in text: String) -> [(Kind, Range<String.Index>)] {
+    static func matches(in text: String, kinds: Set<Kind> = Set(Kind.allCases)) -> [(Kind, Range<String.Index>)] {
         let ns = text as NSString
         let full = NSRange(location: 0, length: ns.length)
         var taken: [NSRange] = []
@@ -93,7 +94,7 @@ enum SensitiveDetector {
             taken.append(r)
             out.append((kind, range))
         }
-        for (kind, regex) in patterns {
+        for (kind, regex) in patterns where kinds.contains(kind) {
             for m in regex.matches(in: text, range: full) {
                 let s = ns.substring(with: m.range)
                 switch kind {
@@ -105,7 +106,7 @@ enum SensitiveDetector {
                 add(kind, m.range)
             }
         }
-        for m in generic.matches(in: text, range: full) {
+        for m in generic.matches(in: text, range: full) where kinds.contains(.secret) {
             let s = ns.substring(with: m.range)
             let digits = s.filter(\.isNumber).count, letters = s.filter(\.isLetter).count
             if digits >= 4 && letters >= 8 { add(.secret, m.range) }

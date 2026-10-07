@@ -2,11 +2,11 @@ import AppKit
 import AVFoundation
 import SwiftUI
 
-/// Einstellungen im Stil der macOS-Systemeinstellungen: Seitenleiste mit Suche und farbigen
-/// Symbol-Kacheln, rechts gruppierte Bereiche.
+/// Einstellungen: links eine dunkle, abgerundete Liste (ausgewählter Eintrag mit Pfeil),
+/// rechts helle Fläche mit großen Überschriften und weißen Karten.
 @MainActor final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private static var instance: SettingsWindowController?
-    static let size = NSSize(width: 740, height: 600)
+    static let size = NSSize(width: 900, height: 640)
 
     /// Fenster unsichtbar anlegen, damit das erste Öffnen nicht hängt.
     static func prewarm() {
@@ -26,21 +26,23 @@ import SwiftUI
     }
 
     init() {
-        let controller = NSHostingController(rootView: SettingsRoot(settings: AppSettings.shared, nav: SettingsNavigation.shared))
-        controller.sizingOptions = []
-        controller.sceneBridgingOptions = [.title, .toolbars]
-        let window = NSWindow(contentViewController: controller)
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-        window.toolbarStyle = .unified
-        window.titlebarSeparatorStyle = .automatic
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: Self.size),
+                              styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                              backing: .buffered, defer: false)
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.title = "Knips – Einstellungen"
+        window.appearance = NSAppearance(named: .aqua)
+        window.backgroundColor = NSColor(Theme.page)
+        window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
-        window.setContentSize(Self.size)
-        window.contentMinSize = NSSize(width: Self.size.width, height: 460)
+        window.contentMinSize = NSSize(width: Self.size.width, height: 520)
         window.contentMaxSize = NSSize(width: Self.size.width, height: 1400)
-        window.setFrameAutosaveName("KnipsSettings")
+        window.contentView = NSHostingView(rootView: SettingsRoot(settings: AppSettings.shared, nav: SettingsNavigation.shared))
+        window.setFrameAutosaveName("KnipsSettings2")
         super.init(window: window)
         window.delegate = self
-        if !window.setFrameUsingName("KnipsSettings") { window.center() }
+        if !window.setFrameUsingName("KnipsSettings2") { window.center() }
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
@@ -49,6 +51,18 @@ import SwiftUI
         HotkeyRecorderState.shared.cancel()
         DockPresence.windowClosed()
     }
+}
+
+/// Farben und Formen der Einstellungen: helle Fläche, dunkle Seitenleiste, weiße Karten, schwarze Knöpfe.
+enum Theme {
+    static let page = Color(red: 0.955, green: 0.955, blue: 0.962)
+    static let sidebar = Color(red: 0.11, green: 0.11, blue: 0.118)
+    static let sidebarSelected = Color(white: 0.2)
+    static let card = Color.white
+    static let border = Color.black.opacity(0.07)
+    static let ink = Color(white: 0.09)
+    static let muted = Color(white: 0.45)
+    static let soft = Color(white: 0.93)
 }
 
 @MainActor final class SettingsNavigation: ObservableObject {
@@ -66,7 +80,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .general: "Allgemein"
-        case .shortcuts: "Tastaturkurzbefehle"
+        case .shortcuts: "Tastaturkürzel"
         case .recording: "Bildschirmaufnahme"
         case .redaction: "Zensur"
         case .export: "Export"
@@ -78,61 +92,28 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
-        case .general: "gearshape.fill"
-        case .shortcuts: "keyboard.fill"
-        case .recording: "record.circle.fill"
-        case .redaction: "eye.slash.fill"
-        case .export: "square.and.arrow.up.fill"
-        case .storage: "folder.fill"
-        case .privacy: "hand.raised.fill"
-        case .about: "info.circle.fill"
-        }
-    }
-
-    var color: Color {
-        switch self {
-        case .general: Color(white: 0.55)
-        case .shortcuts: Color(white: 0.5)
-        case .recording: Color(red: 1, green: 0.27, blue: 0.23)
-        case .redaction: Color(red: 0.36, green: 0.35, blue: 0.9)
-        case .export: Color(red: 1, green: 0.58, blue: 0)
-        case .storage: Color(red: 0.04, green: 0.52, blue: 1)
-        case .privacy: Color(red: 0.04, green: 0.52, blue: 1)
-        case .about: Color(white: 0.55)
+        case .general: "gearshape"
+        case .shortcuts: "command"
+        case .recording: "record.circle"
+        case .redaction: "eye.slash"
+        case .export: "square.and.arrow.up"
+        case .storage: "folder"
+        case .privacy: "lock"
+        case .about: "info.circle"
         }
     }
 
     var summary: String {
         switch self {
         case .general: "Was nach einem Screenshot oder einer Aufnahme passiert."
-        case .shortcuts: "Globale Kürzel für Screenshots und Bildschirmaufnahmen. Sie funktionieren in jeder App."
-        case .recording: "Bildrate, Mauszeiger, Countdown und Ton für Bildschirmaufnahmen."
-        case .redaction: "Wie sensible Stellen in Bildern und Videos unkenntlich gemacht werden."
+        case .shortcuts: "Globale Kürzel für Screenshots und Aufnahmen. Sie funktionieren in jeder App."
+        case .recording: "Größe, Format und Darstellung deiner Bildschirmvideos."
+        case .redaction: "Wie sensible Stellen in Bildern und Videos unkenntlich werden."
         case .export: "Größe und Format von Screenshots, GIFs und Videos."
-        case .storage: "Wo deine Aufnahmen liegen und wie lange Originale aufbewahrt werden."
-        case .privacy: "Freigaben, die Knips von macOS braucht. Alles bleibt auf deinem Mac."
-        case .about: ""
+        case .storage: "Wo deine Aufnahmen liegen und wie lange Originale bleiben."
+        case .privacy: "Freigaben von macOS. Alles bleibt auf deinem Mac."
+        case .about: "Screenshots und kurze Bildschirmaufnahmen — mit Zensur für Bilder und Videos."
         }
-    }
-
-    /// Suchbegriffe für das Suchfeld der Seitenleiste.
-    var keywords: [String] {
-        switch self {
-        case .general: ["zwischenablage", "karte", "quick access", "editor", "ton", "sound", "anmelden", "autostart", "ausblenden"]
-        case .shortcuts: ["kürzel", "hotkey", "taste", "tastatur", "shortcut", "bereich", "fenster", "vollbild"]
-        case .recording: ["video", "fps", "bildrate", "mauszeiger", "cursor", "countdown", "mikrofon", "audio", "klicks", "hevc", "h.264", "größe", "retina"]
-        case .redaction: ["verpixeln", "unschärfe", "schwärzen", "auto", "e-mail", "iban", "telefon", "schlüssel", "token", "ip"]
-        case .export: ["gif", "mp4", "breite", "bildrate", "größe", "auflösung", "retina", "png", "jpeg", "jpg", "datei", "klein"]
-        case .storage: ["ordner", "speicherort", "original", "aufbewahren", "löschen", "speicher"]
-        case .privacy: ["berechtigung", "freigabe", "bildschirmaufnahme", "mikrofon", "datenschutz"]
-        case .about: ["version", "info"]
-        }
-    }
-
-    func matches(_ query: String) -> Bool {
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else { return true }
-        return title.lowercased().contains(q) || keywords.contains { $0.contains(q) }
     }
 }
 
@@ -141,40 +122,35 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 struct SettingsRoot: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var nav: SettingsNavigation
-    @State private var search = ""
-
-    private let groups: [[SettingsPane]] = [[.general, .shortcuts], [.recording, .redaction, .export], [.storage, .privacy]]
 
     var body: some View {
-        NavigationSplitView {
-            List(selection: Binding<SettingsPane?>(get: { nav.pane }, set: { if let p = $0 { nav.pane = p } })) {
-                if search.isEmpty {
-                    AppCard().tag(SettingsPane.about)
-                }
-                ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
-                    let visible = group.filter { $0.matches(search) }
-                    if !visible.isEmpty {
-                        Section {
-                            ForEach(visible) { pane in
-                                Label { Text(pane.title) } icon: { IconTile(symbol: pane.symbol, color: pane.color, size: 20) }
-                                    .tag(pane)
-                            }
-                        }
+        HStack(alignment: .top, spacing: 26) {
+            Sidebar(nav: nav)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(nav.pane.title)
+                            .font(.system(size: 30, weight: .bold))
+                            .tracking(-0.6)
+                            .foregroundStyle(Theme.ink)
+                        Text(nav.pane.summary)
+                            .font(.system(size: 14))
+                            .foregroundStyle(Theme.muted)
                     }
+                    .padding(.top, 34)
+                    detail
                 }
+                .padding(.trailing, 28)
+                .padding(.bottom, 28)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .listStyle(.sidebar)
-            .searchable(text: $search, placement: .sidebar, prompt: "Suchen")
-            .navigationSplitViewColumnWidth(min: 215, ideal: 215, max: 215)
-        } detail: {
-            detail
-                .navigationTitle(nav.pane.title)
-                .frame(minWidth: 480)
+            .scrollIndicators(.never)
         }
-        .toolbar(removing: .sidebarToggle)
-        .onChange(of: search) { _, q in
-            if !nav.pane.matches(q), let first = SettingsPane.allCases.first(where: { $0.matches(q) }) { nav.pane = first }
-        }
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.page)
+        .ignoresSafeArea()
+        .tint(Theme.ink)
     }
 
     @ViewBuilder private var detail: some View {
@@ -191,59 +167,206 @@ struct SettingsRoot: View {
     }
 }
 
-private struct AppCard: View {
+/// Dunkle Seitenleiste: ausgewählter Eintrag heller, mit Pfeil.
+private struct Sidebar: View {
+    @ObservedObject var nav: SettingsNavigation
+    @State private var hovered: SettingsPane?
+
     var body: some View {
-        HStack(spacing: 10) {
-            Image(nsImage: NSApp.applicationIconImage)
-                .resizable()
-                .frame(width: 34, height: 34)
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Knips").font(.system(size: 13, weight: .semibold))
-                Text("Screenshots & Aufnahmen").font(.system(size: 11)).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 10) {
+                Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 30, height: 30)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Knips").font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                    Text("Einstellungen").font(.system(size: 12)).foregroundStyle(.white.opacity(0.5))
+                }
             }
+            .padding(.horizontal, 8)
+            .padding(.bottom, 16)
+            ForEach(SettingsPane.allCases) { pane in
+                row(pane)
+                if pane == .shortcuts || pane == .export {
+                    Rectangle().fill(Color.white.opacity(0.07)).frame(height: 1).padding(.vertical, 6).padding(.horizontal, 8)
+                }
+            }
+            Spacer(minLength: 12)
+            Text(version)
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.35))
+                .padding(.horizontal, 8)
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal, 12)
+        .padding(.top, 18)
+        .padding(.bottom, 14)
+        .frame(width: 252)
+        .frame(maxHeight: .infinity)
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Theme.sidebar))
+        .padding(.top, 30)   // Fensterknöpfe sitzen darüber auf der hellen Fläche
+    }
+
+    private var version: String {
+        let info = Bundle.main.infoDictionary
+        return "Version \(info?["CFBundleShortVersionString"] as? String ?? "0.1.0") (\(info?["CFBundleVersion"] as? String ?? "1"))"
+    }
+
+    private func row(_ pane: SettingsPane) -> some View {
+        let selected = nav.pane == pane
+        return Button { nav.pane = pane } label: {
+            HStack(spacing: 11) {
+                Image(systemName: pane.symbol)
+                    .font(.system(size: 14, weight: .medium))
+                    .frame(width: 20)
+                    .foregroundStyle(.white.opacity(selected ? 1 : 0.55))
+                Text(pane.title)
+                    .font(.system(size: 13.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(selected ? 1 : 0.78))
+                Spacer()
+                if selected {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.9))
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 42)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(selected ? Theme.sidebarSelected : Color.white.opacity(hovered == pane ? 0.06 : 0)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 ? pane : (hovered == pane ? nil : hovered) }
     }
 }
 
-/// Farbige Kachel mit weißem Symbol, wie in den Systemeinstellungen.
-struct IconTile: View {
+// MARK: - Bausteine
+
+/// Weiße Karte mit feinem Rand, optional mit Überschrift darüber und Erklärung darunter.
+private struct Card<Content: View>: View {
+    var title: String?
+    var footer: String?
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            if let title {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.muted)
+                    .padding(.leading, 6)
+            }
+            VStack(spacing: 0) { content }
+                .padding(.horizontal, 18)
+                .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Theme.card))
+                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.border))
+            if let footer {
+                Text(footer)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 6)
+            }
+        }
+    }
+}
+
+/// Zeile in einer Karte: Titel (+ Untertitel) links, Bedienelement rechts.
+private struct Row<Accessory: View>: View {
+    let title: String
+    var subtitle: String?
+    @ViewBuilder var accessory: Accessory
+
+    var body: some View {
+        HStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 14)).foregroundStyle(Theme.ink)
+                if let subtitle {
+                    Text(subtitle).font(.system(size: 12)).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
+            accessory
+        }
+        .padding(.vertical, 13)
+        .frame(minHeight: 52)
+    }
+}
+
+private struct RowDivider: View {
+    var body: some View { Rectangle().fill(Theme.border).frame(height: 1) }
+}
+
+private struct Switch: View {
+    @Binding var isOn: Bool
+    var body: some View {
+        Toggle("", isOn: $isOn).toggleStyle(.switch).labelsHidden().controlSize(.small).tint(Color(red: 0.2, green: 0.72, blue: 0.4))
+    }
+}
+
+/// Auswahl als kompakte Menü-Schaltfläche.
+private struct Choice<Value: Hashable>: View {
+    @Binding var selection: Value
+    let options: [(Value, String)]
+    var body: some View {
+        Picker("", selection: $selection) {
+            ForEach(options, id: \.0) { Text($0.1).tag($0.0) }
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .fixedSize()
+    }
+}
+
+/// Schwarze Schaltfläche als Hauptaktion, hellgrau als Nebenaktion.
+private struct PillButtonStyle: ButtonStyle {
+    var primary = false
+    var destructive = false
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12.5, weight: .semibold))
+            .padding(.horizontal, 14)
+            .frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(primary ? Theme.ink : (destructive ? Color.red.opacity(0.1) : Theme.soft)))
+            .foregroundStyle(primary ? .white : (destructive ? .red : Theme.ink))
+            .opacity(configuration.isPressed ? 0.8 : 1)
+            .contentShape(Rectangle())
+    }
+}
+
+/// Hinweis-Karte (gelb = zu tun, grün = erledigt).
+private struct Notice<Action: View>: View {
     let symbol: String
     let color: Color
-    var size: CGFloat = 20
+    let title: String
+    let detail: String
+    @ViewBuilder var action: Action
 
     var body: some View {
-        RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
-            .fill(LinearGradient(colors: [color.opacity(0.85), color], startPoint: .top, endPoint: .bottom))
-            .overlay(
-                Image(systemName: symbol)
-                    .font(.system(size: size * 0.56, weight: .semibold))
-                    .foregroundStyle(.white)
-            )
-            .overlay(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous).strokeBorder(.black.opacity(0.08), lineWidth: 0.5))
-            .frame(width: size, height: size)
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: symbol).font(.system(size: 16)).foregroundStyle(color).padding(.top, 1)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.ink)
+                Text(detail).font(.system(size: 12)).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+                action.padding(.top, 6)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(color.opacity(0.09)))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(color.opacity(0.25)))
     }
 }
 
-/// Kopfbereich eines Bereichs: große Kachel, Titel, kurze Erklärung.
-private struct PaneHeader: View {
-    let pane: SettingsPane
-
+private struct InfoLine: View {
+    let symbol: String
+    let text: String
     var body: some View {
-        Section {
-            VStack(spacing: 8) {
-                IconTile(symbol: pane.symbol, color: pane.color, size: 56)
-                Text(pane.title).font(.system(size: 17, weight: .bold))
-                Text(pane.summary)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
-            .padding(.horizontal, 24)
+        HStack(spacing: 12) {
+            Image(systemName: "checkmark").font(.system(size: 12, weight: .semibold)).foregroundStyle(Color(red: 0.2, green: 0.6, blue: 0.4))
+            Text(text).font(.system(size: 13.5)).foregroundStyle(Theme.ink)
+            Spacer()
         }
+        .padding(.vertical, 11)
     }
 }
 
@@ -253,40 +376,36 @@ private struct GeneralPane: View {
     @ObservedObject var settings: AppSettings
 
     var body: some View {
-        Form {
-            PaneHeader(pane: .general)
-            Section("Nach einer Aufnahme") {
-                Toggle("In die Zwischenablage kopieren", isOn: $settings.copyToClipboard)
-                Toggle("Editor sofort öffnen", isOn: $settings.openEditorAfterCapture)
-                Toggle("Auslöser-Ton abspielen", isOn: $settings.playSound)
+        VStack(alignment: .leading, spacing: 22) {
+            Card(title: "Nach einer Aufnahme") {
+                Row(title: "In die Zwischenablage kopieren") { Switch(isOn: $settings.copyToClipboard) }
+                RowDivider()
+                Row(title: "Editor sofort öffnen") { Switch(isOn: $settings.openEditorAfterCapture) }
+                RowDivider()
+                Row(title: "Auslöser-Ton") { Switch(isOn: $settings.playSound) }
             }
-            Section {
-                Toggle("Karte unten links anzeigen", isOn: $settings.showQuickAccess)
-                Picker("Karte automatisch ausblenden", selection: $settings.quickAccessAutoClose) {
-                    Text("Nie").tag(0)
-                    Text("Nach 5 Sekunden").tag(5)
-                    Text("Nach 10 Sekunden").tag(10)
-                    Text("Nach 30 Sekunden").tag(30)
-                    Text("Nach 1 Minute").tag(60)
+            Card(title: "Karten unten links",
+                 footer: "Auf der Karte kannst du kopieren, zensieren, anpinnen, Text kopieren oder sie in eine andere App ziehen. Unter der Maus blendet sie sich nie aus.") {
+                Row(title: "Karte anzeigen") { Switch(isOn: $settings.showQuickAccess) }
+                RowDivider()
+                Row(title: "Automatisch ausblenden") {
+                    Choice(selection: $settings.quickAccessAutoClose,
+                           options: [(0, "Nie"), (5, "nach 5 s"), (10, "nach 10 s"), (30, "nach 30 s"), (60, "nach 1 min")])
+                        .disabled(!settings.showQuickAccess)
                 }
-                .disabled(!settings.showQuickAccess)
-            } header: {
-                Text("Karten")
-            } footer: {
-                Text("Auf der Karte kannst du kopieren, bearbeiten, zensieren, anpinnen oder sie in eine andere App ziehen. Unter der Maus blendet sie sich nie aus.")
-                    .settingsFootnote()
             }
-            Section("Start") {
-                Toggle("Beim Anmelden öffnen", isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
+            Card(title: "Start") {
+                Row(title: "Beim Anmelden öffnen") {
+                    Switch(isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
+                }
             }
         }
-        .formStyle(.grouped)
     }
 }
 
 private struct ShortcutsPane: View {
     @ObservedObject var settings: AppSettings
-    @State private var conflictTick = 0
+    @State private var tick = 0
 
     private let groups: [(String, [HotkeyAction])] = [
         ("Bildschirmfotos", [.captureArea, .captureWindow, .captureFullscreen, .captureLastArea, .captureText]),
@@ -294,94 +413,73 @@ private struct ShortcutsPane: View {
         ("Sonstiges", [.pinClipboard]),
     ]
 
-    private var conflicting: [KeyCombo] {
-        settings.activeHotkeys.values.filter { SystemShortcuts.conflict(for: $0) != nil }.sorted { $0.keyCode < $1.keyCode }
-    }
-
     var body: some View {
-        let _ = conflictTick
-        let conflicts = conflicting
+        let _ = tick
+        let conflicts = settings.activeHotkeys.values.filter { SystemShortcuts.conflict(for: $0) != nil }.sorted { $0.keyCode < $1.keyCode }
         let blockedIDs = Array(Set(SystemShortcuts.conflictingIDs(for: Array(settings.activeHotkeys.values)))
             .union(SystemShortcuts.enabledScreenshotIDs())).sorted()
-        Form {
-            PaneHeader(pane: .shortcuts)
+        VStack(alignment: .leading, spacing: 22) {
             if !blockedIDs.isEmpty {
-                Section {
-                    if !blockedIDs.isEmpty {
-                        notice(symbol: "exclamationmark.triangle.fill", color: .yellow,
-                               title: conflicts.isEmpty
-                                   ? "macOS belegt \(SystemShortcuts.displayList(blockedIDs)) noch selbst"
-                                   : "macOS nutzt \(conflicts.map(\.display).joined(separator: ", ")) noch selbst",
-                               detail: "Solange das so ist, kommen diese Kürzel nicht bei Knips an — auch nicht beim Festlegen hier. Knips schaltet die macOS-Kürzel für Bildschirmfotos ab; jederzeit rückgängig zu machen.") {
-                            Button("Für Knips freimachen") {
-                                SystemShortcuts.takeOver(blockedIDs)
-                                conflictTick += 1
-                            }
-                        }
+                Notice(symbol: "exclamationmark.triangle.fill", color: .orange,
+                       title: conflicts.isEmpty ? "macOS belegt \(SystemShortcuts.displayList(blockedIDs)) noch selbst"
+                                                : "macOS nutzt \(conflicts.map(\.display).joined(separator: ", ")) noch selbst",
+                       detail: "Solange das so ist, kommen diese Kürzel nicht bei Knips an — auch nicht beim Festlegen hier. Knips schaltet die macOS-Kürzel für Bildschirmfotos ab; jederzeit rückgängig zu machen.") {
+                    Button("Für Knips freimachen") {
+                        SystemShortcuts.takeOver(blockedIDs)
+                        tick += 1
                     }
+                    .buttonStyle(PillButtonStyle(primary: true))
                 }
             } else if SystemShortcuts.hasTakenOver {
-                Section {
-                    notice(symbol: "checkmark.circle.fill", color: .green,
-                           title: "Knips hat die Bildschirmfoto-Kürzel von macOS übernommen",
-                           detail: "Die entsprechenden macOS-Kürzel sind abgeschaltet.") {
-                        Button("macOS-Kürzel wiederherstellen") {
-                            SystemShortcuts.restore()
-                            conflictTick += 1
-                        }
+                Notice(symbol: "checkmark.circle.fill", color: .green, title: "Knips hat die Bildschirmfoto-Kürzel übernommen",
+                       detail: "Die entsprechenden macOS-Kürzel sind abgeschaltet.") {
+                    Button("macOS-Kürzel wiederherstellen") {
+                        SystemShortcuts.restore()
+                        tick += 1
                     }
+                    .buttonStyle(PillButtonStyle())
                 }
             }
             ForEach(groups, id: \.0) { title, actions in
-                Section(title) {
-                    ForEach(actions) { ShortcutRow(action: $0, settings: settings) }
-                }
-            }
-            Section {
-                HStack {
-                    Button("Standardwerte wiederherstellen") {
-                        HotkeyRecorderState.shared.cancel()
-                        settings.hotkeys = AppSettings.defaultHotkeys
-                        settings.disabledHotkeys = []
-                        HotkeyManager.shared.apply(settings.activeHotkeys)
-                        conflictTick += 1
-                    }
-                    Spacer()
-                    Button("Tastaturkurzbefehle von macOS …") {
-                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")!)
+                Card(title: title) {
+                    ForEach(Array(actions.enumerated()), id: \.element) { index, action in
+                        if index > 0 { RowDivider() }
+                        ShortcutRow(action: action, settings: settings)
                     }
                 }
-            } footer: {
-                Text("Kürzel anklicken und die neue Kombination drücken. ⌫ entfernt das Kürzel, Esc bricht ab. Standard wie bei macOS: ⇧⌘3 ganzer Bildschirm, ⇧⌘4 Bereich (Leertaste: Fenster), ⇧⌘5 Bildschirmaufnahme.")
-                    .settingsFootnote()
             }
+            HStack(spacing: 10) {
+                Button("Standardwerte wiederherstellen") {
+                    HotkeyRecorderState.shared.cancel()
+                    settings.hotkeys = AppSettings.defaultHotkeys
+                    settings.disabledHotkeys = []
+                    HotkeyManager.shared.apply(settings.activeHotkeys)
+                    tick += 1
+                }
+                .buttonStyle(PillButtonStyle())
+                Button("Kurzbefehle von macOS …") {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")!)
+                }
+                .buttonStyle(PillButtonStyle())
+            }
+            Text("Kürzel anklicken und die neue Kombination drücken. ⌫ entfernt, Esc bricht ab. Standard wie bei macOS: ⇧⌘3 Bildschirm, ⇧⌘4 Bereich (Leertaste: Fenster), ⇧⌘5 Video.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 6)
         }
-        .formStyle(.grouped)
     }
 }
 
-extension ShortcutsPane {
-    fileprivate func notice<Action: View>(symbol: String, color: Color, title: String, detail: String,
-                                          @ViewBuilder action: () -> Action) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: symbol).foregroundStyle(color).font(.system(size: 15))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 13, weight: .semibold))
-                Text(detail).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-            action()
-        }
-        .padding(.vertical, 2)
-    }
-}
-
-/// Zeile wie in Tastatur → Tastaturkurzbefehle: Häkchen, Titel, rechts das Kürzel.
+/// Häkchen, Titel, rechts das Kürzel als Tastenkappe; Klick nimmt ein neues auf.
 private struct ShortcutRow: View {
     let action: HotkeyAction
     @ObservedObject var settings: AppSettings
     @ObservedObject private var recorder = HotkeyRecorderState.shared
     @State private var hovering = false
+
+    private var combo: KeyCombo? { settings.hotkeys[action] }
+    private var isRecording: Bool { recorder.recording == action }
 
     private var enabled: Binding<Bool> {
         Binding(get: { combo != nil && !settings.disabledHotkeys.contains(action) }, set: { on in
@@ -390,65 +488,49 @@ private struct ShortcutRow: View {
         })
     }
 
-    private var isRecording: Bool { recorder.recording == action }
-    private var combo: KeyCombo? { settings.hotkeys[action] }
-
     var body: some View {
-        HStack(spacing: 8) {
-            Toggle("", isOn: enabled)
-                .toggleStyle(.checkbox)
-                .labelsHidden()
-                .disabled(combo == nil)
+        HStack(spacing: 12) {
+            Toggle("", isOn: enabled).toggleStyle(.checkbox).labelsHidden().disabled(combo == nil)
             Text(action.title)
-                .foregroundStyle(enabled.wrappedValue && combo != nil ? .primary : .secondary)
-            Spacer()
+                .font(.system(size: 14))
+                .foregroundStyle(enabled.wrappedValue ? Theme.ink : Theme.muted)
+            Spacer(minLength: 8)
             if let combo, enabled.wrappedValue, let conflict = SystemShortcuts.conflict(for: combo) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.yellow)
-                    .help("Wird auch von macOS verwendet („\(conflict)“). Dort ausschalten oder ein anderes Kürzel wählen.")
+                    .foregroundStyle(.orange)
+                    .help("Wird auch von macOS verwendet („\(conflict)“).")
             }
             if enabled.wrappedValue, HotkeyManager.shared.failures.contains(action) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red)
-                    .help("Dieses Kürzel ist bereits von einer anderen App belegt.")
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red).help("Bereits von einer anderen App belegt.")
             }
-            shortcutField
+            Button {
+                if isRecording { recorder.cancel() } else { record() }
+            } label: {
+                Text(isRecording ? "Kürzel drücken …" : (combo?.display ?? "Kein Kürzel"))
+                    .font(.system(size: 13, weight: isRecording || combo == nil ? .regular : .semibold).monospacedDigit())
+                    .foregroundStyle(isRecording ? Theme.muted : (combo == nil ? Theme.muted : Theme.ink))
+                    .padding(.horizontal, 12)
+                    .frame(minWidth: 92, minHeight: 30)
+                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(hovering || isRecording ? Theme.soft : Theme.page))
+                    .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .strokeBorder(isRecording ? Theme.ink : Theme.border, lineWidth: isRecording ? 2 : 1))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+            .help("Klicken und neue Tastenkombination drücken")
         }
+        .padding(.vertical, 10)
+        .frame(minHeight: 52)
     }
 
-    private var shortcutField: some View {
-        Button {
-            if isRecording { recorder.cancel() } else { startRecording() }
-        } label: {
-            Text(isRecording ? "Kürzel eingeben" : (combo?.display ?? "Kein"))
-                .font(.system(size: 13, weight: isRecording ? .regular : .medium))
-                .foregroundStyle(isRecording ? .secondary : (combo == nil ? .tertiary : (enabled.wrappedValue ? .primary : .secondary)))
-                .monospacedDigit()
-                .padding(.horizontal, 8)
-                .frame(minWidth: 96, minHeight: 22, alignment: .trailing)
-                .background(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(isRecording ? Color(nsColor: .textBackgroundColor) : (hovering ? Color.primary.opacity(0.06) : .clear))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .strokeBorder(isRecording ? Color.accentColor : .clear, lineWidth: 2.5)
-                )
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help("Klicken und neue Tastenkombination drücken")
-    }
-
-    private func startRecording() {
+    private func record() {
         recorder.start(action) { result in
             guard let result else { return }
             var keys = settings.hotkeys
             if result.keyCode == UInt32.max {
                 keys[action] = nil
             } else {
-                // Doppelte Belegung auflösen: das andere Kürzel wird entfernt.
                 for (other, c) in keys where c == result && other != action { keys[other] = nil }
                 keys[action] = result
                 settings.disabledHotkeys.remove(action)
@@ -461,56 +543,46 @@ private struct ShortcutRow: View {
 
 private struct RecordingPane: View {
     @ObservedObject var settings: AppSettings
-    private var micAvailable: Bool { ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15 }
+    private var modern: Bool { ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15 }
 
     var body: some View {
-        Form {
-            PaneHeader(pane: .recording)
-            Section {
-                Picker("Größe", selection: $settings.recordingAtScreenSize) {
-                    Text("Bildschirmgröße (1×)").tag(true)
-                    Text("Retina (2×, volle Schärfe)").tag(false)
+        VStack(alignment: .leading, spacing: 22) {
+            Card(title: "Video",
+                 footer: "Gemessen am Vollbild je 4 Sekunden: Retina-H.264 2,2 MB · 1×-H.264 1,2 MB · 1×-HEVC 0,9 MB. HEVC spielt jeder Mac ab, Windows nicht immer.") {
+                Row(title: "Größe") {
+                    Choice(selection: $settings.recordingAtScreenSize, options: [(true, "Bildschirmgröße (1×)"), (false, "Retina (2×)")])
                 }
-                Picker("Format", selection: $settings.recordingHEVC) {
-                    Text("H.264 – überall abspielbar").tag(false)
-                    Text("HEVC – rund 30 % kleiner").tag(true)
+                RowDivider()
+                Row(title: "Format") {
+                    Choice(selection: $settings.recordingHEVC, options: [(false, "H.264 – überall abspielbar"), (true, "HEVC – kleiner")])
                 }
-                Picker("Bildrate", selection: $settings.recordingFPS) {
-                    Text("30 Bilder pro Sekunde").tag(30)
-                    Text("60 Bilder pro Sekunde").tag(60)
+                RowDivider()
+                Row(title: "Bildrate") {
+                    Choice(selection: $settings.recordingFPS, options: [(30, "30 fps"), (60, "60 fps")])
                 }
-            } header: {
-                Text("Video")
-            } footer: {
-                Text("Gemessen am Vollbild: Retina-H.264 2,2 MB, 1×-H.264 1,2 MB, 1×-HEVC 0,9 MB je 4 Sekunden. HEVC spielt jeder Mac ab, unter Windows nicht immer.")
-                    .settingsFootnote()
             }
-            Section("Darstellung") {
-                Toggle("Mauszeiger aufnehmen", isOn: $settings.recordingShowCursor)
-                Toggle("Mausklicks hervorheben", isOn: $settings.recordingShowClicks)
-                    .disabled(!micAvailable)
-                Toggle("Countdown vor dem Start (3 – 2 – 1)", isOn: $settings.recordingCountdown)
-            }
-            Section {
-                Toggle("Mikrofon aufnehmen", isOn: $settings.recordingMicrophone)
-                    .disabled(!micAvailable)
-            } header: {
-                Text("Ton")
-            } footer: {
-                Text(micAvailable
-                     ? "Für gesprochene Erklärungen. Beim ersten Mal fragt macOS nach der Mikrofon-Freigabe."
-                     : "Mikrofon-Aufnahme braucht macOS 15 oder neuer.")
-                    .settingsFootnote()
-            }
-            Section {
-                LabeledContent("Stoppen") {
-                    Text("Stopp-Leiste, Menüleisten-Symbol oder \(settings.activeHotkeys[.toggleRecording]?.display ?? "Kürzel")")
-                        .foregroundStyle(.secondary)
+            Card(title: "Darstellung") {
+                Row(title: "Mauszeiger aufnehmen") { Switch(isOn: $settings.recordingShowCursor) }
+                RowDivider()
+                Row(title: "Mausklicks hervorheben", subtitle: modern ? nil : "braucht macOS 15") {
+                    Switch(isOn: $settings.recordingShowClicks).disabled(!modern)
                 }
-                LabeledContent("Datei") { Text(settings.recordingHEVC ? "MP4 (HEVC)" : "MP4 (H.264)").foregroundStyle(.secondary) }
+                RowDivider()
+                Row(title: "Countdown 3 – 2 – 1") { Switch(isOn: $settings.recordingCountdown) }
+            }
+            Card(title: "Ton", footer: "Für gesprochene Erklärungen. Beim ersten Mal fragt macOS nach dem Mikrofon.") {
+                Row(title: "Mikrofon aufnehmen", subtitle: modern ? nil : "braucht macOS 15") {
+                    Switch(isOn: $settings.recordingMicrophone).disabled(!modern)
+                }
+            }
+            Card(title: "Stoppen") {
+                Row(title: "Stopp-Leiste, Menüleisten-Symbol oder Kürzel") {
+                    Text(settings.activeHotkeys[.toggleRecording]?.display ?? "—")
+                        .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(Theme.muted)
+                }
             }
         }
-        .formStyle(.grouped)
     }
 }
 
@@ -518,56 +590,36 @@ private struct RedactionPane: View {
     @ObservedObject var settings: AppSettings
 
     var body: some View {
-        Form {
-            PaneHeader(pane: .redaction)
-            Section {
+        VStack(alignment: .leading, spacing: 22) {
+            Card(title: "Standardstil",
+                 footer: "„Balken“ ist am sichersten. Im Editor: Klick auf Text legt einen Balken über die Zeile, ⌥-Klick über ein Wort; gezogene Balken wachsen auf ganze Wörter.") {
                 HStack(spacing: 18) {
-                    Spacer(minLength: 0)
                     ForEach(RedactStyle.allCases) { style in
                         RedactStyleCard(style: style, selected: settings.redactStyle == style) { settings.redactStyle = style }
                     }
                     Spacer(minLength: 0)
                 }
-                .padding(.vertical, 6)
-            } header: {
-                Text("Standardstil")
-            } footer: {
-                Text("„Balken“ ist am sichersten. Verpixeln und Unschärfe machen normale Schrift unlesbar, lassen aber Länge und grobe Form erkennen. Im Editor: Werkzeug „Zensieren“ (X) wählen und Balken über die Stelle ziehen.")
-                    .settingsFootnote()
+                .padding(.vertical, 16)
             }
-            Section {
-                Toggle("Auto-Zensur-Knopf in den Editoren zeigen", isOn: $settings.showAutoRedact)
-            } header: {
-                Text("Auto-Zensur")
-            } footer: {
-                Text("Sucht per Texterkennung nach E-Mails, IBANs, Schlüsseln usw. und legt Balken an. Normalerweise ziehst du Balken selbst — der Knopf ist deshalb aus.")
-                    .settingsFootnote()
-            }
-            if settings.showAutoRedact {
-            Section {
-                ForEach(SensitiveDetector.Kind.allCases, id: \.self) { kind in
-                    Toggle(isOn: Binding(get: { settings.autoRedactKinds.contains(kind) }, set: { on in
-                        if on { settings.autoRedactKinds.insert(kind) } else { settings.autoRedactKinds.remove(kind) }
-                    })) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(kind.longTitle)
-                            Text(kind.example).font(.system(size: 11)).foregroundStyle(.secondary)
+            Card(title: "Auto-Zensur",
+                 footer: "Sucht per Texterkennung nach E-Mails, IBANs, Schlüsseln usw. und legt Balken an. Normalerweise ziehst du Balken selbst — der Knopf ist deshalb aus.") {
+                Row(title: "Knopf „Auto-Zensur“ in den Editoren") { Switch(isOn: $settings.showAutoRedact) }
+                if settings.showAutoRedact {
+                    ForEach(SensitiveDetector.Kind.allCases, id: \.self) { kind in
+                        RowDivider()
+                        Row(title: kind.longTitle, subtitle: kind.example) {
+                            Switch(isOn: Binding(get: { settings.autoRedactKinds.contains(kind) }, set: { on in
+                                if on { settings.autoRedactKinds.insert(kind) } else { settings.autoRedactKinds.remove(kind) }
+                            }))
                         }
                     }
                 }
-            } header: {
-                Text("Auto-Zensur erkennt")
-            } footer: {
-                Text("Die Texterkennung läuft auf deinem Mac. Vorschläge erscheinen als normale Zensurfelder und lassen sich einzeln löschen.")
-                    .settingsFootnote()
-            }
             }
         }
-        .formStyle(.grouped)
     }
 }
 
-/// Auswahlkarte mit Vorschau, wie die Erscheinungsbild-Auswahl in macOS.
+/// Auswahlkarte mit Vorschau.
 private struct RedactStyleCard: View {
     let style: RedactStyle
     let selected: Bool
@@ -575,19 +627,16 @@ private struct RedactStyleCard: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 6) {
+            VStack(spacing: 8) {
                 Image(nsImage: RedactPreview.image(for: style))
                     .resizable()
                     .frame(width: 112, height: 66)
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.15), lineWidth: selected ? 3 : 1)
-                    )
-                    .padding(selected ? 0 : 1)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(selected ? Theme.ink : Theme.border, lineWidth: selected ? 2.5 : 1))
                 Text(style.title)
-                    .font(.system(size: 12, weight: selected ? .semibold : .regular))
-                    .foregroundStyle(selected ? .primary : .secondary)
+                    .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? Theme.ink : Theme.muted)
             }
             .contentShape(Rectangle())
         }
@@ -595,47 +644,9 @@ private struct RedactStyleCard: View {
     }
 }
 
-/// Kleine Vorschaubilder für die Stil-Auswahl, mit dem echten Renderer erzeugt.
-@MainActor enum RedactPreview {
-    private static var cache: [RedactStyle: NSImage] = [:]
-
-    static func image(for style: RedactStyle) -> NSImage {
-        if let hit = cache[style] { return hit }
-        // Doppelte Größe und Effektmaßstab 1: so zeigt die kleine Vorschau ein erkennbares Mosaik.
-        let w = 448, h = 264, scale: CGFloat = 1
-        let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
-                            space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)!
-        ctx.translateBy(x: 0, y: CGFloat(h))
-        ctx.scaleBy(x: 1, y: -1)
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
-        ctx.setFillColor(CGColor(srgbRed: 0.97, green: 0.97, blue: 0.98, alpha: 1))
-        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
-        ctx.setFillColor(CGColor(srgbRed: 0.86, green: 0.87, blue: 0.9, alpha: 1))
-        ctx.fill(CGRect(x: 0, y: 0, width: w, height: 44))
-        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 40, weight: .medium), .foregroundColor: NSColor.black]
-        NSAttributedString(string: "Kontakt", attributes: attrs.merging([.font: NSFont.systemFont(ofSize: 40, weight: .bold)]) { $1 })
-            .draw(at: CGPoint(x: 32, y: 64))
-        NSAttributedString(string: "max@example.com", attributes: attrs).draw(at: CGPoint(x: 32, y: 128))
-        NSAttributedString(string: "+49 170 123456", attributes: attrs).draw(at: CGPoint(x: 32, y: 188))
-        NSGraphicsContext.restoreGraphicsState()
-        let base = ctx.makeImage()!
-        var doc = ImageDocument()
-        var a = Annotation(kind: .redact, start: CGPoint(x: 24, y: 126), end: CGPoint(x: 424, y: 248))
-        a.redactStyle = style
-        doc.annotations = [a]
-        let rendered = Renderer.render(base: base, document: doc, scale: scale, effects: EffectsCache(base: base, scale: scale)) ?? base
-        let image = NSImage(cgImage: rendered, size: NSSize(width: w / 4, height: h / 4))
-        cache[style] = image
-        return image
-    }
-}
-
 private struct ExportPane: View {
     @ObservedObject var settings: AppSettings
 
-    /// Gemessen an echten 4K-Screenshots (08.10.2026).
     private var sizeHint: String {
         switch (settings.exportAtScreenSize, settings.imageFormat) {
         case (true, .png): "ca. 0,7–2 MB"
@@ -646,111 +657,78 @@ private struct ExportPane: View {
     }
 
     var body: some View {
-        Form {
-            PaneHeader(pane: .export)
-            Section {
-                Picker("Größe", selection: $settings.exportAtScreenSize) {
-                    Text("Bildschirmgröße (1×)").tag(true)
-                    Text("Retina (2×, volle Schärfe)").tag(false)
+        VStack(alignment: .leading, spacing: 22) {
+            Card(title: "Screenshots",
+                 footer: "Bildschirmgröße: so groß wie auf dem Bildschirm, beim Einfügen nicht doppelt so groß. Das Original bleibt für spätere Bearbeitung in voller Auflösung.") {
+                Row(title: "Größe") {
+                    Choice(selection: $settings.exportAtScreenSize, options: [(true, "Bildschirmgröße (1×)"), (false, "Retina (2×)")])
                 }
-                Picker("Format", selection: $settings.imageFormat) {
-                    ForEach(ImageFormat.allCases) { Text($0.title).tag($0) }
+                RowDivider()
+                Row(title: "Format") {
+                    Choice(selection: $settings.imageFormat, options: ImageFormat.allCases.map { ($0, $0.title) })
                 }
-                LabeledContent("Vollbild-Screenshot") {
-                    Text(sizeHint).foregroundStyle(.secondary).monospacedDigit()
+                RowDivider()
+                Row(title: "Vollbild-Screenshot") {
+                    Text(sizeHint).font(.system(size: 13).monospacedDigit()).foregroundStyle(Theme.muted)
                 }
-            } header: {
-                Text("Screenshots")
-            } footer: {
-                Text("Bildschirmgröße: ein Screenshot ist so groß wie auf dem Bildschirm und erscheint beim Einfügen nicht doppelt so groß. Das Original bleibt für spätere Bearbeitung in voller Auflösung erhalten.")
-                    .settingsFootnote()
             }
-            Section {
-                Picker("Bildrate", selection: $settings.gifFPS) {
-                    Text("10 Bilder pro Sekunde").tag(10)
-                    Text("15 Bilder pro Sekunde").tag(15)
-                    Text("20 Bilder pro Sekunde").tag(20)
-                    Text("25 Bilder pro Sekunde").tag(25)
+            Card(title: "GIF", footer: "Ruhige Stellen werden zusammengefasst — das hält GIFs klein.") {
+                Row(title: "Bildrate") {
+                    Choice(selection: $settings.gifFPS, options: [(10, "10 fps"), (15, "15 fps"), (20, "20 fps"), (25, "25 fps")])
                 }
-                Picker("Maximale Breite", selection: $settings.gifWidth) {
-                    Text("640 Pixel").tag(640)
-                    Text("800 Pixel").tag(800)
-                    Text("960 Pixel").tag(960)
-                    Text("1280 Pixel").tag(1280)
+                RowDivider()
+                Row(title: "Maximale Breite") {
+                    Choice(selection: $settings.gifWidth, options: [(640, "640 px"), (800, "800 px"), (960, "960 px"), (1280, "1280 px")])
                 }
-            } header: {
-                Text("GIF")
-            } footer: {
-                Text("Kleinere Werte ergeben deutlich kleinere Dateien — gut für Tickets, Slack und GitHub.")
-                    .settingsFootnote()
             }
-            Section("Video") {
-                LabeledContent("Format") { Text("MP4 (H.264), beste Qualität").foregroundStyle(.secondary) }
-                LabeledContent("Zensur und Kürzung") { Text("werden beim Speichern eingerechnet").foregroundStyle(.secondary) }
+            Card(title: "Video") {
+                Row(title: "Zensur und Kürzung", subtitle: "werden beim Speichern eingerechnet, das Format bleibt erhalten") { EmptyView() }
             }
         }
-        .formStyle(.grouped)
     }
 }
 
 private struct StoragePane: View {
     @ObservedObject var settings: AppSettings
-    @State private var usage: String = "…"
+    @State private var usage = "…"
     @State private var confirmPurge = false
 
     var body: some View {
-        Form {
-            PaneHeader(pane: .storage)
-            Section {
-                LabeledContent {
-                    HStack(spacing: 8) {
-                        Button("Ändern …") { chooseFolder() }
-                        Button("Im Finder zeigen") {
-                            try? FileManager.default.createDirectory(at: settings.saveFolder, withIntermediateDirectories: true)
-                            NSWorkspace.shared.open(settings.saveFolder)
-                        }
+        VStack(alignment: .leading, spacing: 22) {
+            Card(title: "Ablageordner", footer: "Dort liegt immer die bearbeitete Fassung — zensierte Stellen sind darin endgültig unkenntlich.") {
+                HStack(spacing: 12) {
+                    Image(nsImage: FileManager.default.fileExists(atPath: settings.saveFolder.path)
+                          ? NSWorkspace.shared.icon(forFile: settings.saveFolder.path)
+                          : NSWorkspace.shared.icon(for: .folder))
+                        .resizable().frame(width: 30, height: 30)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(settings.saveFolder.lastPathComponent).font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.ink)
+                        Text(settings.saveFolder.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                            .font(.system(size: 12)).foregroundStyle(Theme.muted).lineLimit(1).truncationMode(.middle)
                     }
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(nsImage: FileManager.default.fileExists(atPath: settings.saveFolder.path)
-                              ? NSWorkspace.shared.icon(forFile: settings.saveFolder.path)
-                              : NSWorkspace.shared.icon(for: .folder))
-                            .resizable().frame(width: 22, height: 22)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(settings.saveFolder.lastPathComponent)
-                            Text(settings.saveFolder.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-                                .font(.system(size: 11)).foregroundStyle(.secondary)
-                                .lineLimit(1).truncationMode(.middle)
-                        }
-                    }
-                }
-            } header: {
-                Text("Ablageordner")
-            } footer: {
-                Text("Dort liegt immer die bearbeitete Fassung — zensierte Stellen sind darin endgültig unkenntlich.")
-                    .settingsFootnote()
-            }
-            Section {
-                Picker("Originale aufbewahren", selection: $settings.retentionDays) {
-                    Text("7 Tage").tag(7)
-                    Text("30 Tage").tag(30)
-                    Text("90 Tage").tag(90)
-                    Text("1 Jahr").tag(365)
-                    Text("Unbegrenzt").tag(0)
-                }
-                LabeledContent("Belegt") { Text(usage).foregroundStyle(.secondary).monospacedDigit() }
-                HStack {
                     Spacer()
-                    Button("Originale jetzt löschen …", role: .destructive) { confirmPurge = true }
+                    Button("Ändern …") { chooseFolder() }.buttonStyle(PillButtonStyle())
+                    Button("Öffnen") {
+                        try? FileManager.default.createDirectory(at: settings.saveFolder, withIntermediateDirectories: true)
+                        NSWorkspace.shared.open(settings.saveFolder)
+                    }
+                    .buttonStyle(PillButtonStyle(primary: true))
                 }
-            } header: {
-                Text("Originale")
-            } footer: {
-                Text("Mit dem Original lässt sich eine Zensur später wieder aufheben oder ändern. Es liegt getrennt in der App-Ablage und wird nie geteilt.")
-                    .settingsFootnote()
+                .padding(.vertical, 14)
+            }
+            Card(title: "Originale", footer: "Mit dem Original lässt sich eine Zensur später ändern. Es liegt getrennt in der App-Ablage und wird nie geteilt.") {
+                Row(title: "Aufbewahren") {
+                    Choice(selection: $settings.retentionDays,
+                           options: [(7, "7 Tage"), (30, "30 Tage"), (90, "90 Tage"), (365, "1 Jahr"), (0, "Unbegrenzt")])
+                }
+                RowDivider()
+                Row(title: "Belegt") { Text(usage).font(.system(size: 13).monospacedDigit()).foregroundStyle(Theme.muted) }
+                RowDivider()
+                Row(title: "Alle Originale löschen", subtitle: "Dateien im Ablageordner bleiben") {
+                    Button("Löschen …") { confirmPurge = true }.buttonStyle(PillButtonStyle(destructive: true))
+                }
             }
         }
-        .formStyle(.grouped)
         .onAppear(perform: refreshUsage)
         .confirmationDialog("Alle Originale löschen?", isPresented: $confirmPurge) {
             Button("Löschen", role: .destructive) {
@@ -758,7 +736,7 @@ private struct StoragePane: View {
                 refreshUsage()
             }
         } message: {
-            Text("Die Dateien im Ablageordner bleiben. Bereits gespeicherte Zensuren lassen sich danach nicht mehr rückgängig machen.")
+            Text("Bereits gespeicherte Zensuren lassen sich danach nicht mehr ändern.")
         }
     }
 
@@ -784,168 +762,90 @@ private struct PrivacyPane: View {
     private let timer = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        Form {
-            PaneHeader(pane: .privacy)
-            Section {
-                permissionRow(symbol: "rectangle.dashed.badge.record", color: Color(red: 0.36, green: 0.35, blue: 0.9),
-                              title: "Bildschirm- & Systemaudioaufnahme", detail: "Für Screenshots und Videos nötig",
-                              granted: screen) {
+        VStack(alignment: .leading, spacing: 22) {
+            Card(title: "Freigaben") {
+                permission("rectangle.dashed.badge.record", "Bildschirm- & Systemaudioaufnahme", "Für Screenshots und Videos nötig", screen) {
                     if !CGRequestScreenCaptureAccess() { PermissionWindowController.show() }
                 }
-                permissionRow(symbol: "mic.fill", color: Color(red: 1, green: 0.58, blue: 0),
-                              title: "Mikrofon", detail: "Nur für Aufnahmen mit Kommentar",
-                              granted: mic == .authorized, optional: true) {
+                RowDivider()
+                permission("mic", "Mikrofon", "Nur für Aufnahmen mit Kommentar", mic == .authorized) {
                     if mic == .notDetermined {
                         AVCaptureDevice.requestAccess(for: .audio) { _ in }
                     } else {
                         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
                     }
                 }
-            } header: {
-                Text("Freigaben")
             }
-            Section {
-                Label("Texterkennung für die Auto-Zensur läuft auf diesem Mac.", systemImage: "cpu")
-                Label("Knips hat keinen Account und sendet nichts ins Internet.", systemImage: "network.slash")
-                Label("Geteilte und kopierte Dateien enthalten immer die zensierte Fassung.", systemImage: "checkmark.shield")
+            Card(title: "So arbeitet Knips") {
+                InfoLine(symbol: "cpu", text: "Texterkennung läuft auf diesem Mac")
+                RowDivider()
+                InfoLine(symbol: "network.slash", text: "Kein Konto, nichts geht ins Internet")
+                RowDivider()
+                InfoLine(symbol: "checkmark.shield", text: "Geteilte Dateien sind immer die zensierte Fassung")
+                RowDivider()
+                InfoLine(symbol: "doc.on.clipboard", text: "„Text kopieren“ lässt zensierte Wörter weg")
             }
         }
-        .formStyle(.grouped)
         .onReceive(timer) { _ in
             screen = ScreenCapture.hasPermission
             mic = AVCaptureDevice.authorizationStatus(for: .audio)
         }
     }
 
-    private func permissionRow(symbol: String, color: Color, title: String, detail: String, granted: Bool,
-                               optional: Bool = false, action: @escaping () -> Void) -> some View {
-        HStack(spacing: 10) {
-            IconTile(symbol: symbol, color: color, size: 26)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
+    private func permission(_ symbol: String, _ title: String, _ detail: String, _ granted: Bool, action: @escaping () -> Void) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol).font(.system(size: 16)).frame(width: 30, height: 30)
+                .background(Circle().fill(Theme.soft)).foregroundStyle(Theme.ink)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 14)).foregroundStyle(Theme.ink)
+                Text(detail).font(.system(size: 12)).foregroundStyle(Theme.muted)
             }
             Spacer()
             if granted {
                 Label("Erlaubt", systemImage: "checkmark.circle.fill")
-                    .labelStyle(.titleAndIcon)
-                    .foregroundStyle(.green)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color(red: 0.2, green: 0.6, blue: 0.4))
             } else {
-                Button(optional ? "Erlauben …" : "Freigabe einrichten …", action: action)
+                Button("Erlauben …", action: action).buttonStyle(PillButtonStyle(primary: true))
             }
         }
+        .padding(.vertical, 12)
     }
 }
 
 private struct AboutPane: View {
     private var version: String {
         let info = Bundle.main.infoDictionary
-        let v = info?["CFBundleShortVersionString"] as? String ?? "0.1.0"
-        let b = info?["CFBundleVersion"] as? String ?? "1"
-        return "Version \(v) (\(b))"
+        return "Version \(info?["CFBundleShortVersionString"] as? String ?? "0.1.0") (\(info?["CFBundleVersion"] as? String ?? "1"))"
     }
 
     var body: some View {
-        Form {
-            Section {
+        VStack(alignment: .leading, spacing: 22) {
+            Card {
                 VStack(spacing: 10) {
-                    Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 96, height: 96)
-                    Text("Knips").font(.system(size: 22, weight: .bold))
-                    Text(version).font(.system(size: 12)).foregroundStyle(.secondary)
-                    Text("Screenshots und kurze Bildschirmaufnahmen — mit Zensur für Bilder und Videos.")
-                        .font(.system(size: 12.5))
-                        .multilineTextAlignment(.center)
-                        .padding(.top, 2)
+                    Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 92, height: 92)
+                    Text("Knips").font(.system(size: 26, weight: .bold)).tracking(-0.5).foregroundStyle(Theme.ink)
+                    Text(version).font(.system(size: 12.5)).foregroundStyle(Theme.muted)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
+                .padding(.vertical, 26)
             }
-            Section {
-                LabeledContent("Ablageordner") {
-                    Button("Öffnen") { NSWorkspace.shared.open(AppSettings.shared.saveFolder) }
+            Card(title: "Funktionen") {
+                InfoLine(symbol: "", text: "Bereich, Fenster oder Bildschirm — Auswahl auf eingefrorenem Bild")
+                RowDivider()
+                InfoLine(symbol: "", text: "Zensur-Balken mit Text-Erkennung, auch in Videos")
+                RowDivider()
+                InfoLine(symbol: "", text: "Bildschirmvideos als MP4 oder GIF")
+                RowDivider()
+                InfoLine(symbol: "", text: "Text aus Screenshots kopieren")
+            }
+            Card(title: "Für Raycast & Co.") {
+                Row(title: "Befehle") {
+                    Text("knips://area · window · fullscreen · record · text · last · menu")
+                        .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.muted)
                 }
-                LabeledContent("Befehle für Raycast & Co.") {
-                    Text("knips://area · window · fullscreen · record").font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
-                }
             }
-            Section {
-                Text("© 2026 Patrick Birkholz").font(.system(size: 11)).foregroundStyle(.secondary).frame(maxWidth: .infinity)
-            }
+            Text("© 2026 Patrick Birkholz").font(.system(size: 11.5)).foregroundStyle(Theme.muted).padding(.horizontal, 6)
         }
-        .formStyle(.grouped)
-    }
-}
-
-private extension Text {
-    func settingsFootnote() -> some View {
-        font(.system(size: 11))
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.leading)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-extension SensitiveDetector.Kind {
-    var longTitle: String {
-        switch self {
-        case .email: "E-Mail-Adressen"
-        case .iban: "IBANs"
-        case .phone: "Telefonnummern"
-        case .card: "Kreditkartennummern"
-        case .secret: "API-Schlüssel, Tokens, Passwörter"
-        case .ip: "IP-Adressen"
-        }
-    }
-
-    var example: String {
-        switch self {
-        case .email: "name@example.com"
-        case .iban: "DE89 3704 0044 0532 0130 00 (mit Prüfsumme)"
-        case .phone: "+49 170 1234567, 030 1234567"
-        case .card: "4111 1111 1111 1111 (mit Luhn-Prüfung)"
-        case .secret: "sk_live_…, ghp_…, xoxb-…, AKIA…, JWT, „Passwort: …“"
-        case .ip: "192.168.178.1"
-        }
-    }
-}
-
-// MARK: - Kürzel aufnehmen
-
-@MainActor final class HotkeyRecorderState: ObservableObject {
-    static let shared = HotkeyRecorderState()
-    @Published var recording: HotkeyAction?
-    private var monitor: Any?
-
-    /// Liefert die neue Kombination, `keyCode == UInt32.max` für „entfernen“, oder nil bei Abbruch.
-    func start(_ action: HotkeyAction, onCombo: @escaping (KeyCombo?) -> Void) {
-        cancel()
-        recording = action
-        // Solange aufgenommen wird, dürfen die alten Kürzel nicht auslösen.
-        HotkeyManager.shared.unregisterAll()
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self else { return event }
-            if event.keyCode == 53 { self.finish(); onCombo(nil); return nil }
-            if event.keyCode == 51 || event.keyCode == 117, event.modifierFlags.intersection([.command, .option, .control]).isEmpty {
-                self.finish()
-                onCombo(KeyCombo(keyCode: UInt32.max, modifiers: 0))
-                return nil
-            }
-            guard let combo = KeyCombo(event: event) else { NSSound.beep(); return nil }
-            self.finish()
-            onCombo(combo)
-            return nil
-        }
-    }
-
-    func cancel() {
-        if recording != nil { finish() }
-    }
-
-    private func finish() {
-        if let monitor { NSEvent.removeMonitor(monitor) }
-        monitor = nil
-        recording = nil
-        HotkeyManager.shared.apply(AppSettings.shared.activeHotkeys)
     }
 }

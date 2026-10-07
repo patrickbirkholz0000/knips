@@ -3,7 +3,13 @@ import AVFoundation
 import UniformTypeIdentifiers
 
 enum Paths {
+    /// Selbsttests laufen isoliert in `KNIPS_TEST_DIR`, nie in der echten Ablage.
+    static var testRoot: URL? {
+        ProcessInfo.processInfo.environment["KNIPS_TEST_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+    }
+
     static var appSupport: URL {
+        if let testRoot { return testRoot.appendingPathComponent("support", isDirectory: true) }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent("Knips", isDirectory: true)
     }

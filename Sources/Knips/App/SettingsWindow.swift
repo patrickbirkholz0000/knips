@@ -408,7 +408,7 @@ private struct ShortcutsPane: View {
     @State private var tick = 0
 
     private let groups: [(String, [HotkeyAction])] = [
-        ("Bildschirmfotos", [.captureArea, .captureWindow, .captureFullscreen, .captureLastArea, .captureText]),
+        ("Bildschirmfotos", [.captureArea, .captureWindow, .captureFullscreen, .captureLastArea, .captureScrolling, .captureText]),
         ("Bildschirmaufnahme", [.toggleRecording]),
         ("Sonstiges", [.pinClipboard]),
     ]

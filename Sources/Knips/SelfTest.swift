@@ -56,6 +56,7 @@ import Vision
             case "record": try runAsync { try await record(out, seconds: Double(args.count > 2 ? args[2] : "3") ?? 3) }
             case "record-bench": try runAsync { try await recordBench(out) }
             case "track": try runAsync { try await track(out) }
+            case "stitch": try stitch(out)
             default:
                 print("Unbekannter Test \(args[0])")
                 return 2
@@ -533,6 +534,45 @@ import Vision
         try await windowShot(videoEditor.window!, out.appendingPathComponent("live-video-editor.png"))
         videoEditor.window?.orderOut(nil)
         model.shutdown()
+    }
+
+    // MARK: Scroll-Screenshot
+
+    /// Langes Testbild in überlappende „Bildschirm“-Ausschnitte zerlegen (unregelmäßige Scrollschritte,
+    /// einige ohne Bewegung) und wieder zusammensetzen — muss exakt das Original ergeben.
+    static func stitch(_ out: URL) throws {
+        let w = 1200, h = 4200, view = 900
+        let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)!
+        ctx.translateBy(x: 0, y: CGFloat(h)); ctx.scaleBy(x: 1, y: -1)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
+        ctx.setFillColor(CGColor(gray: 0.97, alpha: 1)); ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        for i in 0..<120 {
+            let y = CGFloat(20 + i * 34)
+            NSAttributedString(string: "Zeile \(i + 1) · Bestellung #\(48000 + i * 7) · Status: \(["offen", "versendet", "zugestellt"][i % 3])",
+                               attributes: [.font: NSFont.systemFont(ofSize: 20)]).draw(at: CGPoint(x: 40 + CGFloat(i % 5) * 12, y: y))
+            if i % 9 == 0 { ctx.setFillColor(NSColor.systemBlue.withAlphaComponent(0.25).cgColor); ctx.fill(CGRect(x: 700, y: y, width: 300, height: 26)) }
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        let tall = ctx.makeImage()!
+        let offsets = [0, 0, 140, 140, 410, 760, 760, 1180, 1500, 1990, 2400, 2760, 3100, 3300]
+        let frames = offsets.map { tall.cropping(to: CGRect(x: 0, y: $0, width: w, height: view))! }
+        let stitcher = ScrollStitcher(first: frames[0])
+        var added = 0
+        for f in frames.dropFirst() where stitcher.add(f) { added += 1 }
+        guard let result = stitcher.assemble() else { throw CaptureStore.StoreError.encode }
+        let expected = offsets.last! + view
+        // Pixelvergleich mit dem Original-Ausschnitt
+        let reference = tall.cropping(to: CGRect(x: 0, y: 0, width: w, height: expected))!
+        var diff = 0
+        if result.height == expected {
+            let a = RowProfile(result), b = RowProfile(reference)
+            for i in a.values.indices where a.values[i] != b.values[i] { diff += 1 }
+        }
+        print("Scroll-Screenshot: \(added) Abschnitte angehängt, Höhe \(result.height) px (erwartet \(expected)), abweichende Stichproben: \(diff)")
+        try write(ImageIOHelper.downscale(result, maxPixel: 1600), out.appendingPathComponent("scroll-zusammengesetzt.png"))
+        guard result.height == expected, diff == 0 else { throw CaptureStore.StoreError.read }
     }
 
     // MARK: Mitlaufende Balken

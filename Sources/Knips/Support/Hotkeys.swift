@@ -75,7 +75,7 @@ struct KeyCombo: Codable, Equatable, Hashable {
 }
 
 enum HotkeyAction: String, CaseIterable, Codable, Identifiable {
-    case captureArea, captureWindow, captureFullscreen, captureLastArea, captureText, toggleRecording, pinClipboard
+    case captureArea, captureWindow, captureFullscreen, captureLastArea, captureText, captureScrolling, toggleRecording, pinClipboard
 
     var id: String { rawValue }
 
@@ -86,6 +86,7 @@ enum HotkeyAction: String, CaseIterable, Codable, Identifiable {
         case .captureFullscreen: "Ganzen Bildschirm aufnehmen"
         case .captureLastArea: "Letzten Bereich wiederholen"
         case .captureText: "Text aus Bereich erfassen"
+        case .captureScrolling: "Scroll-Screenshot"
         case .toggleRecording: "Bildschirmaufnahme starten/stoppen"
         case .pinClipboard: "Bild aus Zwischenablage anpinnen"
         }
@@ -100,7 +101,7 @@ enum HotkeyAction: String, CaseIterable, Codable, Identifiable {
         case .captureWindow: return KeyCombo(keyCode: UInt32(kVK_ANSI_2), modifiers: mods)
         case .captureFullscreen: return KeyCombo(keyCode: UInt32(kVK_ANSI_3), modifiers: mods)
         case .toggleRecording: return KeyCombo(keyCode: UInt32(kVK_ANSI_5), modifiers: mods)
-        case .pinClipboard, .captureLastArea, .captureText: return nil
+        case .pinClipboard, .captureLastArea, .captureText, .captureScrolling: return nil
         }
     }
 }

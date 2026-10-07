@@ -15,6 +15,7 @@ import ScreenCaptureKit
         case .captureFullscreen: captureFullscreen()
         case .captureLastArea: captureLastArea()
         case .captureText: captureText()
+        case .captureScrolling: captureScrolling()
         case .toggleRecording: toggleRecording()
         case .pinClipboard: pinClipboard()
         }
@@ -134,6 +135,30 @@ import ScreenCaptureKit
                 finish(image: image, scale: frozen.scale, screen: screen)
             } catch {
                 report(error)
+            }
+        }
+    }
+
+    /// Bereich wählen, dann scrollen — Knips setzt die Abschnitte zu einem langen Bild zusammen.
+    func captureScrolling() {
+        let scroll = ScrollCaptureController.shared
+        if scroll.active {
+            scroll.finish(save: true)
+            return
+        }
+        presentOverlay(purpose: .scroll, windowMode: false) { result, freeze in
+            Task {
+                guard let frozen = try? await freeze.value else { return }
+                let area: (NSScreen, CGRect)?
+                switch result {
+                case .cancelled: area = nil
+                case .area(let s, let r): area = (s, r)
+                case .fullScreen(let s): area = (s, CGRect(origin: .zero, size: s.frame.size))
+                case .window(let w, let s):
+                    area = (s, w.frame.offsetBy(dx: -s.frame.minX, dy: -s.frame.minY).intersection(CGRect(origin: .zero, size: s.frame.size)).integral)
+                }
+                guard let area, let display = frozen.content.displays.first(where: { $0.displayID == area.0.displayID }) else { return }
+                scroll.begin(screen: area.0, display: display, localRect: area.1, content: frozen.content)
             }
         }
     }

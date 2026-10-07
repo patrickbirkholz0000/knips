@@ -1,7 +1,7 @@
 import AppKit
 import QuartzCore
 
-enum SelectionPurpose { case screenshot, recording, text }
+enum SelectionPurpose { case screenshot, recording, text, scroll }
 
 enum SelectionResult {
     /// Rechteck in Punkten relativ zum Bildschirm, Ursprung unten links.
@@ -411,6 +411,7 @@ final class SelectionView: NSView {
         let prefix = switch overlay.purpose {
         case .recording: "Aufnahme  ·  "
         case .text: "Text erfassen  ·  "
+        case .scroll: "Scroll-Screenshot: sichtbaren Bereich wählen  ·  "
         case .screenshot: ""
         }
         let text = overlay.windowMode

@@ -46,6 +46,7 @@ import ScreenCaptureKit
             case "pin": CaptureCoordinator.shared.perform(.pinClipboard)
             case "last": CaptureCoordinator.shared.perform(.captureLastArea)
             case "text": CaptureCoordinator.shared.perform(.captureText)
+            case "scroll": CaptureCoordinator.shared.perform(.captureScrolling)
             case "settings": SettingsWindowController.show()
             case "menu": StatusBarController.shared?.togglePanel()
             case "history": HistoryWindowController.show()
@@ -55,6 +56,14 @@ import ScreenCaptureKit
                 }
             case "debug-lastarea" where Paths.testRoot != nil:
                 CaptureCoordinator.shared.debugSetLastArea(CGRect(x: 100, y: 100, width: 400, height: 300))
+            case "debug-scroll" where Paths.testRoot != nil:
+                Task {
+                    guard let screen = NSScreen.main, let content = try? await ScreenCapture.content(),
+                          let display = content.displays.first(where: { $0.displayID == screen.displayID }) else { return }
+                    ScrollCaptureController.shared.begin(screen: screen, display: display, localRect: CGRect(x: 100, y: 100, width: 600, height: 400), content: content)
+                }
+            case "debug-scroll-done" where Paths.testRoot != nil:
+                ScrollCaptureController.shared.finish(save: true)
             case "debug-snapshot" where Paths.testRoot != nil:
                 Task { await Self.snapshotOwnWindows() }
             default: Log.info("Unbekannter Befehl: \(url.absoluteString)")

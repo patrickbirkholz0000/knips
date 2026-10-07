@@ -271,10 +271,11 @@ struct MenuPanelView: View {
             tile("record", recording ? "Stoppen" : "Video", recording ? "stop.circle.fill" : "record.circle",
                  .toggleRecording, tint: recording ? .red : nil) { actions.capture(.toggleRecording) }
             tile("last", "Letzter Bereich", "arrow.counterclockwise", .captureLastArea) { actions.capture(.captureLastArea) }
+            tile("scroll", "Scrollen", "arrow.down.doc", .captureScrolling) { actions.capture(.captureScrolling) }
             tile("text", "Text erfassen", "text.viewfinder", .captureText) { actions.capture(.captureText) }
             tile("pin", "Anpinnen", "pin", .pinClipboard) { actions.capture(.pinClipboard) }
             tile("open", "Bild öffnen", "photo.on.rectangle", nil, action: actions.openImage)
-            tile("folder", "Ordner", "folder", nil, action: actions.openFolder)
+
         }
     }
 
@@ -366,6 +367,7 @@ struct MenuPanelView: View {
     private var footer: some View {
         HStack(spacing: 4) {
             footerButton("settings", "Einstellungen", "gearshape", action: actions.settings)
+            footerButton("folder", "Ordner", "folder", action: actions.openFolder)
             Spacer()
             footerButton("quit", "Beenden", "power", action: actions.quit)
         }

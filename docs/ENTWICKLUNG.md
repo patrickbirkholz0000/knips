@@ -28,7 +28,11 @@ nach jedem Build neu erteilt werden.
 | `ui` / `selection` | Karten, Einstellungen, Auswahl-Overlay offscreen |
 | `live` | Bild- und Video-Editor als echtes Fenster, 1 pt in der Bildschirmecke, per SCK fotografiert |
 | `settings [bereich,…]` | Einstellungsfenster (Stil Systemeinstellungen) je Bereich, inkl. Kürzel-Eingabe |
-| `output` | Ausgabe 1× + PNG/JPEG, Original in voller Auflösung, Speichern aus dem Editor |
+| `output` | Ausgabe 1× + PNG/JPEG, Rahmen, Speichern aus dem Editor, „Text kopieren“ ohne Zensiertes |
+| `track` | Mitlaufender Zensurbalken in scrollendem Video (Texterkennung prüft jeden Zeitpunkt) |
+| `stitch` | Scroll-Screenshot: Ausschnitte → exakt das Originalbild (Pixelvergleich) |
+| `menu` / `history` | Menü-Panel und Verlauf-Fenster |
+| `perf` / `record-bench` | Zeiten (Overlay, Speichern, Texterkennung) und Video-Varianten |
 | `video` | Video-Zensur mit Zeitbereich, Kürzen, MP4- und GIF-Export, Auto-Zensur im Video |
 | `capture` / `record 3` | echte Aufnahme — gibt nur Maße/Dauer aus, speichert keine Inhalte |
 
@@ -61,7 +65,11 @@ Kollidieren sie mit eingeschalteten macOS-Kürzeln, fragt Knips einmal beim Star
 rückgängig in Einstellungen → Tastaturkurzbefehle).
 Zensur: Standard „Balken“, Editor startet mit dem Zensur-Werkzeug. Auto-Zensur-Knopf ist standardmäßig aus.
 Im Overlay: Leertaste = Fenstermodus, ⏎ = ganzer Bildschirm, Esc = Abbruch, ⇧ = Quadrat.
-URL-Befehle: `knips://area|window|fullscreen|record|pin|settings`.
+URL-Befehle: `knips://area|window|fullscreen|record|last|text|scroll|pin|menu|history|settings`.
+Test-Instanz: `KNIPS_TEST_DIR=<ordner> build/Knips.app/Contents/MacOS/Knips &`, Befehle dann über
+`swiftc -O scripts/test-command.swift -o .build/knips-test-command && .build/knips-test-command <befehl>`
+(URL-Aufrufe landen sonst bei der installierten App). In der Sandbox fasst Knips die Zwischenablage nie an.
+Nie Befehle testen, die das Auswahl-Overlay öffnen — das erscheint auf dem Bildschirm des Nutzers.
 
 ## Tempo (gemessen 08.10.2026, M4, zwei 4K-Bildschirme)
 
@@ -75,11 +83,18 @@ URL-Befehle: `knips://area|window|fullscreen|record|pin|settings`.
   unveränderte Frames überspringen (`FrameSignature`).
 - `--selftest perf` misst das alles (Bildschirmfoto nur im Speicher, gibt nur Zeiten aus).
 
+## Oberfläche
+
+Menü-Panel (`UI/MenuPanel.swift`) und Einstellungen (`App/SettingsWindow.swift`) folgen einem eigenen
+Stil: dunkles Panel mit Raster; Einstellungen mit dunkler Liste links (Pfeil am ausgewählten
+Eintrag), heller Fläche, weißen Karten, schwarzen Knöpfen (`Theme`). Verlauf-Fenster im selben Stil.
+
 ## Stand 08.10.2026
 
 Gebaut und geprüft (Selbsttests + Live-Fenster + End-to-End über URL-Befehle): Aufnahme, Overlay,
 Karten, Bild-Editor, Auto-Zensur, Bildschirmaufnahme, Video-Editor mit Zensur, MP4/GIF-Export.
 Nicht automatisch prüfbar, muss am Gerät getestet werden: Maus-Hover auf den Karten, Ziehen aus den
 Karten in andere Apps, das interaktive Auswahl-Overlay, Mikrofon-Aufnahme.
-Offen/Ideen: Verlauf-Fenster, Hintergrund/Rahmen („Beautify“), Zensurfelder, die bewegtem Inhalt
-folgen (Vision-Tracking), OCR-Text kopieren, Scroll-Screenshots.
+Seitdem dazu: Editor-Zoom, schlaue Zensurbalken (Klick auf Text), Text kopieren/erfassen, Letzter Bereich,
+Scroll-Screenshots, Verlauf, Rahmen, Videos 1×/HEVC/Klicks, mitlaufende Video-Balken, kleinere GIFs.
+Offen: Developer-ID-Signatur + Notarisierung (nur nötig, wenn andere Knips bekommen sollen).

@@ -20,6 +20,8 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
     }
 
     private var drag: Drag = .none
+    /// Ungeschnappte Eckpunkte beim Ziehen eines Zensurbalkens.
+    private var rawRedaction: (start: CGPoint, end: CGPoint)?
     private var editingID: UUID?
     private var textField: NSTextField?
     private var trackingArea: NSTrackingArea?
@@ -59,24 +61,118 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
         return max(0.02, min(s, 1 / model.scale))
     }
 
+    /// Aktueller Maßstab: Zoom oder eingepasst.
+    private var scaleFactor: CGFloat { model.zoom ?? fitScale }
+
     private var origin: CGPoint {
-        let vp = viewport, s = fitScale
-        return CGPoint(x: ((bounds.width - vp.width * s) / 2).rounded(), y: ((bounds.height - vp.height * s) / 2).rounded())
+        let vp = viewport, s = scaleFactor
+        guard model.zoom != nil else {
+            return CGPoint(x: ((bounds.width - vp.width * s) / 2).rounded(), y: ((bounds.height - vp.height * s) / 2).rounded())
+        }
+        let c = model.zoomCenter
+        return CGPoint(x: (bounds.midX - (c.x - vp.minX) * s).rounded(), y: (bounds.midY - (c.y - vp.minY) * s).rounded())
     }
 
     private func toImage(_ p: CGPoint) -> CGPoint {
-        let s = fitScale, o = origin, vp = viewport
+        let s = scaleFactor, o = origin, vp = viewport
         return CGPoint(x: (p.x - o.x) / s + vp.minX, y: (p.y - o.y) / s + vp.minY)
     }
 
     private func toView(_ p: CGPoint) -> CGPoint {
-        let s = fitScale, o = origin, vp = viewport
+        let s = scaleFactor, o = origin, vp = viewport
         return CGPoint(x: (p.x - vp.minX) * s + o.x, y: (p.y - vp.minY) * s + o.y)
     }
 
     private func toView(_ r: CGRect) -> CGRect {
-        let a = toView(r.origin), s = fitScale
+        let a = toView(r.origin), s = scaleFactor
         return CGRect(x: a.x, y: a.y, width: r.width * s, height: r.height * s)
+    }
+
+    // MARK: Zoom
+
+    private var spaceHeld = false
+    private var panning: CGPoint?
+
+    func zoomIn() { setZoom(scaleFactor * 1.25, anchor: nil) }
+    func zoomOut() { setZoom(scaleFactor / 1.25, anchor: nil) }
+    func zoomToFit() { setZoom(nil, anchor: nil) }
+    /// 100 % = ein Bildpunkt pro Bildschirmpunkt, also so groß wie beim Aufnehmen.
+    func zoomActualSize() { setZoom(1 / model.scale, anchor: nil) }
+
+    private func setZoom(_ value: CGFloat?, anchor: CGPoint?) {
+        commitPendingEdits()
+        guard let value, value > fitScale * 1.01 else {
+            model.zoom = nil
+            updateZoomPercent()
+            needsDisplay = true
+            return
+        }
+        let z = min(value, 8)
+        let anchorView = anchor ?? CGPoint(x: bounds.midX, y: bounds.midY)
+        let anchorImage = toImage(anchorView)
+        model.zoom = z
+        // Punkt unter dem Mauszeiger bleibt stehen.
+        model.zoomCenter = CGPoint(x: anchorImage.x - (anchorView.x - bounds.midX) / z,
+                                   y: anchorImage.y - (anchorView.y - bounds.midY) / z)
+        clampCenter()
+        updateZoomPercent()
+        needsDisplay = true
+    }
+
+    private func clampCenter() {
+        guard let z = model.zoom else { return }
+        let vp = viewport
+        let halfW = bounds.width / 2 / z, halfH = bounds.height / 2 / z
+        var c = model.zoomCenter
+        c.x = vp.width <= 2 * halfW ? vp.midX : max(vp.minX + halfW - 40 / z, min(c.x, vp.maxX - halfW + 40 / z))
+        c.y = vp.height <= 2 * halfH ? vp.midY : max(vp.minY + halfH - 40 / z, min(c.y, vp.maxY - halfH + 40 / z))
+        model.zoomCenter = c
+    }
+
+    private func pan(by d: CGVector) {
+        guard let z = model.zoom else { return }
+        model.zoomCenter.x -= d.dx / z
+        model.zoomCenter.y -= d.dy / z
+        clampCenter()
+        needsDisplay = true
+    }
+
+    private func updateZoomPercent() {
+        let p = Int((scaleFactor * model.scale * 100).rounded())
+        if model.zoomPercent != p { model.zoomPercent = p }
+    }
+
+    override func layout() {
+        super.layout()
+        clampCenter()
+        updateZoomPercent()
+    }
+
+    override func magnify(with event: NSEvent) {
+        setZoom(scaleFactor * (1 + event.magnification), anchor: convert(event.locationInWindow, from: nil))
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        if event.modifierFlags.contains(.command) {
+            let delta = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY * 0.01 : event.scrollingDeltaY * 0.1
+            setZoom(scaleFactor * (1 + delta), anchor: convert(event.locationInWindow, from: nil))
+        } else if model.zoom != nil {
+            let f: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 10
+            pan(by: CGVector(dx: event.scrollingDeltaX * f, dy: event.scrollingDeltaY * f))
+        } else {
+            super.scrollWheel(with: event)
+        }
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.command, .option, .control]) == .command else { return super.performKeyEquivalent(with: event) }
+        switch event.charactersIgnoringModifiers {
+        case "+", "=": zoomIn(); return true
+        case "-": zoomOut(); return true
+        case "0": zoomToFit(); return true
+        case "1": zoomActualSize(); return true
+        default: return super.performKeyEquivalent(with: event)
+        }
     }
 
     // MARK: Zeichnen
@@ -86,7 +182,7 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
         Self.background.setFill()
         bounds.intersection(dirtyRect).fill()
 
-        let vp = viewport, s = fitScale
+        let vp = viewport, s = scaleFactor
         let imageRect = toView(vp)
 
         ctx.saveGState()
@@ -193,7 +289,7 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
 
     /// Oberste Anmerkung unter dem Punkt (Bildkoordinaten).
     private func annotation(at p: CGPoint) -> Annotation? {
-        let tolerance = 6 / fitScale
+        let tolerance = 6 / scaleFactor
         let ordered = model.annotations.filter { $0.kind != .redact } + model.annotations.filter { $0.kind == .redact }
         for a in ordered.reversed() {
             switch a.kind {
@@ -221,6 +317,12 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
         if editingID != nil { endTextEditing() }
         window?.makeFirstResponder(self)
         let vp = convert(event.locationInWindow, from: nil)
+        // Leertaste gedrückt: Ansicht verschieben statt zeichnen.
+        if spaceHeld, model.zoom != nil {
+            panning = vp
+            NSCursor.closedHand.set()
+            return
+        }
         let p = toImage(vp)
 
         if model.tool == .crop {
@@ -284,12 +386,18 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
             model.checkpoint()
             let a = model.makeAnnotation(kind: kind, at: p)
             model.annotations.append(a)
+            if kind == .redact { rawRedaction = (p, p) }
             drag = .create(a.id)
         }
     }
 
     override func mouseDragged(with event: NSEvent) {
         let vp = convert(event.locationInWindow, from: nil)
+        if let last = panning {
+            pan(by: CGVector(dx: vp.x - last.x, dy: vp.y - last.y))
+            panning = vp
+            return
+        }
         var p = toImage(vp)
         let shift = event.modifierFlags.contains(.shift)
         switch drag {
@@ -297,6 +405,15 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
             break
         case .create(let id):
             guard let a = model.annotations.first(where: { $0.id == id }) else { return }
+            if a.kind == .redact, var raw = rawRedaction {
+                raw.end = p
+                rawRedaction = raw
+                let drawn = CGRect(x: min(raw.start.x, p.x), y: min(raw.start.y, p.y), width: abs(p.x - raw.start.x), height: abs(p.y - raw.start.y))
+                // ⌥ beim Ziehen: exakt wie gezogen, ohne Anpassen an Wörter.
+                let r = event.modifierFlags.contains(.option) ? drawn : model.snappedRedaction(drawn)
+                model.update(id) { $0.start = r.origin; $0.end = CGPoint(x: r.maxX, y: r.maxY) }
+                return
+            }
             if shift { p = constrain(p, from: a.start, lineLike: a.isLineLike) }
             model.update(id) { $0.end = p }
         case .move(let id, let last, _):
@@ -348,12 +465,22 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if panning != nil {
+            panning = nil
+            NSCursor.openHand.set()
+            return
+        }
         switch drag {
         case .create(let id):
             if let a = model.annotations.first(where: { $0.id == id }) {
-                let viewLength = hypot(a.end.x - a.start.x, a.end.y - a.start.y) * fitScale
-                let tooSmall = a.isLineLike ? viewLength < 6 : (a.rect.width * fitScale < 4 || a.rect.height * fitScale < 4)
-                if tooSmall {
+                let viewLength = hypot(a.end.x - a.start.x, a.end.y - a.start.y) * scaleFactor
+                let tooSmall = a.isLineLike ? viewLength < 6 : (a.rect.width * scaleFactor < 4 || a.rect.height * scaleFactor < 4)
+                if tooSmall, a.kind == .redact, let start = rawRedaction?.start,
+                   let target = model.textTarget(at: start, word: event.modifierFlags.contains(.option)) {
+                    // Klick auf Text: Balken über Zeile bzw. Wort.
+                    model.update(id) { $0.start = target.origin; $0.end = CGPoint(x: target.maxX, y: target.maxY) }
+                    model.selectedID = id
+                } else if tooSmall {
                     model.remove(id)
                     model.dropCheckpoint()
                 } else {
@@ -366,6 +493,7 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
             break
         }
         drag = .none
+        rawRedaction = nil
         needsDisplay = true
     }
 
@@ -395,8 +523,22 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
 
     // MARK: Tastatur
 
+    override func keyUp(with event: NSEvent) {
+        if event.keyCode == 49 {
+            spaceHeld = false
+            if let w = window { updateCursor(at: convert(w.mouseLocationOutsideOfEventStream, from: nil)) }
+            return
+        }
+        super.keyUp(with: event)
+    }
+
     override func keyDown(with event: NSEvent) {
         let mods = event.modifierFlags.intersection([.command, .control, .option])
+        if event.keyCode == 49 {
+            if !spaceHeld, model.zoom != nil { NSCursor.openHand.set() }
+            spaceHeld = true
+            return
+        }
         switch event.keyCode {
         case 51, 117: // ⌫ ⌦
             model.deleteSelection()
@@ -457,6 +599,7 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
     override func mouseMoved(with event: NSEvent) { updateCursor(at: convert(event.locationInWindow, from: nil)) }
 
     private func updateCursor(at vp: CGPoint) {
+        if spaceHeld, model.zoom != nil { NSCursor.openHand.set(); return }
         if model.tool == .crop {
             if let d = model.cropDraft, toView(d).contains(vp) { NSCursor.openHand.set() } else { NSCursor.crosshair.set() }
             return
@@ -477,7 +620,7 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
         guard let a = model.annotations.first(where: { $0.id == id }) else { return }
         editingID = id
         let field = GrowingTextField(string: a.text)
-        field.font = NSFont.systemFont(ofSize: a.fontSize(scale: model.scale) * fitScale, weight: .bold)
+        field.font = NSFont.systemFont(ofSize: a.fontSize(scale: model.scale) * scaleFactor, weight: .bold)
         field.textColor = a.color.nsColor
         field.isBordered = false
         field.drawsBackground = true

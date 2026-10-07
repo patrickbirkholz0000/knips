@@ -78,6 +78,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
     @Published var tool: EditorTool {
         didSet {
             guard tool != oldValue else { return }
+            if tool == .crop || oldValue == .crop { zoom = nil }
             if tool == .crop {
                 cropDraft = crop ?? fullRect
                 selectedID = nil
@@ -96,6 +97,16 @@ enum EditorTool: String, CaseIterable, Identifiable {
     @Published var busy: String?
     @Published var toast: String?
     @Published private(set) var canUndo = false
+    /// Zoom in Ansichtspunkten pro Bildpixel; nil = einpassen.
+    @Published var zoom: CGFloat?
+    /// Bildpunkt in der Mitte der Ansicht (nur bei Zoom).
+    var zoomCenter: CGPoint = .zero
+    /// Anzeige für die Zoom-Leiste: 100 % = so groß wie auf dem Bildschirm.
+    @Published var zoomPercent = 100
+    /// Erkannte Textzeilen (im Hintergrund beim Öffnen) — für schlaue Balken und „Text kopieren“.
+    private(set) var textLines: [TextLine] = []
+    private(set) var textReady = false
+    private var textWaiters: [CheckedContinuation<Void, Never>] = []
     @Published private(set) var canRedo = false
 
     private struct Snapshot { var annotations: [Annotation]; var crop: CGRect? }
@@ -120,6 +131,55 @@ enum EditorTool: String, CaseIterable, Identifiable {
         }
         self.size = StrokeSize(rawValue: d.integer(forKey: "editorSize")) ?? .medium
         self.redactStyle = AppSettings.shared.redactStyle
+        let image = base
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let lines = TextLayout.lines(in: image)
+            await self?.didRecognize(lines)
+        }
+    }
+
+    private func didRecognize(_ lines: [TextLine]) {
+        textLines = lines
+        textReady = true
+        textWaiters.forEach { $0.resume() }
+        textWaiters.removeAll()
+    }
+
+    func waitForText() async {
+        if textReady { return }
+        await withCheckedContinuation { textWaiters.append($0) }
+    }
+
+    /// Wortgenaue Zensur: Jedes Wort, das der Balken in der Höhe deutlich trifft, wird ganz bedeckt —
+    /// auch wenn nur ein Teil davon überzogen wurde (lange Schlüssel sind oft ein einziges „Wort“).
+    func snappedRedaction(_ r: CGRect) -> CGRect {
+        let pad = 2 * scale
+        var out = r
+        for line in textLines where line.rect.intersects(r) {
+            for w in line.words.map(\.rect) {
+                let i = w.intersection(r)
+                guard !i.isNull else { continue }
+                if i.height >= w.height * 0.35, i.width >= min(w.width * 0.15, 4 * scale) {
+                    out = out.union(w.insetBy(dx: -pad, dy: -pad))
+                }
+            }
+        }
+        return out.intersection(fullRect)
+    }
+
+    /// Klick auf Text: ganze Zeile (oder mit `word` nur das Wort darunter).
+    func textTarget(at p: CGPoint, word: Bool) -> CGRect? {
+        let pad = 3 * scale
+        guard let line = textLines.first(where: { $0.rect.insetBy(dx: -pad, dy: -pad).contains(p) }) else { return nil }
+        if word, let w = line.words.first(where: { $0.rect.insetBy(dx: -pad, dy: -pad).contains(p) }) {
+            return w.rect.insetBy(dx: -pad, dy: -pad).intersection(fullRect)
+        }
+        return line.rect.insetBy(dx: -pad, dy: -pad * 0.7).intersection(fullRect)
+    }
+
+    /// Erkannter Text ohne zensierte Stellen.
+    func visibleText() -> String {
+        TextLayout.plainText(textLines, excluding: annotations.filter { $0.kind == .redact }.map(\.rect))
     }
 
     var fullRect: CGRect { CGRect(x: 0, y: 0, width: base.width, height: base.height) }

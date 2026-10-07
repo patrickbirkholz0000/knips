@@ -145,3 +145,73 @@ enum SensitiveDetector {
         return remainder == 1
     }
 }
+
+/// Textzeilen und Wörter eines Bildes (Pixel, Ursprung oben links) — Grundlage für die schlauen
+/// Zensurbalken und „Text kopieren“.
+struct TextLine: Sendable {
+    struct Word: Sendable { let text: String; let rect: CGRect }
+    let text: String
+    let rect: CGRect
+    let words: [Word]
+}
+
+enum TextLayout {
+    static func lines(in source: CGImage) -> [TextLine] {
+        let image = ImageIOHelper.downscale(source, maxPixel: SensitiveDetector.ocrMaxPixel)
+        let back = CGFloat(source.width) / CGFloat(image.width)
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        request.recognitionLanguages = ["de-DE", "en-US"]
+        do { try VNImageRequestHandler(cgImage: image, options: [:]).perform([request]) } catch { return [] }
+        let w = CGFloat(image.width) * back, h = CGFloat(image.height) * back
+        func pixels(_ box: CGRect) -> CGRect {
+            CGRect(x: box.minX * w, y: (1 - box.maxY) * h, width: box.width * w, height: box.height * h)
+        }
+        var result: [TextLine] = []
+        for observation in request.results ?? [] {
+            guard let candidate = observation.topCandidates(1).first else { continue }
+            let text = candidate.string
+            var words: [TextLine.Word] = []
+            var index = text.startIndex
+            while index < text.endIndex {
+                guard let start = text[index...].firstIndex(where: { !$0.isWhitespace }) else { break }
+                let end = text[start...].firstIndex(where: \.isWhitespace) ?? text.endIndex
+                if let box = try? candidate.boundingBox(for: start..<end)?.boundingBox {
+                    words.append(TextLine.Word(text: String(text[start..<end]), rect: pixels(box)))
+                }
+                index = end
+            }
+            let lineRect = words.isEmpty ? pixels(observation.boundingBox) : words.dropFirst().reduce(words[0].rect) { $0.union($1.rect) }
+            result.append(TextLine(text: text, rect: lineRect, words: words))
+        }
+        // Lesereihenfolge: oben nach unten, innerhalb einer Zeile links nach rechts.
+        return result.sorted { a, b in
+            abs(a.rect.midY - b.rect.midY) < min(a.rect.height, b.rect.height) * 0.5 ? a.rect.minX < b.rect.minX : a.rect.midY < b.rect.midY
+        }
+    }
+
+    /// Text in Lesereihenfolge. Wörter unter einer Zensur werden durch █ ersetzt — sie dürfen nie
+    /// über „Text kopieren“ wieder auftauchen.
+    static func plainText(_ lines: [TextLine], excluding hidden: [CGRect] = []) -> String {
+        var out: [String] = []
+        var lastMidY: CGFloat?
+        var current = ""
+        for line in lines {
+            let isHidden: (CGRect) -> Bool = { r in hidden.contains { $0.intersection(r).area > r.area * 0.15 } }
+            if line.words.isEmpty, isHidden(line.rect) { continue }
+            let words = line.words.map { isHidden($0.rect) ? "████" : $0.text }
+            if !words.isEmpty, words.allSatisfy({ $0 == "████" }) { continue }
+            let text = line.words.isEmpty ? line.text : words.joined(separator: " ")
+            if let y = lastMidY, abs(line.rect.midY - y) < line.rect.height * 0.5 {
+                current += "  " + text
+            } else {
+                if !current.isEmpty { out.append(current) }
+                current = text
+            }
+            lastMidY = line.rect.midY
+        }
+        if !current.isEmpty { out.append(current) }
+        return out.joined(separator: "\n")
+    }
+}

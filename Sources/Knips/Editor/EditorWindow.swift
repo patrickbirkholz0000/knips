@@ -5,7 +5,7 @@ import SwiftUI
     private static var open: [UUID: EditorWindowController] = [:]
 
     let model: EditorModel
-    private var canvas: CanvasView!
+    private(set) var canvas: CanvasView!
     private var item: CaptureItem
 
     static func show(_ item: CaptureItem, tool: EditorTool? = nil) {
@@ -177,6 +177,7 @@ struct EditorRootView: View {
                 }
             }
             .animation(.spring(duration: 0.3), value: model.toast)
+            .overlay(alignment: .bottomTrailing) { ZoomControl(model: model, canvas: canvas).padding(14) }
         }
         .background(Color(nsColor: CanvasView.background))
         .ignoresSafeArea()
@@ -255,6 +256,11 @@ struct EditorToolbar: View {
 
     @ViewBuilder private var styleControls: some View {
         if activeKind == .redact {
+            Text("Klick auf Text = Zeile · ⌥ = Wort")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.55))
+                .fixedSize()
+                .help("Klick auf eine Textzeile legt einen Balken darüber, ⌥-Klick nur über ein Wort. Beim Ziehen wird der Balken bis zum Wortende erweitert — ⌥ beim Ziehen schaltet das ab.")
             HStack(spacing: 2) {
                 ForEach(RedactStyle.allCases) { style in
                     let on = (model.selected?.kind == .redact ? model.selected?.redactStyle : model.redactStyle) == style
@@ -391,5 +397,44 @@ struct ToolbarButtonStyle: ButtonStyle {
             )
             .foregroundStyle(.white.opacity(isEnabled ? 1 : 0.4))
             .opacity(configuration.isPressed ? 0.85 : 1)
+    }
+}
+
+/// Zoom unten rechts: −, Prozent (Klick: Einpassen ↔ 100 %), +.
+private struct ZoomControl: View {
+    @ObservedObject var model: EditorModel
+    let canvas: CanvasView
+
+    var body: some View {
+        HStack(spacing: 0) {
+            button("minus", help: "Verkleinern (⌘−)") { canvas.zoomOut() }
+            Button {
+                if model.zoom == nil { canvas.zoomActualSize() } else { canvas.zoomToFit() }
+            } label: {
+                Text(model.zoom == nil ? "Einpassen · \(model.zoomPercent) %" : "\(model.zoomPercent) %")
+                    .font(.system(size: 11.5, weight: .semibold).monospacedDigit())
+                    .frame(minWidth: 52)
+                    .padding(.horizontal, 6)
+                    .frame(height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(model.zoom == nil ? "Originalgröße (⌘1)" : "Einpassen (⌘0) · Leertaste + Ziehen verschiebt")
+            button("plus", help: "Vergrößern (⌘+) · auch Trackpad-Zoom oder ⌘ + Scrollen") { canvas.zoomIn() }
+        }
+        .foregroundStyle(.white.opacity(0.9))
+        .background(Capsule().fill(Color.black.opacity(0.62)))
+        .overlay(Capsule().strokeBorder(Color.white.opacity(0.12)))
+    }
+
+    private func button(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .bold))
+                .frame(width: 28, height: 26)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 }

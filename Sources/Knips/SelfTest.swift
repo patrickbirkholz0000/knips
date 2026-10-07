@@ -395,6 +395,35 @@ import Vision
         editor.model.selectedID = red.id
         editor.window?.setContentSize(NSSize(width: 1180, height: 640))
         try await windowShot(editor.window!, out.appendingPathComponent("live-editor.png"))
+        // Zoom: 100 % und 250 % um die E-Mail-Zeile
+        editor.canvas.zoomActualSize()
+        try await windowShot(editor.window!, out.appendingPathComponent("live-editor-zoom100.png"))
+        editor.canvas.zoomIn(); editor.canvas.zoomIn(); editor.canvas.zoomIn(); editor.canvas.zoomIn()
+        print("   Zoom jetzt \(editor.model.zoomPercent) %")
+        try await windowShot(editor.window!, out.appendingPathComponent("live-editor-zoom250.png"))
+        editor.canvas.zoomToFit()
+
+        // Schlaue Balken: Klick auf Zeile, ⌥-Klick auf Wort, angeschnittenes Ziehen
+        await editor.model.waitForText()
+        print("   Textzeilen erkannt: \(editor.model.textLines.count)")
+        var smart: [Annotation] = []
+        for (point, word) in [(CGPoint(x: 600, y: 320), false), (CGPoint(x: 560, y: 375), true)] {
+            if let r = editor.model.textTarget(at: point, word: word) {
+                var a = Annotation(kind: .redact, start: r.origin, end: CGPoint(x: r.maxX, y: r.maxY))
+                a.redactStyle = .solid
+                smart.append(a)
+                print("   \(word ? "Wort" : "Zeile") bei \(Int(point.x)),\(Int(point.y)) → \(Int(r.minX)),\(Int(r.minY)) \(Int(r.width))×\(Int(r.height))")
+            }
+        }
+        let drawn = CGRect(x: 640, y: 425, width: 180, height: 14)   // schneidet den Stripe-Key nur an
+        let snapped = editor.model.snappedRedaction(drawn)
+        print("   Gezogen \(Int(drawn.width))×\(Int(drawn.height)) → angepasst \(Int(snapped.minX)),\(Int(snapped.minY)) \(Int(snapped.width))×\(Int(snapped.height))")
+        var cut = Annotation(kind: .redact, start: snapped.origin, end: CGPoint(x: snapped.maxX, y: snapped.maxY))
+        cut.redactStyle = .solid
+        smart.append(cut)
+        editor.model.annotations = smart
+        try await windowShot(editor.window!, out.appendingPathComponent("live-editor-schlaue-balken.png"))
+        print("   Sichtbarer Text ohne Zensur:\n" + editor.model.visibleText().split(separator: "\n").map { "     | " + $0 }.joined(separator: "\n"))
         editor.model.selectedID = nil
         editor.model.tool = .arrow
         try await windowShot(editor.window!, out.appendingPathComponent("live-editor-pfeil.png"))

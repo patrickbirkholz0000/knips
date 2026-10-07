@@ -301,16 +301,20 @@ private struct ShortcutsPane: View {
     var body: some View {
         let _ = conflictTick
         let conflicts = conflicting
+        let blockedIDs = Array(Set(SystemShortcuts.conflictingIDs(for: Array(settings.activeHotkeys.values)))
+            .union(SystemShortcuts.enabledScreenshotIDs())).sorted()
         Form {
             PaneHeader(pane: .shortcuts)
-            if !conflicts.isEmpty {
+            if !blockedIDs.isEmpty {
                 Section {
-                    if !conflicts.isEmpty {
+                    if !blockedIDs.isEmpty {
                         notice(symbol: "exclamationmark.triangle.fill", color: .yellow,
-                               title: "macOS nutzt \(conflicts.map(\.display).joined(separator: ", ")) noch selbst",
-                               detail: "Damit diese Kürzel bei Knips ankommen, schaltet Knips die gleichen macOS-Kürzel für Bildschirmfotos ab. Lässt sich hier jederzeit rückgängig machen.") {
-                            Button("Für Knips übernehmen") {
-                                SystemShortcuts.takeOver(SystemShortcuts.conflictingIDs(for: Array(settings.activeHotkeys.values)))
+                               title: conflicts.isEmpty
+                                   ? "macOS belegt \(SystemShortcuts.displayList(blockedIDs)) noch selbst"
+                                   : "macOS nutzt \(conflicts.map(\.display).joined(separator: ", ")) noch selbst",
+                               detail: "Solange das so ist, kommen diese Kürzel nicht bei Knips an — auch nicht beim Festlegen hier. Knips schaltet die macOS-Kürzel für Bildschirmfotos ab; jederzeit rückgängig zu machen.") {
+                            Button("Für Knips freimachen") {
+                                SystemShortcuts.takeOver(blockedIDs)
                                 conflictTick += 1
                             }
                         }
@@ -348,7 +352,7 @@ private struct ShortcutsPane: View {
                     }
                 }
             } footer: {
-                Text("Kürzel anklicken und die neue Kombination drücken. ⌫ entfernt das Kürzel, Esc bricht ab. Standard wie bei macOS: ⌘⇧3 ganzer Bildschirm, ⌘⇧4 Bereich (Leertaste: Fenster), ⌘⇧5 Bildschirmaufnahme.")
+                Text("Kürzel anklicken und die neue Kombination drücken. ⌫ entfernt das Kürzel, Esc bricht ab. Standard wie bei macOS: ⇧⌘3 ganzer Bildschirm, ⇧⌘4 Bereich (Leertaste: Fenster), ⇧⌘5 Bildschirmaufnahme.")
                     .settingsFootnote()
             }
         }

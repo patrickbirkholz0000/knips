@@ -126,7 +126,7 @@ import ScreenCaptureKit
             info.append("macOS belegt \(list) noch für eigene Bildschirmfotos. Knips schaltet diese macOS-Kürzel ab — in den Knips-Einstellungen unter „Tastaturkurzbefehle“ jederzeit wiederherstellbar.")
         }
         let alert = NSAlert()
-        alert.messageText = "⌘⇧3, ⌘⇧4 und ⌘⇧5 für Knips übernehmen?"
+        alert.messageText = "⇧⌘3, ⇧⌘4 und ⇧⌘5 für Knips übernehmen?"
         alert.informativeText = info.joined(separator: "\n\n")
         alert.addButton(withTitle: "Übernehmen")
         alert.addButton(withTitle: "Nicht jetzt")

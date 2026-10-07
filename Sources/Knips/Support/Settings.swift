@@ -101,19 +101,32 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
         migrate()
     }
 
-    /// v2 (08.10.2026): Kürzel wie macOS (⌘⇧ statt ⌥⇧), Zensur standardmäßig als Balken,
-    /// Editor startet mit dem Zensur-Werkzeug.
     private func migrate() {
-        guard d.integer(forKey: "settingsVersion") < 2 else { return }
-        let old = UInt32(optionKey | shiftKey)
+        let version = d.integer(forKey: "settingsVersion")
+        guard version < 3 else { return }
         var keys = hotkeys
+        if version < 2 {
+            // v2 (08.10.2026): Zensur standardmäßig als Balken, Editor startet mit dem Zensur-Werkzeug.
+            redactStyle = .solid
+            d.set(RedactStyle.solid.rawValue, forKey: "redactStyle")
+            d.removeObject(forKey: "editorTool")
+        }
+        // v3: Kürzel wie macOS. Alte ⌥⇧-Belegung → ⌘⇧. ⌘3/⌘4/⌘5 ohne ⇧ entstehen, wenn macOS ⌘⇧3/⌘⇧5
+        // beim Festlegen abfängt — global würde ⌘3 dann in jeder App fehlen.
+        let optShift = UInt32(optionKey | shiftKey), cmdOnly = UInt32(cmdKey), cmdShift = UInt32(cmdKey | shiftKey)
         for action in HotkeyAction.allCases {
-            if let combo = keys[action], combo.modifiers == old, let new = action.defaultCombo { keys[action] = new }
+            guard let combo = keys[action] else { continue }
+            if combo.modifiers == optShift, let new = action.defaultCombo {
+                keys[action] = new
+            } else if combo.modifiers == cmdOnly, [kVK_ANSI_3, kVK_ANSI_4, kVK_ANSI_5].map(UInt32.init).contains(combo.keyCode) {
+                keys[action] = KeyCombo(keyCode: combo.keyCode, modifiers: cmdShift)
+            }
         }
         hotkeys = keys
-        redactStyle = .solid
-        d.removeObject(forKey: "editorTool")
-        d.set(2, forKey: "settingsVersion")
+        if let data = try? JSONEncoder().encode(Dictionary(uniqueKeysWithValues: keys.map { ($0.key.rawValue, $0.value) })) {
+            d.set(data, forKey: "hotkeys")
+        }
+        d.set(3, forKey: "settingsVersion")
     }
 
     /// Tatsächlich registrierte Kürzel.

@@ -89,7 +89,7 @@ enum HotkeyAction: String, CaseIterable, Codable, Identifiable {
         }
     }
 
-    /// Wie macOS: ⌘⇧3 Bildschirm, ⌘⇧4 Bereich, ⌘⇧5 Aufnahme. Die gleichnamigen macOS-Kürzel
+    /// Wie macOS: ⇧⌘3 Bildschirm, ⇧⌘4 Bereich, ⇧⌘5 Aufnahme. Die gleichnamigen macOS-Kürzel
     /// schaltet Knips auf Nachfrage ab (`SystemShortcuts.takeOver`).
     var defaultCombo: KeyCombo? {
         let mods = UInt32(cmdKey | shiftKey)
@@ -211,6 +211,16 @@ enum SystemShortcuts {
         CFPreferencesAppSynchronize(domain)
         UserDefaults.standard.removeObject(forKey: "takenSystemShortcuts")
         reloadSystemHotkeys()
+    }
+
+    /// Eingeschaltete macOS-Kürzel ⇧⌘3 / ⇧⌘4 / ⇧⌘5. Solange sie aktiv sind, fängt macOS die Tasten ab —
+    /// auch beim Festlegen in den Knips-Einstellungen.
+    static func enabledScreenshotIDs() -> [Int] {
+        let dict = (CFPreferencesCopyAppValue(key, domain) as? [String: Any]) ?? [:]
+        return [28, 30, 184].filter { id in
+            guard let entry = dict[String(id)] as? [String: Any] else { return true }
+            return (entry["enabled"] as? Bool) ?? ((entry["enabled"] as? Int) == 1)
+        }
     }
 
     static var hasTakenOver: Bool { !(UserDefaults.standard.array(forKey: "takenSystemShortcuts") as? [Int] ?? []).isEmpty }

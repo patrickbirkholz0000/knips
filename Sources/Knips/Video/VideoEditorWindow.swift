@@ -186,11 +186,11 @@ final class VideoCanvasView: NSView {
         ctx.setStrokeColor(NSColor.systemRed.withAlphaComponent(0.85).cgColor)
         ctx.setLineDash(phase: 0, lengths: [5, 4])
         for r in model.redactions where r.id != model.selectedID && model.isActive(r) {
-            ctx.stroke(toView(r.rect))
+            ctx.stroke(toView(r.rect(at: model.currentTime)))
         }
         ctx.setLineDash(phase: 0, lengths: [])
         if let sel = model.selected {
-            let vr = toView(sel.rect)
+            let vr = toView(sel.rect(at: model.currentTime))
             let alpha: CGFloat = model.isActive(sel) ? 1 : 0.45
             ctx.setStrokeColor(NSColor.controlAccentColor.withAlphaComponent(alpha).cgColor)
             ctx.setLineWidth(2)
@@ -215,12 +215,13 @@ final class VideoCanvasView: NSView {
 
     private func handleHit(_ p: CGPoint) -> (UUID, CGPoint)? {
         guard let sel = model.selected else { return nil }
-        let r = toView(sel.rect)
+        let current = sel.rect(at: model.currentTime)
+        let r = toView(current)
         let corners: [(CGPoint, CGPoint)] = [
-            (CGPoint(x: r.minX, y: r.minY), CGPoint(x: sel.rect.maxX, y: sel.rect.maxY)),
-            (CGPoint(x: r.maxX, y: r.minY), CGPoint(x: sel.rect.minX, y: sel.rect.maxY)),
-            (CGPoint(x: r.minX, y: r.maxY), CGPoint(x: sel.rect.maxX, y: sel.rect.minY)),
-            (CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: sel.rect.minX, y: sel.rect.minY)),
+            (CGPoint(x: r.minX, y: r.minY), CGPoint(x: current.maxX, y: current.maxY)),
+            (CGPoint(x: r.maxX, y: r.minY), CGPoint(x: current.minX, y: current.maxY)),
+            (CGPoint(x: r.minX, y: r.maxY), CGPoint(x: current.maxX, y: current.minY)),
+            (CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: current.minX, y: current.minY)),
         ]
         for (corner, anchor) in corners where hypot(corner.x - p.x, corner.y - p.y) <= 9 { return (sel.id, anchor) }
         return nil
@@ -236,7 +237,7 @@ final class VideoCanvasView: NSView {
         }
         let vp = toVideo(p)
         let candidates = model.redactions.filter { $0.id == model.selectedID || model.isActive($0) }
-        if let hit = candidates.reversed().first(where: { $0.rect.contains(vp) }) {
+        if let hit = candidates.reversed().first(where: { $0.rect(at: model.currentTime).contains(vp) }) {
             model.selectedID = hit.id
             drag = .move(hit.id, vp, false)
             return
@@ -258,13 +259,16 @@ final class VideoCanvasView: NSView {
             let dx = vp.x - last.x, dy = vp.y - last.y
             let size = model.videoSize
             model.updateRedaction(id, refresh: false) { r in
-                r.rect.origin.x = max(0, min(r.rect.origin.x + dx, size.width - r.rect.width))
-                r.rect.origin.y = max(0, min(r.rect.origin.y + dy, size.height - r.rect.height))
+                // Mitlaufende Balken verschieben sich als Ganzes.
+                let x = max(0, min(r.rect.origin.x + dx, size.width - r.rect.width)) - r.rect.origin.x
+                let y = max(0, min(r.rect.origin.y + dy, size.height - r.rect.height)) - r.rect.origin.y
+                r.offset(dx: x, dy: y)
             }
             drag = .move(id, vp, true)
         case .resize(let id, let anchor):
             model.updateRedaction(id, refresh: false) { r in
                 r.rect = CGRect(x: min(anchor.x, vp.x), y: min(anchor.y, vp.y), width: abs(vp.x - anchor.x), height: abs(vp.y - anchor.y))
+                r.track = nil   // neue Größe: Verfolgung neu starten
             }
         }
     }
@@ -430,7 +434,7 @@ struct VideoEditorRoot: View {
     @ViewBuilder private var selectionBar: some View {
         HStack(spacing: 8) {
             if let sel = model.selected, let index = model.redactions.firstIndex(where: { $0.id == sel.id }) {
-                Text("Zensur \(index + 1)\(sel.auto ? " (auto)" : "")")
+                Text("Zensur \(index + 1)\(sel.auto ? " (auto)" : "")\(sel.track != nil ? " · folgt" : "")")
                     .font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
                 Text("\(Format.preciseDuration(sel.start)) – \(Format.preciseDuration(sel.end))")
                     .font(.system(size: 12, weight: .medium, design: .monospaced)).foregroundStyle(.white.opacity(0.7))
@@ -439,6 +443,16 @@ struct VideoEditorRoot: View {
                 Button("Bis hier") { model.selectedEndHere() }.buttonStyle(ToolbarButtonStyle(prominent: false))
                     .help("Zensur endet an der aktuellen Abspielposition")
                 Button("Ganze Länge") { model.selectedWholeClip() }.buttonStyle(ToolbarButtonStyle(prominent: false))
+                if sel.track == nil {
+                    Button { model.followSelected() } label: { Label("Folgen", systemImage: "scope") }
+                        .buttonStyle(ToolbarButtonStyle(prominent: false))
+                        .disabled(model.busy != nil)
+                        .help("Balken folgt dem Inhalt darunter, z. B. beim Scrollen — ab der aktuellen Position vor und zurück.")
+                } else {
+                    Button { model.unfollowSelected() } label: { Label("Fest", systemImage: "pin") }
+                        .buttonStyle(ToolbarButtonStyle(prominent: false))
+                        .help("Balken bleibt an der aktuellen Stelle stehen")
+                }
                 Button { model.deleteSelected() } label: { Label("Löschen", systemImage: "trash") }
                     .buttonStyle(ToolbarButtonStyle(prominent: false))
             } else {

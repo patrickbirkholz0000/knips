@@ -50,6 +50,7 @@ import Vision
                 try runAsync { try await perf(out) }
             case "record": try runAsync { try await record(out, seconds: Double(args.count > 2 ? args[2] : "3") ?? 3) }
             case "record-bench": try runAsync { try await recordBench(out) }
+            case "track": try runAsync { try await track(out) }
             default:
                 print("Unbekannter Test \(args[0])")
                 return 2
@@ -277,7 +278,8 @@ import Vision
     // MARK: Video
 
     /// `movingFrames`: ab diesem Bild steht das Video still (wie eine ruhige Bildschirmaufnahme).
-    static func makeSampleVideo(_ url: URL, seconds: Int = 3, fps: Int = 30, hevc: Bool = false, movingFrames: Int? = nil) async throws -> CGRect {
+    static func makeSampleVideo(_ url: URL, seconds: Int = 3, fps: Int = 30, hevc: Bool = false, movingFrames: Int? = nil,
+                                scroll: CGFloat = 0) async throws -> CGRect {
         try? FileManager.default.removeItem(at: url)
         let w = 1280, h = 720
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
@@ -307,7 +309,11 @@ import Vision
             ctx.setFillColor(NSColor.systemBlue.cgColor)
             ctx.fill(CGRect(x: 100 + f * 8, y: 520, width: 120, height: 80))
             NSAttributedString(string: "Frame \(f)", attributes: [.font: NSFont.systemFont(ofSize: 32, weight: .bold)]).draw(at: CGPoint(x: 120, y: 120))
-            NSAttributedString(string: "Mail: max.muster@example.org", attributes: [.font: NSFont.systemFont(ofSize: 34)]).draw(at: CGPoint(x: 124, y: 304))
+            let dy = scroll * CGFloat(i)
+            NSAttributedString(string: "Mail: max.muster@example.org", attributes: [.font: NSFont.systemFont(ofSize: 34)]).draw(at: CGPoint(x: 124, y: 304 - dy))
+            if scroll > 0 {
+                NSAttributedString(string: "Kundennummer 48213 · Rechnung", attributes: [.font: NSFont.systemFont(ofSize: 28)]).draw(at: CGPoint(x: 124, y: 380 - dy))
+            }
             NSGraphicsContext.restoreGraphicsState()
             CVPixelBufferUnlockBaseAddress(buffer, [])
             adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: CMTimeScale(fps)))
@@ -511,6 +517,49 @@ import Vision
         try await windowShot(videoEditor.window!, out.appendingPathComponent("live-video-editor.png"))
         videoEditor.window?.orderOut(nil)
         model.shutdown()
+    }
+
+    // MARK: Mitlaufende Balken
+
+    static func track(_ out: URL) async throws {
+        let src = out.appendingPathComponent("scroll.mp4")
+        let emailRect = try await makeSampleVideo(src, seconds: 3, scroll: 4)   // 4 px pro Bild nach oben
+        let asset = AVURLAsset(url: src)
+        let duration = try await asset.load(.duration).seconds
+        let size = try await VideoInfo.pixelSize(of: asset)
+        let range = CMTimeRange(start: .zero, duration: try await asset.load(.duration))
+        func emailVisible(in url: URL, at t: Double) async throws -> Bool {
+            let gen = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+            gen.requestedTimeToleranceBefore = .zero
+            gen.requestedTimeToleranceAfter = .zero
+            let frame = try await gen.image(at: CMTime(seconds: t, preferredTimescale: 600)).image
+            return TextLayout.lines(in: frame).contains { $0.text.contains("@") }
+        }
+        // 1) Fester Balken: E-Mail rutscht heraus
+        var bar = VideoRedaction(rect: emailRect.insetBy(dx: -6, dy: -6), start: 0, end: duration, style: .solid)
+        let fixed = RedactionState(scale: 1)
+        fixed.set([bar])
+        let fixedOut = out.appendingPathComponent("scroll-fest.mp4")
+        try await VideoRedactor.exportMP4(asset: asset, state: fixed, range: range, to: fixedOut) { _ in }
+        print("Fester Balken – E-Mail sichtbar bei 2,0 s: \(try await emailVisible(in: fixedOut, at: 2.0))")
+        // 2) Mitlaufender Balken
+        let t = CFAbsoluteTimeGetCurrent()
+        bar.track = try await VideoRedactor.track(asset: asset, rect: bar.rect, at: 0, start: 0, end: duration, videoSize: size) { _ in }
+        print("Verfolgung: \(bar.track?.count ?? 0) Positionen in \(String(format: "%.1f", CFAbsoluteTimeGetCurrent() - t)) s")
+        let expected = bar.rect.offsetBy(dx: 0, dy: -4 * 60)
+        let got = bar.rect(at: 2.0)
+        print("Position bei 2,0 s: y \(Int(got.minY)) (erwartet ≈ \(Int(expected.minY)))")
+        let moving = RedactionState(scale: 1)
+        moving.set([bar])
+        let movingOut = out.appendingPathComponent("scroll-folgt.mp4")
+        try await VideoRedactor.exportMP4(asset: asset, state: moving, range: range, to: movingOut) { _ in }
+        var leaks: [Double] = []
+        for time in [0.5, 1.0, 1.5, 2.0, 2.5, 2.9] where try await emailVisible(in: movingOut, at: time) { leaks.append(time) }
+        print(leaks.isEmpty ? "   ✓ Mitlaufender Balken: E-Mail zu keinem Zeitpunkt lesbar" : "FEHLER: E-Mail lesbar bei \(leaks) s")
+        let gen = AVAssetImageGenerator(asset: AVURLAsset(url: movingOut))
+        gen.requestedTimeToleranceBefore = .zero
+        gen.requestedTimeToleranceAfter = .zero
+        try write(try await gen.image(at: CMTime(seconds: 2.0, preferredTimescale: 600)).image, out.appendingPathComponent("scroll-folgt-2s.png"))
     }
 
     // MARK: Zeitmessung (echtes Bildschirmfoto nur im Speicher, Ausgabe nur Zeiten)

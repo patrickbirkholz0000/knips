@@ -188,6 +188,40 @@ import Combine
 
     func isActive(_ r: VideoRedaction) -> Bool { currentTime >= r.start - 0.001 && currentTime <= r.end + 0.001 }
 
+    /// Ausgewählter Balken folgt dem Inhalt (z. B. beim Scrollen) — ab der aktuellen Position vor und zurück.
+    func followSelected() {
+        guard busy == nil, let sel = selected else { return }
+        busy = "Balken folgt dem Inhalt …"
+        progress = 0
+        let t0 = max(sel.start, min(currentTime, sel.end))
+        let rect = sel.rect(at: t0)
+        let asset = asset, size = videoSize, id = sel.id
+        work = Task {
+            do {
+                let points = try await VideoRedactor.track(asset: asset, rect: rect, at: t0, start: sel.start, end: sel.end,
+                                                           videoSize: size) { p in Task { @MainActor in self.progress = p } }
+                busy = nil
+                progress = nil
+                checkpoint()
+                updateRedaction(id) { $0.rect = rect; $0.track = points }
+                showToast("Balken folgt dem Inhalt (\(points.count) Positionen)")
+            } catch {
+                busy = nil
+                progress = nil
+            }
+        }
+    }
+
+    func unfollowSelected() {
+        guard let id = selectedID else { return }
+        checkpoint()
+        let t = currentTime
+        updateRedaction(id) { r in
+            r.rect = r.rect(at: t)
+            r.track = nil
+        }
+    }
+
     // MARK: Auto-Zensur
 
     func autoRedact() {

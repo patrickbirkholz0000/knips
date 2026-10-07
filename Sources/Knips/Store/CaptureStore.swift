@@ -32,6 +32,11 @@ struct ImageDocument: Codable {
 }
 
 struct VideoRedaction: Codable, Identifiable, Equatable {
+    struct TrackPoint: Codable, Equatable {
+        var time: Double
+        var rect: CGRect
+    }
+
     var id = UUID()
     /// Videopixel, Ursprung oben links.
     var rect: CGRect
@@ -39,6 +44,29 @@ struct VideoRedaction: Codable, Identifiable, Equatable {
     var end: Double
     var style: RedactStyle
     var auto = false
+    /// Wegpunkte, wenn der Balken bewegtem Inhalt folgt; dazwischen wird linear überblendet.
+    var track: [TrackPoint]?
+
+    func rect(at t: Double) -> CGRect {
+        guard let track, let first = track.first, let last = track.last else { return rect }
+        if t <= first.time { return first.rect }
+        if t >= last.time { return last.rect }
+        var lo = 0, hi = track.count - 1
+        while hi - lo > 1 {
+            let mid = (lo + hi) / 2
+            if track[mid].time <= t { lo = mid } else { hi = mid }
+        }
+        let a = track[lo], b = track[hi]
+        let f = CGFloat((t - a.time) / max(0.0001, b.time - a.time))
+        return CGRect(x: a.rect.minX + (b.rect.minX - a.rect.minX) * f, y: a.rect.minY + (b.rect.minY - a.rect.minY) * f,
+                      width: a.rect.width + (b.rect.width - a.rect.width) * f, height: a.rect.height + (b.rect.height - a.rect.height) * f)
+    }
+
+    mutating func offset(dx: CGFloat, dy: CGFloat) {
+        rect.origin.x += dx
+        rect.origin.y += dy
+        track = track?.map { TrackPoint(time: $0.time, rect: $0.rect.offsetBy(dx: dx, dy: dy)) }
+    }
 }
 
 struct VideoDocument: Codable {

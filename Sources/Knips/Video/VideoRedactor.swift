@@ -2,6 +2,7 @@ import AVFoundation
 import CoreImage
 import ImageIO
 import UniformTypeIdentifiers
+import Vision
 
 /// Thread-sicherer Stand der Zensurfelder — die Videokomposition liest ihn pro Frame.
 final class RedactionState: @unchecked Sendable {
@@ -19,9 +20,14 @@ final class RedactionState: @unchecked Sendable {
         lock.lock(); items = redactions; lock.unlock()
     }
 
+    /// Aktive Felder mit ihrer Position zu diesem Zeitpunkt (mitlaufende Balken interpoliert).
     func active(at t: Double) -> [VideoRedaction] {
         lock.lock(); defer { lock.unlock() }
-        return items.filter { t >= $0.start - 0.0005 && t <= $0.end + 0.0005 }
+        return items.filter { t >= $0.start - 0.0005 && t <= $0.end + 0.0005 }.map { r in
+            var moved = r
+            moved.rect = r.rect(at: t)
+            return moved
+        }
     }
 }
 
@@ -217,6 +223,66 @@ enum VideoRedactor {
             let pad = track.rect.height * 0.25
             return VideoRedaction(rect: track.rect.insetBy(dx: -pad, dy: -pad), start: max(start, track.first - step),
                                   end: min(end, track.last + step), style: style, auto: true)
+        }
+    }
+
+    // MARK: Mitlaufende Balken
+
+    /// Verfolgt den Bildinhalt unter `rect` (gesetzt bei `at`) vorwärts bis `end` und rückwärts bis `start`.
+    /// Größe bleibt fest, nur die Position folgt — so wächst oder schrumpft der Balken nie unbemerkt.
+    static func track(asset: AVAsset, rect: CGRect, at t0: Double, start: Double, end: Double, videoSize: CGSize,
+                      progress: @escaping @Sendable (Double) -> Void) async throws -> [VideoRedaction.TrackPoint] {
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        generator.maximumSize = CGSize(width: 1280, height: 1280)
+        let fps = Double((try? await asset.loadTracks(withMediaType: .video).first?.load(.nominalFrameRate)) ?? 30)
+        let step = 1.0 / max(15, min(60, fps))   // jedes Bild: kleine Sprünge verfolgt Vision zuverlässig
+        let forward = Array(stride(from: t0 + step, through: end, by: step))
+        let backward = Array(stride(from: t0 - step, through: start, by: -step))
+        let total = Double(max(1, forward.count + backward.count))
+        var done = 0.0
+
+        func normalized(_ r: CGRect) -> CGRect {
+            CGRect(x: r.minX / videoSize.width, y: 1 - r.maxY / videoSize.height, width: r.width / videoSize.width, height: r.height / videoSize.height)
+        }
+        func run(_ times: [Double]) async throws -> [VideoRedaction.TrackPoint] {
+            var observation = VNDetectedObjectObservation(boundingBox: normalized(rect))
+            let handler = VNSequenceRequestHandler()
+            var points: [VideoRedaction.TrackPoint] = []
+            var current = rect
+            for t in times {
+                try Task.checkCancellation()
+                defer { done += 1; progress(done / total) }
+                guard let frame = try? await generator.image(at: CMTime(seconds: t, preferredTimescale: 600)).image else { continue }
+                let request = VNTrackObjectRequest(detectedObjectObservation: observation)
+                request.trackingLevel = .accurate
+                try? handler.perform([request], on: frame)
+                if let result = request.results?.first as? VNDetectedObjectObservation, result.confidence > 0.3 {
+                    observation = result
+                    let b = result.boundingBox
+                    let center = CGPoint(x: b.midX * videoSize.width, y: (1 - b.midY) * videoSize.height)
+                    current = CGRect(x: center.x - rect.width / 2, y: center.y - rect.height / 2, width: rect.width, height: rect.height)
+                }
+                // Verloren: an der letzten sicheren Stelle stehen bleiben.
+                points.append(.init(time: t, rect: current))
+            }
+            return points
+        }
+        let ahead = try await run(forward)
+        let behind = try await run(backward)
+        let points = (behind.reversed() + [.init(time: t0, rect: rect)] + ahead).sorted { $0.time < $1.time }
+        // Vision läuft bei schnellem Scrollen etwas hinterher (gemessen ~20 px bei 4 px/Bild):
+        // Balken in Bewegungsrichtung um das Sechsfache der Geschwindigkeit pro Bild vergrößern.
+        return points.indices.map { i in
+            let prev = points[max(0, i - 1)].rect, next = points[min(points.count - 1, i + 1)].rect
+            let frames = Double(min(points.count - 1, i + 1) - max(0, i - 1))
+            guard frames > 0 else { return points[i] }
+            let vx = abs(next.midX - prev.midX) / frames, vy = abs(next.midY - prev.midY) / frames
+            let r = points[i].rect
+            let grown = r.insetBy(dx: -min(vx * 6, r.width), dy: -min(vy * 6, r.height))
+            return .init(time: points[i].time, rect: grown)
         }
     }
 

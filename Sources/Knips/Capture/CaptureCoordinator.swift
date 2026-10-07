@@ -110,10 +110,10 @@ import ScreenCaptureKit
     /// liefert die PNG-Daten erst, wenn eine App sie anfragt.
     func finish(image: CGImage, scale: CGFloat, screen: NSScreen) {
         let settings = AppSettings.shared
-        let png = PNGPromise(image)
+        let output = settings.outputPromise(sourceScale: scale) { image }
         do {
-            let item = try CaptureStore.shared.addImage(image, scale: scale, png: png)
-            if settings.copyToClipboard { Clipboard.copy(png: png, fileURL: item.fileURL) }
+            let item = try CaptureStore.shared.addImage(image, scale: scale, output: output)
+            if settings.copyToClipboard { Clipboard.copy(output, fileURL: item.fileURL) }
             if settings.showQuickAccess { QuickAccessController.shared.show(item, on: screen) }
             if settings.openEditorAfterCapture { EditorWindowController.show(item) }
         } catch {

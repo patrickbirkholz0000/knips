@@ -108,7 +108,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .shortcuts: "Globale Kürzel für Screenshots und Bildschirmaufnahmen. Sie funktionieren in jeder App."
         case .recording: "Bildrate, Mauszeiger, Countdown und Ton für Bildschirmaufnahmen."
         case .redaction: "Wie sensible Stellen in Bildern und Videos unkenntlich gemacht werden."
-        case .export: "Einstellungen für den Export als GIF und MP4."
+        case .export: "Größe und Format von Screenshots, GIFs und Videos."
         case .storage: "Wo deine Aufnahmen liegen und wie lange Originale aufbewahrt werden."
         case .privacy: "Freigaben, die Knips von macOS braucht. Alles bleibt auf deinem Mac."
         case .about: ""
@@ -122,7 +122,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .shortcuts: ["kürzel", "hotkey", "taste", "tastatur", "shortcut", "bereich", "fenster", "vollbild"]
         case .recording: ["video", "fps", "bildrate", "mauszeiger", "cursor", "countdown", "mikrofon", "audio"]
         case .redaction: ["verpixeln", "unschärfe", "schwärzen", "auto", "e-mail", "iban", "telefon", "schlüssel", "token", "ip"]
-        case .export: ["gif", "mp4", "breite", "bildrate"]
+        case .export: ["gif", "mp4", "breite", "bildrate", "größe", "auflösung", "retina", "png", "jpeg", "jpg", "datei", "klein"]
         case .storage: ["ordner", "speicherort", "original", "aufbewahren", "löschen", "speicher"]
         case .privacy: ["berechtigung", "freigabe", "bildschirmaufnahme", "mikrofon", "datenschutz"]
         case .about: ["version", "info"]
@@ -618,9 +618,36 @@ private struct RedactStyleCard: View {
 private struct ExportPane: View {
     @ObservedObject var settings: AppSettings
 
+    /// Gemessen an echten 4K-Screenshots (08.10.2026).
+    private var sizeHint: String {
+        switch (settings.exportAtScreenSize, settings.imageFormat) {
+        case (true, .png): "ca. 0,7–2 MB"
+        case (true, .jpeg): "ca. 0,25–0,6 MB"
+        case (false, .png): "ca. 2–7 MB"
+        case (false, .jpeg): "ca. 0,6–1,6 MB"
+        }
+    }
+
     var body: some View {
         Form {
             PaneHeader(pane: .export)
+            Section {
+                Picker("Größe", selection: $settings.exportAtScreenSize) {
+                    Text("Bildschirmgröße (1×)").tag(true)
+                    Text("Retina (2×, volle Schärfe)").tag(false)
+                }
+                Picker("Format", selection: $settings.imageFormat) {
+                    ForEach(ImageFormat.allCases) { Text($0.title).tag($0) }
+                }
+                LabeledContent("Vollbild-Screenshot") {
+                    Text(sizeHint).foregroundStyle(.secondary).monospacedDigit()
+                }
+            } header: {
+                Text("Screenshots")
+            } footer: {
+                Text("Bildschirmgröße: ein Screenshot ist so groß wie auf dem Bildschirm und erscheint beim Einfügen nicht doppelt so groß. Das Original bleibt für spätere Bearbeitung in voller Auflösung erhalten.")
+                    .settingsFootnote()
+            }
             Section {
                 Picker("Bildrate", selection: $settings.gifFPS) {
                     Text("10 Bilder pro Sekunde").tag(10)

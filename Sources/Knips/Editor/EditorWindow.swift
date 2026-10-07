@@ -84,10 +84,11 @@ import SwiftUI
 
     /// Speichert im Hintergrund — das Fenster reagiert (und schließt) sofort.
     @discardableResult
-    private func persist(_ png: PNGPromise? = nil) -> PNGPromise {
-        let promise = png ?? model.renderPromise()
+    private func persist(_ output: ImagePromise? = nil) -> ImagePromise {
+        let promise = output ?? model.renderPromise()
         if model.dirty {
-            item = CaptureStore.shared.saveImage(png: promise, document: model.document, for: item, size: model.outputSize)
+            item = CaptureStore.shared.saveImage(output: promise, document: model.document, for: item,
+                                                 size: model.outputSize, outputScale: Double(model.scale * model.outputFactor))
             model.dirty = false
         }
         return promise
@@ -106,17 +107,17 @@ import SwiftUI
 
     func copyImage() {
         canvas.commitPendingEdits()
-        let png = persist()
-        Clipboard.copy(png: png, fileURL: item.fileURL)
+        let output = persist()
+        Clipboard.copy(output, fileURL: item.fileURL)
         model.showToast("In die Zwischenablage kopiert")
     }
 
     func pin() {
         canvas.commitPendingEdits()
-        let png = model.renderPromise()
+        let full = model.fullResolutionPromise()
         let scale = model.scale
         Task {
-            if let image = await png.imageValue() { PinWindowController.pin(image, scale: scale) }
+            if let image = await full.imageValue() { PinWindowController.pin(image, scale: scale) }
         }
     }
 

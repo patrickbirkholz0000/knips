@@ -28,6 +28,7 @@ nach jedem Build neu erteilt werden.
 | `ui` / `selection` | Karten, Einstellungen, Auswahl-Overlay offscreen |
 | `live` | Bild- und Video-Editor als echtes Fenster, 1 pt in der Bildschirmecke, per SCK fotografiert |
 | `settings [bereich,…]` | Einstellungsfenster (Stil Systemeinstellungen) je Bereich, inkl. Kürzel-Eingabe |
+| `output` | Ausgabe 1× + PNG/JPEG, Original in voller Auflösung, Speichern aus dem Editor |
 | `video` | Video-Zensur mit Zeitbereich, Kürzen, MP4- und GIF-Export, Auto-Zensur im Video |
 | `capture` / `record 3` | echte Aufnahme — gibt nur Maße/Dauer aus, speichert keine Inhalte |
 
@@ -41,6 +42,11 @@ Seit macOS 14 clippen NSViews nicht mehr: eigene `draw(_:)` immer auf `bounds` b
 (`clipsToBounds = true`), sonst übermalt die Fläche Nachbar-Views.
 
 ## Ablage
+
+Ausgabe standardmäßig in **Bildschirmgröße (1×)** als PNG (Einstellungen → Export, auch JPEG / Retina 2×).
+Gemessen an echten 4K-Screenshots: Retina-PNG 2–6,7 MB → 1×-PNG 0,7–2,2 MB → 1×-JPEG 0,24–0,63 MB.
+Das Original in `items/<uuid>/original.png` bleibt immer in voller Auflösung; der Editor arbeitet darauf
+und schreibt beim Speichern wieder die verkleinerte Fassung (`AppSettings.outputPromise`).
 
 - Sichtbare Dateien: `~/Pictures/Knips` (einstellbar). Dort liegt immer die **gerenderte** Fassung,
   also bereits zensiert. Herausziehen/Kopieren gibt nie das Original weiter.

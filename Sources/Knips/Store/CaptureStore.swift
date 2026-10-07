@@ -15,6 +15,11 @@ struct CaptureItem: Codable, Identifiable, Equatable, Hashable {
     var scale: Double
     var duration: Double?
     var revision: Int = 0
+    /// Pixel pro Punkt der Datei im Ablageordner (1 bei verkleinerter Ausgabe). Fehlt bei alten Einträgen.
+    var outputScale: Double?
+
+    /// Für Anpinnen & Co.: wie groß die Datei auf dem Bildschirm erscheinen soll.
+    var displayScale: CGFloat { CGFloat(outputScale ?? scale) }
 
     var title: String { fileURL.deletingPathExtension().lastPathComponent }
 }
@@ -72,27 +77,34 @@ struct VideoDocument: Codable {
 
     // MARK: Anlegen
 
-    /// Legt den Eintrag sofort an; PNG-Kodierung und Schreiben laufen im Hintergrund.
-    func addImage(_ image: CGImage, scale: CGFloat, png: PNGPromise? = nil, name: String? = nil) throws -> CaptureItem {
+    /// Legt den Eintrag sofort an; Kodieren und Schreiben laufen im Hintergrund.
+    /// Das Original bleibt in voller Auflösung (für spätere Bearbeitung), die Datei im Ablageordner
+    /// kommt aus `output` (ggf. verkleinert, im gewählten Format).
+    func addImage(_ image: CGImage, scale: CGFloat, output outputPromise: ImagePromise? = nil, name: String? = nil) throws -> CaptureItem {
         let id = UUID()
-        let output = try uniqueOutputURL(base: name ?? "Knips \(Format.fileDate.string(from: Date()))", ext: "png")
+        let settings = AppSettings.shared
+        let promise = outputPromise ?? settings.outputPromise(sourceScale: scale) { image }
+        let factor = settings.outputFactor(sourceScale: scale)
+        let output = try uniqueOutputURL(base: name ?? "Knips \(Format.fileDate.string(from: Date()))", ext: promise.format.fileExtension)
         reservedNames.insert(output.path)
         var item = CaptureItem(id: id, kind: .image, createdAt: Date(), fileURL: output,
-                               pixelWidth: image.width, pixelHeight: image.height, scale: Double(scale))
+                               pixelWidth: Int((CGFloat(image.width) * factor).rounded()),
+                               pixelHeight: Int((CGFloat(image.height) * factor).rounded()), scale: Double(scale))
+        item.outputScale = Double(scale * factor)
         Paths.ensure(directory(for: item))
         item.revision = 1
         persist(item)
         items.insert(item, at: 0)
         remember(image, for: id)
         ThumbnailCache.shared.seed(item, image: image)
-        let promise = png ?? PNGPromise(image)
-        let original = originalURL(for: item), thumbURL = thumbnailURL(for: item)
+        // Original verlustfrei in voller Auflösung; bei gleicher Ausgabe dieselben Daten wiederverwenden.
+        let original = factor < 1 || promise.format != .png ? ImagePromise(image) : promise
+        let originalURL = originalURL(for: item), thumbURL = thumbnailURL(for: item)
         let snapshot = item
         beginWrite(id)
         writes[id] = Task.detached(priority: .userInitiated) {
-            guard let data = await promise.value() else { return }
-            try? data.write(to: original, options: .atomic)
-            try? data.write(to: output, options: .atomic)
+            if let data = await original.value() { try? data.write(to: originalURL, options: .atomic) }
+            if let data = await promise.value() { try? data.write(to: output, options: .atomic) }
             let thumb = ImageIOHelper.downscale(image, maxPixel: 640)
             try? thumb.pngData()?.write(to: thumbURL, options: .atomic)
             await MainActor.run {
@@ -177,13 +189,19 @@ struct VideoDocument: Codable {
     /// Kehrt sofort zurück; geschrieben wird im Hintergrund, in Reihe nach früheren Schreibvorgängen.
     @discardableResult
     func saveImage(_ rendered: CGImage, document: ImageDocument, for item: CaptureItem) -> CaptureItem {
-        saveImage(png: PNGPromise(rendered), document: document, for: item, size: rendered.pixelSize)
+        let format = ImageFormat(fileExtension: item.fileURL.pathExtension) ?? .png
+        return saveImage(output: ImagePromise(rendered, format: format), document: document, for: item,
+                         size: rendered.pixelSize, outputScale: item.scale)
     }
 
-    /// `png` rendert und kodiert im Hintergrund; `size` ist die erwartete Bildgröße.
+    /// `promise` rendert und kodiert im Hintergrund; `size`/`outputScale` beschreiben die Ausgabedatei.
     @discardableResult
-    func saveImage(png promise: PNGPromise, document: ImageDocument, for item: CaptureItem, size: CGSize) -> CaptureItem {
-        let updated = bump(item) { $0.pixelWidth = Int(size.width); $0.pixelHeight = Int(size.height) }
+    func saveImage(output promise: ImagePromise, document: ImageDocument, for item: CaptureItem, size: CGSize, outputScale: Double) -> CaptureItem {
+        let updated = bump(item) {
+            $0.pixelWidth = Int(size.width)
+            $0.pixelHeight = Int(size.height)
+            $0.outputScale = outputScale
+        }
         let previous = writes[item.id]
         let docData = try? JSONEncoder().encode(document)
         let docURL = documentURL(for: item), output = item.fileURL, thumbURL = thumbnailURL(for: item)

@@ -302,13 +302,28 @@ enum EditorTool: String, CaseIterable, Identifiable {
         Renderer.render(base: base, document: document, scale: scale, effects: effects)
     }
 
-    /// Rendern + PNG-Kodierung im Hintergrund (Verpixeln eines 4K-Bilds kostet sonst ~120 ms im Hauptthread).
-    func renderPromise() -> PNGPromise {
+    /// Rendern + Verkleinern + Kodieren im Hintergrund (Verpixeln eines 4K-Bilds kostet sonst ~120 ms
+    /// im Hauptthread). Das Format folgt der vorhandenen Datei, damit Endung und Inhalt zusammenpassen.
+    func renderPromise() -> ImagePromise {
         let base = base, doc = document, scale = scale, effects = effects
-        return PNGPromise(render: { Renderer.render(base: base, document: doc, scale: scale, effects: effects) })
+        let format = ImageFormat(fileExtension: item.fileURL.pathExtension) ?? AppSettings.shared.imageFormat
+        return AppSettings.shared.outputPromise(sourceScale: scale, format: format) {
+            Renderer.render(base: base, document: doc, scale: scale, effects: effects)
+        }
     }
 
-    var outputSize: CGSize { (crop ?? fullRect).integral.intersection(fullRect).size }
+    /// Volle Auflösung, z. B. zum Anpinnen.
+    func fullResolutionPromise() -> ImagePromise {
+        let base = base, doc = document, scale = scale, effects = effects
+        return ImagePromise(format: .png) { Renderer.render(base: base, document: doc, scale: scale, effects: effects) }
+    }
+
+    var outputFactor: CGFloat { AppSettings.shared.outputFactor(sourceScale: scale) }
+
+    var outputSize: CGSize {
+        let s = (crop ?? fullRect).integral.intersection(fullRect).size
+        return CGSize(width: (s.width * outputFactor).rounded(), height: (s.height * outputFactor).rounded())
+    }
 }
 
 extension CGRect {

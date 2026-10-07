@@ -55,6 +55,19 @@ enum ImageIOHelper {
         return CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary)
     }
 
+    /// Auf `factor` (< 1) verkleinern, z. B. Retina → Bildschirmgröße.
+    static func scaled(_ image: CGImage, by factor: CGFloat) -> CGImage {
+        guard factor < 0.999 else { return image }
+        let w = max(1, Int((CGFloat(image.width) * factor).rounded())), h = max(1, Int((CGFloat(image.height) * factor).rounded()))
+        let space = Renderer.rgbSpace(image.colorSpace)
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return image }
+        ctx.interpolationQuality = .high
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return ctx.makeImage() ?? image
+    }
+
     static func downscale(_ image: CGImage, maxPixel: Int) -> CGImage {
         let longest = max(image.width, image.height)
         guard longest > maxPixel else { return image }
@@ -77,30 +90,62 @@ enum ImageIOHelper {
     }
 }
 
-/// PNG-Kodierung im Hintergrund. Ein 4K-Screenshot braucht ~180 ms — das darf weder das Overlay
-/// noch die Karte aufhalten. `data` wartet, falls die Kodierung noch läuft.
-final class PNGPromise: @unchecked Sendable {
+enum ImageFormat: String, CaseIterable, Identifiable, Codable {
+    case png, jpeg
+    var id: String { rawValue }
+    var title: String { self == .png ? "PNG (verlustfrei)" : "JPEG (kleiner)" }
+    var fileExtension: String { self == .png ? "png" : "jpg" }
+    var utType: UTType { self == .png ? .png : .jpeg }
+    var pasteboardType: NSPasteboard.PasteboardType { self == .png ? .png : NSPasteboard.PasteboardType(UTType.jpeg.identifier) }
+
+    init?(fileExtension ext: String) {
+        switch ext.lowercased() {
+        case "png": self = .png
+        case "jpg", "jpeg": self = .jpeg
+        default: return nil
+        }
+    }
+}
+
+extension CGImage {
+    /// PNG verlustfrei; JPEG mit 85 % — Schrift bleibt scharf, Datei ~3× kleiner als PNG.
+    func encoded(as format: ImageFormat) -> Data? {
+        if format == .png { return pngData() }
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dest, self, [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        return data as Data
+    }
+}
+
+/// Bild rendern und kodieren im Hintergrund. Ein 4K-PNG braucht ~80–180 ms — das darf weder das
+/// Overlay noch die Karte aufhalten. `data`/`image` warten, falls die Arbeit noch läuft.
+final class ImagePromise: @unchecked Sendable {
+    let format: ImageFormat
     private let group = DispatchGroup()
     private var renderedImage: CGImage?
     private var result: Data?
-    private static let queue = DispatchQueue(label: "de.birkgroup.knips.png", qos: .userInitiated, attributes: .concurrent)
+    private static let queue = DispatchQueue(label: "de.birkgroup.knips.encode", qos: .userInitiated, attributes: .concurrent)
 
-    convenience init(_ image: CGImage) {
-        self.init(render: { image })
+    convenience init(_ image: CGImage, format: ImageFormat = .png) {
+        self.init(format: format, render: { image })
     }
 
-    /// Rendert (z. B. Editor-Fassung mit Zensur) und kodiert anschließend — beides im Hintergrund.
-    init(render: @escaping @Sendable () -> CGImage?) {
+    /// Rendert (z. B. Editor-Fassung mit Zensur, ggf. verkleinert) und kodiert anschließend.
+    init(format: ImageFormat, render: @escaping @Sendable () -> CGImage?) {
+        self.format = format
         group.enter()
         Self.queue.async { [self] in
             renderedImage = render()
-            result = renderedImage?.pngData()
+            result = renderedImage?.encoded(as: format)
             group.leave()
         }
     }
 
     /// Bereits kodierte Daten (z. B. aus einer Datei) — keine erneute Kodierung.
-    init(image: CGImage, data: Data) {
+    init(image: CGImage, data: Data, format: ImageFormat) {
+        self.format = format
         renderedImage = image
         result = data
     }
@@ -128,19 +173,18 @@ final class PNGPromise: @unchecked Sendable {
     }
 }
 
-/// Liefert PNG und TIFF erst, wenn eine App sie wirklich anfragt.
+/// Liefert die Bilddaten erst, wenn eine App sie wirklich anfragt.
 private final class LazyImageProvider: NSObject, NSPasteboardItemDataProvider {
-    let png: PNGPromise
-    init(png: PNGPromise) { self.png = png }
+    let promise: ImagePromise
+    init(promise: ImagePromise) { self.promise = promise }
 
     func pasteboard(_ pasteboard: NSPasteboard?, item: NSPasteboardItem, provideDataForType type: NSPasteboard.PasteboardType) {
-        switch type {
-        case .png:
-            if let data = png.data { item.setData(data, forType: .png) }
-        case .tiff:
-            if let image = png.image, let data = NSBitmapImageRep(cgImage: image).tiffRepresentation { item.setData(data, forType: .tiff) }
-        default:
-            break
+        if type == promise.format.pasteboardType {
+            if let data = promise.data { item.setData(data, forType: type) }
+        } else if type == .png {
+            if let data = promise.image?.pngData() { item.setData(data, forType: .png) }
+        } else if type == .tiff {
+            if let image = promise.image, let data = NSBitmapImageRep(cgImage: image).tiffRepresentation { item.setData(data, forType: .tiff) }
         }
     }
 }
@@ -149,30 +193,35 @@ enum Clipboard {
     private static var provider: LazyImageProvider?
 
     static func copy(image: CGImage, fileURL: URL?) {
-        copy(png: PNGPromise(image), fileURL: fileURL)
+        copy(ImagePromise(image), fileURL: fileURL)
     }
 
-    /// Sofort zurück: die Daten werden erst beim Einfügen geliefert.
-    static func copy(png: PNGPromise, fileURL: URL?) {
+    /// Sofort zurück: die Daten werden erst beim Einfügen geliefert. PNG und TIFF gibt es immer
+    /// (manche Apps lesen nur diese), bei JPEG-Ausgabe zusätzlich und bevorzugt JPEG.
+    static func copy(_ promise: ImagePromise, fileURL: URL?) {
         let pb = NSPasteboard.general
         pb.clearContents()
         let item = NSPasteboardItem()
-        let provider = LazyImageProvider(png: png)
+        let provider = LazyImageProvider(promise: promise)
         self.provider = provider
-        item.setDataProvider(provider, forTypes: [.png, .tiff])
+        var types: [NSPasteboard.PasteboardType] = [promise.format.pasteboardType]
+        if promise.format != .png { types.append(.png) }
+        types.append(.tiff)
+        item.setDataProvider(provider, forTypes: types)
         if let fileURL { item.setString(fileURL.absoluteString, forType: .fileURL) }
         pb.writeObjects([item])
     }
 
-    /// Fertige PNG-Datei: Daten direkt übernehmen, nichts neu kodieren.
-    static func copy(pngFile url: URL) {
-        guard let data = try? Data(contentsOf: url),
+    /// Fertige Bilddatei: Daten direkt übernehmen, nichts neu kodieren.
+    static func copy(imageFile url: URL) {
+        guard let format = ImageFormat(fileExtension: url.pathExtension),
+              let data = try? Data(contentsOf: url),
               let src = CGImageSourceCreateWithData(data as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
             copy(fileURL: url)
             return
         }
-        copy(png: PNGPromise(image: image, data: data), fileURL: url)
+        copy(ImagePromise(image: image, data: data, format: format), fileURL: url)
     }
 
     static func copy(fileURL: URL) {

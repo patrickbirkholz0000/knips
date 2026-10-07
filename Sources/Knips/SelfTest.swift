@@ -29,6 +29,7 @@ import Vision
                 try runAsync { try await settings(out, panes: args.count > 2 ? args[2].split(separator: ",").compactMap { SettingsPane(rawValue: String($0)) } : SettingsPane.allCases) }
             case "video": try runAsync { try await video(out) }
             case "capture": try runAsync { try await capture() }
+            case "output": try runAsync { try await output(out) }
             case "shortcut-roundtrip":
                 // Schaltet ⌃⌘⇧3 (ID 29) kurz ab und wieder ein — prüft den Übernahme-Mechanismus.
                 func state() -> String {
@@ -485,8 +486,8 @@ import Vision
         editor2.window?.contentView?.layoutSubtreeIfNeeded()
         print("Editor-Fenster 2. Mal        \(ms(t))")
         t = CFAbsoluteTimeGetCurrent()
-        let promise = PNGPromise(image)
-        let item2 = try CaptureStore.shared.addImage(image, scale: 2, png: promise)
+        let promise = AppSettings.shared.outputPromise(sourceScale: 2) { image }
+        let item2 = try CaptureStore.shared.addImage(image, scale: 2, output: promise)
         print("Aufnahme anlegen             \(ms(t))  (Hauptthread, 4K)")
         t = CFAbsoluteTimeGetCurrent()
         await CaptureStore.shared.waitUntilWritten(item2.id)
@@ -501,6 +502,37 @@ import Vision
         t = CFAbsoluteTimeGetCurrent()
         for style in RedactStyle.allCases { _ = RedactPreview.image(for: style) }
         print("Zensur-Vorschaubilder        \(ms(t))")
+    }
+
+    // MARK: Ausgabegröße
+
+    static func output(_ out: URL) async throws {
+        let store = CaptureStore.shared
+        let image = sampleImage(width: 2800, height: 1760, scale: 4)   // „Retina“-Screenshot, 2 px pro Punkt
+        func describe(_ url: URL) -> String {
+            let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+            let dims = ImageIOHelper.load(url).map { "\($0.width)×\($0.height)" } ?? "?"
+            return "\(url.pathExtension.uppercased()) \(dims), \(size / 1024) KB"
+        }
+        for format in ImageFormat.allCases {
+            let promise = AppSettings.shared.outputPromise(sourceScale: 2, format: format) { image }
+            let item = try store.addImage(image, scale: 2, output: promise)
+            await store.waitUntilWritten(item.id)
+            print("\(format.rawValue): Ablage \(describe(item.fileURL)) · Original \(describe(store.originalURL(for: item))) · Anzeige-Faktor \(item.displayScale)")
+        }
+        // Editor: Zensur + Speichern über den normalen Weg
+        let item = try store.addImage(image, scale: 2)
+        await store.waitUntilWritten(item.id)
+        let editor = EditorWindowController(item: item, base: image, document: ImageDocument(), tool: .redact)
+        var bar = Annotation(kind: .redact, start: CGPoint(x: 900, y: 480), end: CGPoint(x: 1800, y: 560))
+        bar.redactStyle = .solid
+        editor.model.checkpoint()
+        editor.model.annotations = [bar]
+        editor.save(close: false)
+        await store.waitUntilWritten(item.id)
+        let saved = store.item(with: item.id)!
+        print("Editor gespeichert: \(describe(saved.fileURL)) · Original \(describe(store.originalURL(for: saved))) · Dokument \(store.loadImageDocument(for: saved).annotations.count) Balken")
+        if let img = ImageIOHelper.load(saved.fileURL) { try write(img, out.appendingPathComponent("ausgabe-editor.png")) }
     }
 
     // MARK: Echte Aufnahme (nur Metadaten, keine Bildinhalte)

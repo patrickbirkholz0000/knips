@@ -47,6 +47,9 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
     @Published var gifFPS: Int { didSet { d.set(gifFPS, forKey: "gifFPS") } }
     @Published var gifWidth: Int { didSet { d.set(gifWidth, forKey: "gifWidth") } }
     @Published var redactStyle: RedactStyle { didSet { d.set(redactStyle.rawValue, forKey: "redactStyle") } }
+    /// Bildschirmgröße (1×) statt Retina (2×): Dateien ~⅓ so groß, beim Einfügen so groß wie auf dem Bildschirm.
+    @Published var exportAtScreenSize: Bool { didSet { d.set(exportAtScreenSize, forKey: "exportAtScreenSize") } }
+    @Published var imageFormat: ImageFormat { didSet { d.set(imageFormat.rawValue, forKey: "imageFormat") } }
     /// Auto-Zensur-Knopf in den Editoren anbieten (standardmäßig aus — Zensur wird von Hand gezogen).
     @Published var showAutoRedact: Bool { didSet { d.set(showAutoRedact, forKey: "showAutoRedact") } }
     /// Welche Datenarten die Auto-Zensur sucht.
@@ -83,6 +86,8 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
         gifWidth = d.object(forKey: "gifWidth") as? Int ?? 960
         redactStyle = RedactStyle(rawValue: d.string(forKey: "redactStyle") ?? "") ?? .solid
         showAutoRedact = d.object(forKey: "showAutoRedact") as? Bool ?? false
+        exportAtScreenSize = d.object(forKey: "exportAtScreenSize") as? Bool ?? true
+        imageFormat = ImageFormat(rawValue: d.string(forKey: "imageFormat") ?? "") ?? .png
         if let raw = d.stringArray(forKey: "autoRedactKinds") {
             autoRedactKinds = Set(raw.compactMap(SensitiveDetector.Kind.init(rawValue:)))
         } else {
@@ -136,6 +141,19 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
         var keys: [HotkeyAction: KeyCombo] = [:]
         for a in HotkeyAction.allCases { if let c = a.defaultCombo { keys[a] = c } }
         return keys
+    }
+
+    /// Verkleinerungsfaktor für die Ausgabe eines Bildes mit `scale` Pixeln pro Punkt.
+    func outputFactor(sourceScale: CGFloat) -> CGFloat {
+        exportAtScreenSize && sourceScale > 1 ? 1 / sourceScale : 1
+    }
+
+    /// Ausgabe (Datei + Zwischenablage): ggf. verkleinert, im gewählten Format — im Hintergrund.
+    func outputPromise(sourceScale: CGFloat, format: ImageFormat? = nil, render: @escaping @Sendable () -> CGImage?) -> ImagePromise {
+        let factor = outputFactor(sourceScale: sourceScale)
+        return ImagePromise(format: format ?? imageFormat) {
+            render().map { ImageIOHelper.scaled($0, by: factor) }
+        }
     }
 
     var saveFolder: URL {

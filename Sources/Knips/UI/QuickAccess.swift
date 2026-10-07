@@ -44,7 +44,7 @@ import UniformTypeIdentifiers
             pin: { item in
                 Task {
                     await CaptureStore.shared.waitUntilWritten(item.id)
-                    if let img = ImageIOHelper.load(item.fileURL) { PinWindowController.pin(img, scale: CGFloat(item.scale)) }
+                    if let img = ImageIOHelper.load(item.fileURL) { PinWindowController.pin(img, scale: item.displayScale) }
                 }
             },
             reveal: { item in NSWorkspace.shared.activateFileViewerSelecting([item.fileURL]) },
@@ -100,7 +100,7 @@ import UniformTypeIdentifiers
         Task {
             await CaptureStore.shared.waitUntilWritten(item.id)
             switch item.kind {
-            case .image: Clipboard.copy(pngFile: item.fileURL)
+            case .image: Clipboard.copy(imageFile: item.fileURL)
             case .video, .gif: Clipboard.copy(fileURL: item.fileURL)
             }
         }
@@ -446,7 +446,7 @@ struct Thumbnail: View {
         // Fertige Datei: normaler Datei-Drag (funktioniert überall, auch im Finder).
         if !CaptureStore.shared.isWriting(item.id), let ready = NSItemProvider(contentsOf: url) { return ready }
         let type: UTType = switch item.kind {
-        case .image: .png
+        case .image: ImageFormat(fileExtension: url.pathExtension)?.utType ?? .png
         case .video: .mpeg4Movie
         case .gif: .gif
         }

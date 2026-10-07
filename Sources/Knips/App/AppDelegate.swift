@@ -1,4 +1,5 @@
 import AppKit
+import ScreenCaptureKit
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -32,6 +33,12 @@ import AppKit
             case "record": CaptureCoordinator.shared.perform(.toggleRecording)
             case "pin": CaptureCoordinator.shared.perform(.pinClipboard)
             case "settings": SettingsWindowController.show()
+            case "debug-sample" where Paths.testRoot != nil:
+                if let item = try? CaptureStore.shared.addImage(SelfTest.sampleImage(), scale: 2) {
+                    QuickAccessController.shared.show(item, on: NSScreen.main ?? NSScreen.withMouse)
+                }
+            case "debug-snapshot" where Paths.testRoot != nil:
+                Task { await Self.snapshotOwnWindows() }
             default: Log.info("Unbekannter Befehl: \(url.absoluteString)")
             }
         }
@@ -80,4 +87,20 @@ import AppKit
     }
 
     @objc func openSettings() { SettingsWindowController.show() }
+
+    /// Nur in der Test-Sandbox: fotografiert die eigenen sichtbaren Fenster einzeln (nie den Bildschirm).
+    private static func snapshotOwnWindows() async {
+        guard let root = Paths.testRoot,
+              let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) else { return }
+        let pid = ProcessInfo.processInfo.processIdentifier
+        for (i, w) in content.windows.enumerated() where w.owningApplication?.processID == pid && w.frame.width > 40 {
+            let config = SCStreamConfiguration()
+            config.width = Int(w.frame.width * 2)
+            config.height = Int(w.frame.height * 2)
+            guard let image = try? await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: w), configuration: config) else { continue }
+            let url = root.appendingPathComponent("fenster-\(i)-\(Int(w.frame.minX))x\(Int(w.frame.minY)).png")
+            try? image.pngData()?.write(to: url)
+            Log.info("Snapshot \(url.lastPathComponent) frame=\(w.frame)")
+        }
+    }
 }

@@ -89,9 +89,10 @@ enum HotkeyAction: String, CaseIterable, Codable, Identifiable {
         }
     }
 
-    /// ⌥⇧ statt ⌘⇧: ⌘⇧3/4/5 gehören dem System.
+    /// Wie macOS: ⌘⇧3 Bildschirm, ⌘⇧4 Bereich, ⌘⇧5 Aufnahme. Die gleichnamigen macOS-Kürzel
+    /// schaltet Knips auf Nachfrage ab (`SystemShortcuts.takeOver`).
     var defaultCombo: KeyCombo? {
-        let mods = UInt32(optionKey | shiftKey)
+        let mods = UInt32(cmdKey | shiftKey)
         switch self {
         case .captureArea: return KeyCombo(keyCode: UInt32(kVK_ANSI_4), modifiers: mods)
         case .captureWindow: return KeyCombo(keyCode: UInt32(kVK_ANSI_2), modifiers: mods)
@@ -161,21 +162,78 @@ enum HotkeyAction: String, CaseIterable, Codable, Identifiable {
     }
 }
 
-/// Erkennt, ob ein Kürzel mit den macOS-Bildschirmfoto-Kürzeln kollidiert.
+/// Erkennt und löst Konflikte mit den macOS-Bildschirmfoto-Kürzeln.
 enum SystemShortcuts {
-    private static let screenshotIDs: [Int: String] = [
-        28: "Bildschirm als Datei sichern", 29: "Bildschirm in Zwischenablage",
-        30: "Auswahl als Datei sichern", 31: "Auswahl in Zwischenablage", 184: "Bildschirmfoto-Optionen",
+    private static let domain = "com.apple.symbolichotkeys" as CFString
+    private static let key = "AppleSymbolicHotKeys" as CFString
+    /// Zeichen, Tastencode, Modifier je Eintrag (macOS-Standard).
+    private static let defaultParams: [Int: [Int]] = [
+        28: [51, 20, 0x120000], 29: [51, 20, 0x160000], 30: [52, 21, 0x120000], 31: [52, 21, 0x160000], 184: [53, 23, 0x120000],
     ]
 
-    /// Standardbelegung, falls der Eintrag fehlt: (keyCode, Cocoa-Modifier-Rohwert).
-    private static let defaults: [Int: (Int, Int)] = [
-        28: (20, 0x120000), 29: (20, 0x160000), 30: (21, 0x120000), 31: (21, 0x160000), 184: (23, 0x120000),
-    ]
+    /// macOS-Einträge, die eines der Kürzel selbst belegen.
+    static func conflictingIDs(for combos: [KeyCombo]) -> [Int] {
+        screenshotIDs.keys.sorted().filter { id in combos.contains { conflictID(for: $0) == id } }
+    }
 
-    static func conflict(for combo: KeyCombo) -> String? {
-        let dict = UserDefaults(suiteName: "com.apple.symbolichotkeys")?.dictionary(forKey: "AppleSymbolicHotKeys") ?? [:]
-        for (id, name) in screenshotIDs {
+    /// Schaltet die kollidierenden macOS-Kürzel ab und lädt die Tastaturbelegung sofort neu.
+    @discardableResult
+    static func takeOver(_ ids: [Int]) -> Bool {
+        guard !ids.isEmpty else { return true }
+        var dict = (CFPreferencesCopyAppValue(key, domain) as? [String: Any]) ?? [:]
+        for id in ids {
+            var entry = dict[String(id)] as? [String: Any] ?? [:]
+            if entry["value"] == nil, let p = defaultParams[id] {
+                entry["value"] = ["type": "standard", "parameters": p] as [String: Any]
+            }
+            entry["enabled"] = false
+            dict[String(id)] = entry
+        }
+        CFPreferencesSetAppValue(key, dict as CFDictionary, domain)
+        guard CFPreferencesAppSynchronize(domain) else { return false }
+        var taken = Set(UserDefaults.standard.array(forKey: "takenSystemShortcuts") as? [Int] ?? [])
+        taken.formUnion(ids)
+        UserDefaults.standard.set(Array(taken).sorted(), forKey: "takenSystemShortcuts")
+        reloadSystemHotkeys()
+        return true
+    }
+
+    /// Gibt die von Knips abgeschalteten macOS-Kürzel zurück.
+    static func restore() {
+        let taken = UserDefaults.standard.array(forKey: "takenSystemShortcuts") as? [Int] ?? []
+        guard !taken.isEmpty, var dict = CFPreferencesCopyAppValue(key, domain) as? [String: Any] else { return }
+        for id in taken {
+            guard var entry = dict[String(id)] as? [String: Any] else { continue }
+            entry["enabled"] = true
+            dict[String(id)] = entry
+        }
+        CFPreferencesSetAppValue(key, dict as CFDictionary, domain)
+        CFPreferencesAppSynchronize(domain)
+        UserDefaults.standard.removeObject(forKey: "takenSystemShortcuts")
+        reloadSystemHotkeys()
+    }
+
+    static var hasTakenOver: Bool { !(UserDefaults.standard.array(forKey: "takenSystemShortcuts") as? [Int] ?? []).isEmpty }
+
+    private static func reloadSystemHotkeys() {
+        let tool = "/System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings"
+        guard FileManager.default.isExecutableFile(atPath: tool) else { return }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: tool)
+        p.arguments = ["-u"]
+        try? p.run()
+    }
+
+    static func displayList(_ ids: [Int]) -> String {
+        ids.compactMap { id -> String? in
+            guard let p = defaultParams[id] else { return nil }
+            return KeyCombo(keyCode: UInt32(p[1]), modifiers: p[2] & 0x40000 != 0 ? UInt32(cmdKey | shiftKey | controlKey) : UInt32(cmdKey | shiftKey)).display
+        }.joined(separator: ", ")
+    }
+
+    private static func conflictID(for combo: KeyCombo) -> Int? {
+        let dict = (CFPreferencesCopyAppValue(key, domain) as? [String: Any]) ?? [:]
+        for (id, _) in screenshotIDs {
             var enabled = true
             var keyCode: Int?
             var mods: Int?
@@ -186,11 +244,20 @@ enum SystemShortcuts {
                     mods = params[2]
                 }
             }
-            if keyCode == nil, let d = defaults[id] { keyCode = d.0; mods = d.1 }
+            if keyCode == nil, let p = defaultParams[id] { keyCode = p[1]; mods = p[2] }
             guard enabled, let keyCode, let mods else { continue }
             let flags = NSEvent.ModifierFlags(rawValue: UInt(mods)).intersection([.command, .shift, .option, .control])
-            if UInt32(keyCode) == combo.keyCode && flags == combo.cocoaModifiers { return name }
+            if UInt32(keyCode) == combo.keyCode && flags == combo.cocoaModifiers { return id }
         }
         return nil
+    }
+
+    private static let screenshotIDs: [Int: String] = [
+        28: "Bildschirm als Datei sichern", 29: "Bildschirm in Zwischenablage",
+        30: "Auswahl als Datei sichern", 31: "Auswahl in Zwischenablage", 184: "Bildschirmfoto-Optionen",
+    ]
+
+    static func conflict(for combo: KeyCombo) -> String? {
+        conflictID(for: combo).flatMap { screenshotIDs[$0] }
     }
 }

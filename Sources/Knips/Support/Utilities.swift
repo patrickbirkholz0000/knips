@@ -77,31 +77,102 @@ enum ImageIOHelper {
     }
 }
 
-/// Liefert TIFF erst, wenn eine App es wirklich anfragt — Retina-TIFFs sind sonst schnell 30 MB groß.
-private final class LazyTIFFProvider: NSObject, NSPasteboardItemDataProvider {
-    let image: CGImage
-    init(image: CGImage) { self.image = image }
+/// PNG-Kodierung im Hintergrund. Ein 4K-Screenshot braucht ~180 ms — das darf weder das Overlay
+/// noch die Karte aufhalten. `data` wartet, falls die Kodierung noch läuft.
+final class PNGPromise: @unchecked Sendable {
+    private let group = DispatchGroup()
+    private var renderedImage: CGImage?
+    private var result: Data?
+    private static let queue = DispatchQueue(label: "de.birkgroup.knips.png", qos: .userInitiated, attributes: .concurrent)
+
+    convenience init(_ image: CGImage) {
+        self.init(render: { image })
+    }
+
+    /// Rendert (z. B. Editor-Fassung mit Zensur) und kodiert anschließend — beides im Hintergrund.
+    init(render: @escaping @Sendable () -> CGImage?) {
+        group.enter()
+        Self.queue.async { [self] in
+            renderedImage = render()
+            result = renderedImage?.pngData()
+            group.leave()
+        }
+    }
+
+    /// Bereits kodierte Daten (z. B. aus einer Datei) — keine erneute Kodierung.
+    init(image: CGImage, data: Data) {
+        renderedImage = image
+        result = data
+    }
+
+    var image: CGImage? {
+        group.wait()
+        return renderedImage
+    }
+
+    var data: Data? {
+        group.wait()
+        return result
+    }
+
+    func value() async -> Data? {
+        await withCheckedContinuation { cont in
+            group.notify(queue: .global(qos: .userInitiated)) { [self] in cont.resume(returning: result) }
+        }
+    }
+
+    func imageValue() async -> CGImage? {
+        await withCheckedContinuation { cont in
+            group.notify(queue: .global(qos: .userInitiated)) { [self] in cont.resume(returning: renderedImage) }
+        }
+    }
+}
+
+/// Liefert PNG und TIFF erst, wenn eine App sie wirklich anfragt.
+private final class LazyImageProvider: NSObject, NSPasteboardItemDataProvider {
+    let png: PNGPromise
+    init(png: PNGPromise) { self.png = png }
 
     func pasteboard(_ pasteboard: NSPasteboard?, item: NSPasteboardItem, provideDataForType type: NSPasteboard.PasteboardType) {
-        guard type == .tiff else { return }
-        let rep = NSBitmapImageRep(cgImage: image)
-        if let data = rep.tiffRepresentation { item.setData(data, forType: .tiff) }
+        switch type {
+        case .png:
+            if let data = png.data { item.setData(data, forType: .png) }
+        case .tiff:
+            if let image = png.image, let data = NSBitmapImageRep(cgImage: image).tiffRepresentation { item.setData(data, forType: .tiff) }
+        default:
+            break
+        }
     }
 }
 
 enum Clipboard {
-    private static var provider: LazyTIFFProvider?
+    private static var provider: LazyImageProvider?
 
     static func copy(image: CGImage, fileURL: URL?) {
+        copy(png: PNGPromise(image), fileURL: fileURL)
+    }
+
+    /// Sofort zurück: die Daten werden erst beim Einfügen geliefert.
+    static func copy(png: PNGPromise, fileURL: URL?) {
         let pb = NSPasteboard.general
         pb.clearContents()
         let item = NSPasteboardItem()
-        if let png = image.pngData() { item.setData(png, forType: .png) }
-        let provider = LazyTIFFProvider(image: image)
+        let provider = LazyImageProvider(png: png)
         self.provider = provider
-        item.setDataProvider(provider, forTypes: [.tiff])
+        item.setDataProvider(provider, forTypes: [.png, .tiff])
         if let fileURL { item.setString(fileURL.absoluteString, forType: .fileURL) }
         pb.writeObjects([item])
+    }
+
+    /// Fertige PNG-Datei: Daten direkt übernehmen, nichts neu kodieren.
+    static func copy(pngFile url: URL) {
+        guard let data = try? Data(contentsOf: url),
+              let src = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
+            copy(fileURL: url)
+            return
+        }
+        copy(png: PNGPromise(image: image, data: data), fileURL: url)
     }
 
     static func copy(fileURL: URL) {

@@ -321,6 +321,7 @@ private struct VideoCanvasHost: NSViewRepresentable {
 
 struct VideoEditorRoot: View {
     @ObservedObject var model: VideoEditorModel
+    @ObservedObject private var settings = AppSettings.shared
     let canvas: VideoCanvasView
     let actions: VideoEditorActions
 
@@ -397,10 +398,12 @@ struct VideoEditorRoot: View {
             .padding(3)
             .background(RoundedRectangle(cornerRadius: 9).fill(Color.white.opacity(0.06)))
             Spacer(minLength: 8)
-            Button { model.autoRedact() } label: { Label("Auto-Zensur", systemImage: "wand.and.stars") }
-                .buttonStyle(ToolbarButtonStyle(prominent: false))
-                .disabled(model.busy != nil)
-                .help("Erkennt E-Mails, IBANs, Telefonnummern, Schlüssel usw. in Einzelbildern (alle 0,5 s) und legt Zensurfelder an.")
+            if settings.showAutoRedact {
+                Button { model.autoRedact() } label: { Label("Auto-Zensur", systemImage: "wand.and.stars") }
+                    .buttonStyle(ToolbarButtonStyle(prominent: false))
+                    .disabled(model.busy != nil)
+                    .help("Erkennt E-Mails, IBANs, Telefonnummern, Schlüssel usw. in Einzelbildern (alle 0,5 s) und legt Zensurfelder an.")
+            }
             Button { model.undo() } label: { Image(systemName: "arrow.uturn.backward") }
                 .buttonStyle(ToolbarButtonStyle(prominent: false))
                 .disabled(!model.canUndo)

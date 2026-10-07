@@ -2,10 +2,12 @@ import AppKit
 import CoreImage
 
 /// Vollbild-Effektbilder (verpixelt, unscharf) — Zensurflächen zeigen davon nur ihren Ausschnitt.
-final class EffectsCache {
+final class EffectsCache: @unchecked Sendable {
     let base: CGImage
     let scale: CGFloat
     private var cache: [RedactStyle: CGImage] = [:]
+    /// Gerendert wird auch im Hintergrund (Speichern), gezeichnet im Hauptthread.
+    private let lock = NSLock()
     private static let context = CIContext(options: [.cacheIntermediates: false])
 
     init(base: CGImage, scale: CGFloat) {
@@ -18,6 +20,8 @@ final class EffectsCache {
 
     func image(for style: RedactStyle) -> CGImage? {
         if style == .solid { return nil }
+        lock.lock()
+        defer { lock.unlock() }
         if let cached = cache[style] { return cached }
         let input = CIImage(cgImage: base)
         let extent = input.extent

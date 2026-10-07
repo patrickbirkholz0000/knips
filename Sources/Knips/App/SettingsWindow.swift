@@ -8,6 +8,14 @@ import SwiftUI
     private static var instance: SettingsWindowController?
     static let size = NSSize(width: 740, height: 600)
 
+    /// Fenster unsichtbar anlegen, damit das erste Öffnen nicht hängt.
+    static func prewarm() {
+        if instance == nil {
+            instance = SettingsWindowController()
+            instance?.window?.contentView?.layoutSubtreeIfNeeded()
+        }
+    }
+
     static func show(_ pane: SettingsPane? = nil) {
         if instance == nil { instance = SettingsWindowController() }
         if let pane { SettingsNavigation.shared.pane = pane }
@@ -286,9 +294,40 @@ private struct ShortcutsPane: View {
         ("Sonstiges", [.pinClipboard]),
     ]
 
+    private var conflicting: [KeyCombo] {
+        settings.activeHotkeys.values.filter { SystemShortcuts.conflict(for: $0) != nil }.sorted { $0.keyCode < $1.keyCode }
+    }
+
     var body: some View {
+        let _ = conflictTick
+        let conflicts = conflicting
         Form {
             PaneHeader(pane: .shortcuts)
+            if !conflicts.isEmpty {
+                Section {
+                    if !conflicts.isEmpty {
+                        notice(symbol: "exclamationmark.triangle.fill", color: .yellow,
+                               title: "macOS nutzt \(conflicts.map(\.display).joined(separator: ", ")) noch selbst",
+                               detail: "Damit diese Kürzel bei Knips ankommen, schaltet Knips die gleichen macOS-Kürzel für Bildschirmfotos ab. Lässt sich hier jederzeit rückgängig machen.") {
+                            Button("Für Knips übernehmen") {
+                                SystemShortcuts.takeOver(SystemShortcuts.conflictingIDs(for: Array(settings.activeHotkeys.values)))
+                                conflictTick += 1
+                            }
+                        }
+                    }
+                }
+            } else if SystemShortcuts.hasTakenOver {
+                Section {
+                    notice(symbol: "checkmark.circle.fill", color: .green,
+                           title: "Knips hat die Bildschirmfoto-Kürzel von macOS übernommen",
+                           detail: "Die entsprechenden macOS-Kürzel sind abgeschaltet.") {
+                        Button("macOS-Kürzel wiederherstellen") {
+                            SystemShortcuts.restore()
+                            conflictTick += 1
+                        }
+                    }
+                }
+            }
             ForEach(groups, id: \.0) { title, actions in
                 Section(title) {
                     ForEach(actions) { ShortcutRow(action: $0, settings: settings) }
@@ -301,6 +340,7 @@ private struct ShortcutsPane: View {
                         settings.hotkeys = AppSettings.defaultHotkeys
                         settings.disabledHotkeys = []
                         HotkeyManager.shared.apply(settings.activeHotkeys)
+                        conflictTick += 1
                     }
                     Spacer()
                     Button("Tastaturkurzbefehle von macOS …") {
@@ -308,11 +348,27 @@ private struct ShortcutsPane: View {
                     }
                 }
             } footer: {
-                Text("Kürzel anklicken und die neue Kombination drücken. ⌫ entfernt das Kürzel, Esc bricht ab. Um ⌘⇧3, ⌘⇧4 oder ⌘⇧5 zu verwenden, schalte sie in macOS unter Tastatur → Tastaturkurzbefehle → Bildschirmfotos aus.")
+                Text("Kürzel anklicken und die neue Kombination drücken. ⌫ entfernt das Kürzel, Esc bricht ab. Standard wie bei macOS: ⌘⇧3 ganzer Bildschirm, ⌘⇧4 Bereich (Leertaste: Fenster), ⌘⇧5 Bildschirmaufnahme.")
                     .settingsFootnote()
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+extension ShortcutsPane {
+    fileprivate func notice<Action: View>(symbol: String, color: Color, title: String, detail: String,
+                                          @ViewBuilder action: () -> Action) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: symbol).foregroundStyle(color).font(.system(size: 15))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.system(size: 13, weight: .semibold))
+                Text(detail).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            action()
+        }
+        .padding(.vertical, 2)
     }
 }
 
@@ -455,9 +511,18 @@ private struct RedactionPane: View {
             } header: {
                 Text("Standardstil")
             } footer: {
-                Text("„Schwärzen“ ist am sichersten. Verpixeln und Unschärfe machen normale Schrift unlesbar, lassen aber Länge und grobe Form erkennen.")
+                Text("„Balken“ ist am sichersten. Verpixeln und Unschärfe machen normale Schrift unlesbar, lassen aber Länge und grobe Form erkennen. Im Editor: Werkzeug „Zensieren“ (X) wählen und Balken über die Stelle ziehen.")
                     .settingsFootnote()
             }
+            Section {
+                Toggle("Auto-Zensur-Knopf in den Editoren zeigen", isOn: $settings.showAutoRedact)
+            } header: {
+                Text("Auto-Zensur")
+            } footer: {
+                Text("Sucht per Texterkennung nach E-Mails, IBANs, Schlüsseln usw. und legt Balken an. Normalerweise ziehst du Balken selbst — der Knopf ist deshalb aus.")
+                    .settingsFootnote()
+            }
+            if settings.showAutoRedact {
             Section {
                 ForEach(SensitiveDetector.Kind.allCases, id: \.self) { kind in
                     Toggle(isOn: Binding(get: { settings.autoRedactKinds.contains(kind) }, set: { on in
@@ -474,6 +539,7 @@ private struct RedactionPane: View {
             } footer: {
                 Text("Die Texterkennung läuft auf deinem Mac. Vorschläge erscheinen als normale Zensurfelder und lassen sich einzeln löschen.")
                     .settingsFootnote()
+            }
             }
         }
         .formStyle(.grouped)

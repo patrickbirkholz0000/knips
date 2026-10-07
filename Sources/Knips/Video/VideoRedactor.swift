@@ -146,17 +146,35 @@ enum VideoRedactor {
         generator.appliesPreferredTrackTransform = true
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
+        // Gleiche Obergrenze wie bei Bildern: Erkennung bleibt gut, Laufzeit fällt drastisch.
+        generator.maximumSize = CGSize(width: SensitiveDetector.ocrMaxPixel, height: SensitiveDetector.ocrMaxPixel)
+        let fullSize = try await VideoInfo.pixelSize(of: asset)
         let start = range.start.seconds, end = range.end.seconds
         let samples = max(1, Int(((end - start) / step).rounded(.up)) + 1)
 
         struct Track { var rect: CGRect; var text: String; var first: Double; var last: Double }
         var open: [Track] = []
         var done: [Track] = []
+        var lastSignature: FrameSignature?
+        var lastFindings: [SensitiveDetector.Finding]?
         for i in 0..<samples {
             try Task.checkCancellation()
             let t = min(end, start + Double(i) * step)
             guard let frame = try? await generator.image(at: CMTime(seconds: t, preferredTimescale: 600)).image else { continue }
-            let findings = SensitiveDetector.detectSync(in: frame, kinds: kinds)
+            // Bildschirmaufnahmen stehen oft still: unverändertes Bild → Funde vom letzten Mal übernehmen.
+            let signature = FrameSignature(frame)
+            let findings: [SensitiveDetector.Finding]
+            if let last = lastSignature, let cached = lastFindings, signature.matches(last) {
+                findings = cached
+            } else {
+                let f = frame.width == Int(fullSize.width) ? 1 : fullSize.width / CGFloat(frame.width)
+                findings = SensitiveDetector.detectSync(in: frame, kinds: kinds).map {
+                    SensitiveDetector.Finding(rect: CGRect(x: $0.rect.minX * f, y: $0.rect.minY * f, width: $0.rect.width * f, height: $0.rect.height * f),
+                                              kind: $0.kind, text: $0.text)
+                }
+            }
+            lastSignature = signature
+            lastFindings = findings
             var seen = Set<Int>()
             for f in findings {
                 if let idx = open.firstIndex(where: { $0.text == f.text && iou($0.rect, f.rect) > 0.3 }) {
@@ -196,4 +214,27 @@ enum VideoRedactor {
 private final class SessionBox: @unchecked Sendable {
     let session: AVAssetExportSession
     init(_ s: AVAssetExportSession) { session = s }
+}
+
+/// Winziges Graustufenbild (32×18) zum Erkennen unveränderter Frames.
+struct FrameSignature {
+    let pixels: [UInt8]
+
+    init(_ image: CGImage) {
+        let w = 32, h = 18
+        var buffer = [UInt8](repeating: 0, count: w * h)
+        if let ctx = CGContext(data: &buffer, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                               space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) {
+            ctx.interpolationQuality = .medium
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        }
+        pixels = buffer
+    }
+
+    func matches(_ other: FrameSignature) -> Bool {
+        guard pixels.count == other.pixels.count else { return false }
+        var diff = 0
+        for i in pixels.indices { diff += abs(Int(pixels[i]) - Int(other.pixels[i])) }
+        return Double(diff) / Double(pixels.count) < 1.5
+    }
 }

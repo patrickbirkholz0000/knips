@@ -5,30 +5,30 @@ enum SelectionPurpose { case screenshot, recording }
 
 enum SelectionResult {
     /// Rechteck in Punkten relativ zum Bildschirm, Ursprung unten links.
-    case area(FrozenScreen, CGRect)
-    case window(WindowInfo, FrozenScreen)
-    case fullScreen(FrozenScreen)
+    case area(NSScreen, CGRect)
+    case window(WindowInfo, NSScreen)
+    case fullScreen(NSScreen)
     case cancelled
 }
 
-/// Vollbild-Overlay je Bildschirm über dem eingefrorenen Standbild. Ziehen = Bereich,
-/// Leertaste = Fenstermodus, ⏎ = ganzer Bildschirm, Esc = Abbruch.
+/// Vollbild-Overlay je Bildschirm. Erscheint sofort über dem laufenden Bildschirm; das Standbild
+/// wird darunter im Hintergrund aufgenommen und nachgereicht (`setFrozen`).
+/// Ziehen = Bereich, Leertaste = Fenstermodus, ⏎ = ganzer Bildschirm, Esc = Abbruch.
 @MainActor final class SelectionOverlay {
     let purpose: SelectionPurpose
     let windowInfos: [WindowInfo]
-    private let frozen: [FrozenScreen]
-    private var windows: [OverlayWindow] = []
+    private let screens: [NSScreen]
+    private var windows: [OverlayPanel] = []
     private var views: [SelectionView] = []
     private var completion: ((SelectionResult) -> Void)?
     private var keyMonitor: Any?
-    private var previousApp: NSRunningApplication?
     private(set) var mouse: CGPoint = NSEvent.mouseLocation
     var windowMode: Bool { didSet { refreshAll() } }
     var isDragging = false
 
-    init(frozen: [FrozenScreen], windows: [WindowInfo], purpose: SelectionPurpose, windowMode: Bool,
+    init(screens: [NSScreen], windows: [WindowInfo], purpose: SelectionPurpose, windowMode: Bool,
          completion: @escaping (SelectionResult) -> Void) {
-        self.frozen = frozen
+        self.screens = screens
         self.windowInfos = windows
         self.purpose = purpose
         self.windowMode = windowMode
@@ -36,26 +36,29 @@ enum SelectionResult {
     }
 
     func present() {
-        previousApp = NSWorkspace.shared.frontmostApplication
-        for f in frozen {
-            let window = OverlayWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: false)
-            window.setFrame(f.screen.frame, display: false)
+        for screen in screens {
+            // Nicht-aktivierendes Panel: die App, in der gearbeitet wird, bleibt aktiv — ihre Fenster
+            // erscheinen im Screenshot nicht grau, und danach muss kein Fokus zurückgegeben werden.
+            let window = OverlayPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            window.setFrame(screen.frame, display: false)
             window.level = .screenSaver
-            window.isOpaque = true
-            window.backgroundColor = .black
+            window.isOpaque = false
+            window.backgroundColor = .clear
             window.hasShadow = false
             window.isReleasedWhenClosed = false
+            window.hidesOnDeactivate = false
+            window.becomesKeyOnlyIfNeeded = false
             window.acceptsMouseMovedEvents = true
+            window.animationBehavior = .none
             window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-            let view = SelectionView(frozen: f, overlay: self)
-            view.frame = NSRect(origin: .zero, size: f.screen.frame.size)
+            let view = SelectionView(screen: screen, overlay: self)
+            view.frame = NSRect(origin: .zero, size: screen.frame.size)
             window.contentView = view
             windows.append(window)
             views.append(view)
         }
-        NSApp.activate(ignoringOtherApps: true)
         for w in windows { w.orderFrontRegardless() }
-        let target = zip(windows, frozen).first { NSMouseInRect(mouse, $0.1.screen.frame, false) }?.0 ?? windows.first
+        let target = zip(windows, screens).first { NSMouseInRect(mouse, $0.1.frame, false) }?.0 ?? windows.first
         target?.makeKey()
         if let target, let view = target.contentView { target.makeFirstResponder(view) }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -66,6 +69,16 @@ enum SelectionResult {
         refreshAll()
     }
 
+    /// Standbilder nachreichen, sobald die Aufnahme im Hintergrund fertig ist.
+    func setFrozen(_ frozen: [FrozenScreen]) {
+        for view in views {
+            if let f = frozen.first(where: { $0.screen == view.screen }) { view.setImage(f.image) }
+        }
+        refreshAll()
+    }
+
+    var isActive: Bool { completion != nil }
+
     private func handleKey(_ event: NSEvent) -> Bool {
         switch event.keyCode {
         case 53: finish(.cancelled); return true
@@ -73,8 +86,8 @@ enum SelectionResult {
             if !isDragging { windowMode.toggle() }
             return true
         case 36, 76:
-            if let f = frozen.first(where: { NSMouseInRect(mouse, $0.screen.frame, false) }) ?? frozen.first {
-                finish(.fullScreen(f))
+            if let screen = screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) ?? screens.first {
+                finish(.fullScreen(screen))
             }
             return true
         default:
@@ -103,21 +116,20 @@ enum SelectionResult {
         windows.removeAll()
         views.removeAll()
         NSCursor.arrow.set()
-        // Fokus zurück an die App, in der gearbeitet wurde.
-        if let previousApp, previousApp.processIdentifier != ProcessInfo.processInfo.processIdentifier {
-            previousApp.activate()
-        }
+        // Overlay sofort vom Bildschirm nehmen, bevor irgendetwas anderes passiert.
+        CATransaction.flush()
         completion(result)
     }
 }
 
-final class OverlayWindow: NSWindow {
+final class OverlayPanel: NSPanel {
     override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
+    override var canBecomeMain: Bool { false }
 }
 
 final class SelectionView: NSView {
-    let frozen: FrozenScreen
+    let screen: NSScreen
+    private(set) var image: CGImage?
     private unowned let overlay: SelectionOverlay
     private var dragStart: CGPoint?
     private var selection: CGRect?
@@ -141,8 +153,9 @@ final class SelectionView: NSView {
     private static let loupeSize: CGFloat = 132
     private static let loupePixels = 13
 
-    init(frozen: FrozenScreen, overlay: SelectionOverlay) {
-        self.frozen = frozen
+    init(screen: NSScreen, overlay: SelectionOverlay, image: CGImage? = nil) {
+        self.screen = screen
+        self.image = image
         self.overlay = overlay
         super.init(frame: .zero)
         wantsLayer = true
@@ -154,10 +167,21 @@ final class SelectionView: NSView {
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// Pixel pro Punkt des Standbilds.
+    private var scale: CGFloat { image.map { CGFloat($0.width) / screen.frame.width } ?? screen.backingScaleFactor }
+
+    func setImage(_ image: CGImage) {
+        self.image = image
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        imageLayer.contents = image
+        CATransaction.commit()
+    }
+
     private func setupLayers() {
         guard let root = layer else { return }
-        let scale = frozen.screen.backingScaleFactor
-        imageLayer.contents = frozen.image
+        let scale = screen.backingScaleFactor
+        imageLayer.contents = image
         imageLayer.contentsGravity = .resize
         root.addSublayer(imageLayer)
 
@@ -278,12 +302,12 @@ final class SelectionView: NSView {
         overlay.isDragging = false
         defer { dragStart = nil }
         if let r = selection, r.width >= 4, r.height >= 4 {
-            overlay.finish(.area(frozen, r.integral))
+            overlay.finish(.area(screen, r.integral))
             return
         }
         selection = nil
         if overlay.windowMode, let w = overlay.hoveredWindow() {
-            overlay.finish(.window(w, frozen))
+            overlay.finish(.window(w, screen))
             return
         }
         refresh()
@@ -305,7 +329,7 @@ final class SelectionView: NSView {
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
 
-        let screenFrame = frozen.screen.frame
+        let screenFrame = screen.frame
         let mouseInside = NSMouseInRect(overlay.mouse, screenFrame, false)
         let local = CGPoint(x: overlay.mouse.x - screenFrame.minX, y: overlay.mouse.y - screenFrame.minY)
         let dragging = selection != nil
@@ -332,7 +356,7 @@ final class SelectionView: NSView {
         if let selection {
             borderLayer.path = CGPath(rect: selection.insetBy(dx: -0.5, dy: -0.5), transform: nil)
             borderLayer.isHidden = false
-            let s = frozen.scale
+            let s = scale
             setLabel(sizeText, bg: sizeBG, text: "\(Int((selection.width * s).rounded())) × \(Int((selection.height * s).rounded()))")
             var origin = CGPoint(x: selection.maxX - sizeBG.bounds.width, y: selection.minY - sizeBG.bounds.height - 8)
             if origin.y < 4 { origin.y = selection.minY + 8 }
@@ -352,20 +376,20 @@ final class SelectionView: NSView {
             crossV.frame = CGRect(x: local.x.rounded() - 0.5, y: 0, width: 1, height: bounds.height)
         }
 
-        updateLoupe(local: local, visible: mouseInside && !overlay.windowMode)
+        updateLoupe(local: local, visible: mouseInside && !overlay.windowMode && image != nil)
         updateHint(visible: mouseInside && !dragging)
     }
 
     private func updateLoupe(local: CGPoint, visible: Bool) {
         loupe.isHidden = !visible
         loupeText.isHidden = !visible
-        guard visible else { return }
-        let s = frozen.scale
+        guard visible, let image else { return }
+        let s = scale
         let px = Int(local.x * s), py = Int((bounds.height - local.y) * s)
         let half = Self.loupePixels / 2
         let region = CGRect(x: px - half, y: py - half, width: Self.loupePixels, height: Self.loupePixels)
-        let clipped = region.intersection(CGRect(x: 0, y: 0, width: frozen.image.width, height: frozen.image.height))
-        if !clipped.isNull, let crop = frozen.image.cropping(to: clipped) {
+        let clipped = region.intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        if !clipped.isNull, let crop = image.cropping(to: clipped) {
             loupeImage.contents = crop
             let cell = Self.loupeSize / CGFloat(Self.loupePixels)
             loupeImage.frame = CGRect(x: (clipped.minX - region.minX) * cell,
@@ -389,7 +413,7 @@ final class SelectionView: NSView {
             ? prefix + "Fenster anklicken  ·  Leertaste: Bereich  ·  ⏎ ganzer Bildschirm  ·  Esc: Abbrechen"
             : prefix + "Bereich ziehen  ·  Leertaste: Fenster  ·  ⏎ ganzer Bildschirm  ·  Esc: Abbrechen"
         setLabel(hintText, bg: hintBG, text: text, padX: 14, height: 30)
-        let menuBar = frozen.screen.frame.maxY - frozen.screen.visibleFrame.maxY
+        let menuBar = screen.frame.maxY - screen.visibleFrame.maxY
         hintBG.frame.origin = CGPoint(x: (bounds.width - hintBG.bounds.width) / 2, y: bounds.height - menuBar - hintBG.bounds.height - 18)
     }
 

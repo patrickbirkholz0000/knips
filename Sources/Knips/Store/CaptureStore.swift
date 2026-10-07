@@ -47,6 +47,13 @@ struct VideoDocument: Codable {
     static let shared = CaptureStore()
 
     @Published private(set) var items: [CaptureItem] = []
+    /// Laufende Schreibvorgänge je Aufnahme (in Reihe). Kopieren/Ziehen/Löschen warten darauf.
+    private var writes: [UUID: Task<Void, Never>] = [:]
+    /// Zuletzt aufgenommene Originale im Speicher — der Editor öffnet sie ohne Umweg über die Platte.
+    private var memory: [(UUID, CGImage)] = []
+    private var pendingCount: [UUID: Int] = [:]
+    /// Dateinamen, die vergeben, aber noch nicht geschrieben sind.
+    private var reservedNames: Set<String> = []
 
     private init() {
         Paths.ensure(Paths.items)
@@ -65,21 +72,56 @@ struct VideoDocument: Codable {
 
     // MARK: Anlegen
 
-    func addImage(_ image: CGImage, scale: CGFloat, name: String? = nil) throws -> CaptureItem {
-        guard let png = image.pngData() else { throw StoreError.encode }
+    /// Legt den Eintrag sofort an; PNG-Kodierung und Schreiben laufen im Hintergrund.
+    func addImage(_ image: CGImage, scale: CGFloat, png: PNGPromise? = nil, name: String? = nil) throws -> CaptureItem {
         let id = UUID()
         let output = try uniqueOutputURL(base: name ?? "Knips \(Format.fileDate.string(from: Date()))", ext: "png")
+        reservedNames.insert(output.path)
         var item = CaptureItem(id: id, kind: .image, createdAt: Date(), fileURL: output,
                                pixelWidth: image.width, pixelHeight: image.height, scale: Double(scale))
-        let dir = directory(for: item)
-        Paths.ensure(dir)
-        try png.write(to: originalURL(for: item), options: .atomic)
-        try png.write(to: output, options: .atomic)
-        writeThumbnail(ImageIOHelper.downscale(image, maxPixel: 640), for: item)
+        Paths.ensure(directory(for: item))
         item.revision = 1
         persist(item)
         items.insert(item, at: 0)
+        remember(image, for: id)
+        ThumbnailCache.shared.seed(item, image: image)
+        let promise = png ?? PNGPromise(image)
+        let original = originalURL(for: item), thumbURL = thumbnailURL(for: item)
+        let snapshot = item
+        beginWrite(id)
+        writes[id] = Task.detached(priority: .userInitiated) {
+            guard let data = await promise.value() else { return }
+            try? data.write(to: original, options: .atomic)
+            try? data.write(to: output, options: .atomic)
+            let thumb = ImageIOHelper.downscale(image, maxPixel: 640)
+            try? thumb.pngData()?.write(to: thumbURL, options: .atomic)
+            await MainActor.run {
+                ThumbnailCache.shared.seed(snapshot, image: thumb)
+                self.reservedNames.remove(output.path)
+                self.endWrite(id)
+            }
+        }
         return item
+    }
+
+    /// Wartet, bis alle Schreibvorgänge dieser Aufnahme auf der Platte sind.
+    func waitUntilWritten(_ id: UUID) async {
+        await writes[id]?.value
+    }
+
+    func memoryImage(for id: UUID) -> CGImage? { memory.first { $0.0 == id }?.1 }
+
+    func isWriting(_ id: UUID) -> Bool { (pendingCount[id] ?? 0) > 0 }
+    private func beginWrite(_ id: UUID) { pendingCount[id, default: 0] += 1 }
+    private func endWrite(_ id: UUID) {
+        let n = (pendingCount[id] ?? 1) - 1
+        pendingCount[id] = n > 0 ? n : nil
+    }
+
+    private func remember(_ image: CGImage, for id: UUID) {
+        memory.removeAll { $0.0 == id }
+        memory.insert((id, image), at: 0)
+        if memory.count > 4 { memory.removeLast() }
     }
 
     func addVideo(from tempURL: URL, scale: CGFloat) async throws -> CaptureItem {
@@ -132,13 +174,37 @@ struct VideoDocument: Codable {
     }
 
     /// Schreibt die gerenderte Fassung in den Ablageordner und merkt sich den Bearbeitungsstand.
+    /// Kehrt sofort zurück; geschrieben wird im Hintergrund, in Reihe nach früheren Schreibvorgängen.
     @discardableResult
-    func saveImage(_ rendered: CGImage, document: ImageDocument, for item: CaptureItem) throws -> CaptureItem {
-        guard let png = rendered.pngData() else { throw StoreError.encode }
-        try JSONEncoder().encode(document).write(to: documentURL(for: item), options: .atomic)
-        try png.write(to: item.fileURL, options: .atomic)
-        writeThumbnail(ImageIOHelper.downscale(rendered, maxPixel: 640), for: item)
-        return bump(item) { $0.pixelWidth = rendered.width; $0.pixelHeight = rendered.height }
+    func saveImage(_ rendered: CGImage, document: ImageDocument, for item: CaptureItem) -> CaptureItem {
+        saveImage(png: PNGPromise(rendered), document: document, for: item, size: rendered.pixelSize)
+    }
+
+    /// `png` rendert und kodiert im Hintergrund; `size` ist die erwartete Bildgröße.
+    @discardableResult
+    func saveImage(png promise: PNGPromise, document: ImageDocument, for item: CaptureItem, size: CGSize) -> CaptureItem {
+        let updated = bump(item) { $0.pixelWidth = Int(size.width); $0.pixelHeight = Int(size.height) }
+        let previous = writes[item.id]
+        let docData = try? JSONEncoder().encode(document)
+        let docURL = documentURL(for: item), output = item.fileURL, thumbURL = thumbnailURL(for: item)
+        let id = item.id
+        beginWrite(id)
+        writes[item.id] = Task.detached(priority: .userInitiated) {
+            await previous?.value
+            try? docData?.write(to: docURL, options: .atomic)
+            if let data = await promise.value() { try? data.write(to: output, options: .atomic) }
+            guard let rendered = await promise.imageValue() else {
+                await MainActor.run { self.endWrite(id) }
+                return
+            }
+            let thumb = ImageIOHelper.downscale(rendered, maxPixel: 640)
+            try? thumb.pngData()?.write(to: thumbURL, options: .atomic)
+            await MainActor.run {
+                ThumbnailCache.shared.seed(updated, image: thumb)
+                self.endWrite(id)
+            }
+        }
+        return updated
     }
 
     @discardableResult
@@ -159,12 +225,18 @@ struct VideoDocument: Codable {
     }
 
     func delete(_ item: CaptureItem) {
-        let fm = FileManager.default
-        if fm.fileExists(atPath: item.fileURL.path) {
-            try? fm.trashItem(at: item.fileURL, resultingItemURL: nil)
-        }
-        try? fm.removeItem(at: directory(for: item))
         items.removeAll { $0.id == item.id }
+        memory.removeAll { $0.0 == item.id }
+        let pending = writes[item.id]
+        writes[item.id] = nil
+        let dir = directory(for: item)
+        // Erst nach dem letzten Schreibvorgang löschen, sonst legt er die Datei wieder an.
+        Task.detached {
+            await pending?.value
+            let fm = FileManager.default
+            if fm.fileExists(atPath: item.fileURL.path) { try? fm.trashItem(at: item.fileURL, resultingItemURL: nil) }
+            try? fm.removeItem(at: dir)
+        }
     }
 
     func item(with id: UUID) -> CaptureItem? { items.first { $0.id == id } }
@@ -233,7 +305,7 @@ struct VideoDocument: Codable {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         var url = folder.appendingPathComponent("\(base).\(ext)")
         var n = 2
-        while FileManager.default.fileExists(atPath: url.path) {
+        while FileManager.default.fileExists(atPath: url.path) || reservedNames.contains(url.path) {
             url = folder.appendingPathComponent("\(base) (\(n)).\(ext)")
             n += 1
         }

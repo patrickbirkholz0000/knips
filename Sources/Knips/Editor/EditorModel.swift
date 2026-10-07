@@ -112,7 +112,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
         self.annotations = document.annotations
         self.crop = document.crop
         let d = UserDefaults.standard
-        self.tool = initialTool ?? EditorTool(rawValue: d.string(forKey: "editorTool") ?? "") ?? .arrow
+        self.tool = initialTool ?? EditorTool(rawValue: d.string(forKey: "editorTool") ?? "") ?? .redact
         if let data = d.data(forKey: "editorColor"), let c = try? JSONDecoder().decode(RGBA.self, from: data) {
             self.color = c
         } else {
@@ -301,6 +301,14 @@ enum EditorTool: String, CaseIterable, Identifiable {
     func rendered() -> CGImage? {
         Renderer.render(base: base, document: document, scale: scale, effects: effects)
     }
+
+    /// Rendern + PNG-Kodierung im Hintergrund (Verpixeln eines 4K-Bilds kostet sonst ~120 ms im Hauptthread).
+    func renderPromise() -> PNGPromise {
+        let base = base, doc = document, scale = scale, effects = effects
+        return PNGPromise(render: { Renderer.render(base: base, document: doc, scale: scale, effects: effects) })
+    }
+
+    var outputSize: CGSize { (crop ?? fullRect).integral.intersection(fullRect).size }
 }
 
 extension CGRect {

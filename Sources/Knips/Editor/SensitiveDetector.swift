@@ -56,8 +56,15 @@ enum SensitiveDetector {
         await Task.detached(priority: .userInitiated) { detectSync(in: image, kinds: kinds) }.value
     }
 
+    /// Längste Kante für die Texterkennung. Vision „genau“ braucht auf 4K-Screenshots über 30 s,
+    /// auf 2048 px ~0,15 s — und erkennt Retina-Schrift dort genauso gut (gemessen 08.10.2026).
+    static let ocrMaxPixel = 2048
+
     static func detectSync(in image: CGImage, kinds: Set<Kind> = Set(Kind.allCases)) -> [Finding] {
         guard !kinds.isEmpty else { return [] }
+        let source = image
+        let image = ImageIOHelper.downscale(source, maxPixel: ocrMaxPixel)
+        let back = CGFloat(source.width) / CGFloat(image.width)
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
@@ -67,7 +74,8 @@ enum SensitiveDetector {
             Log.error("Texterkennung fehlgeschlagen: \(error.localizedDescription)")
             return []
         }
-        let w = CGFloat(image.width), h = CGFloat(image.height)
+        // Normierte Koordinaten → Pixel des Originals
+        let w = CGFloat(image.width) * back, h = CGFloat(image.height) * back
         var findings: [Finding] = []
         for observation in request.results ?? [] {
             guard let candidate = observation.topCandidates(1).first else { continue }

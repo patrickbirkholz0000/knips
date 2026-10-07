@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import ScreenCaptureKit
 import SwiftUI
+import Vision
 
 /// `Knips --selftest <test> <ausgabeordner>` — prüft Renderer, Erkennung, UI und Video ohne
 /// den Bildschirm zu übernehmen. Läuft isoliert in `<ausgabeordner>/sandbox`.
@@ -18,7 +19,7 @@ import SwiftUI
             switch args[0] {
             case "render": try render(out)
             case "detect": detect(out)
-            case "ui": try ui(out)
+            case "ui": try runAsync { try await ui(out) }
             case "selection": try selection(out)
             case "live":
                 NSApp.setActivationPolicy(.accessory)
@@ -28,6 +29,21 @@ import SwiftUI
                 try runAsync { try await settings(out, panes: args.count > 2 ? args[2].split(separator: ",").compactMap { SettingsPane(rawValue: String($0)) } : SettingsPane.allCases) }
             case "video": try runAsync { try await video(out) }
             case "capture": try runAsync { try await capture() }
+            case "shortcut-roundtrip":
+                // Schaltet ⌃⌘⇧3 (ID 29) kurz ab und wieder ein — prüft den Übernahme-Mechanismus.
+                func state() -> String {
+                    let d = (CFPreferencesCopyAppValue("AppleSymbolicHotKeys" as CFString, "com.apple.symbolichotkeys" as CFString) as? [String: Any])?["29"] as? [String: Any]
+                    return "\(d?["enabled"] ?? "fehlt")"
+                }
+                print("vorher: \(state())")
+                SystemShortcuts.takeOver([29])
+                CFPreferencesAppSynchronize("com.apple.symbolichotkeys" as CFString)
+                print("abgeschaltet: \(state()) · übernommen=\(SystemShortcuts.hasTakenOver)")
+                SystemShortcuts.restore()
+                print("wiederhergestellt: \(state()) · übernommen=\(SystemShortcuts.hasTakenOver)")
+            case "perf":
+                NSApp.setActivationPolicy(.accessory)
+                try runAsync { try await perf(out) }
             case "record": try runAsync { try await record(out, seconds: Double(args.count > 2 ? args[2] : "3") ?? 3) }
             default:
                 print("Unbekannter Test \(args[0])")
@@ -148,6 +164,17 @@ import SwiftUI
         if let img = Renderer.render(base: base, document: doc, scale: 2, effects: EffectsCache(base: base, scale: 2)) {
             try? write(img, out.appendingPathComponent("auto-zensur.png"))
         }
+        // Großes Bild (wird für die Erkennung verkleinert): Fundstellen müssen genau doppelt so groß sein.
+        let big = sampleImage(width: 2800, height: 1760, scale: 4)
+        let bigFindings = SensitiveDetector.detectSync(in: big)
+        for f in bigFindings { print("  2×: \(f.kind.title) @ \(Int(f.rect.minX)),\(Int(f.rect.minY)) \(Int(f.rect.width))×\(Int(f.rect.height))") }
+        if let big = Renderer.render(base: big, document: ImageDocument(annotations: bigFindings.map {
+            var a = Annotation(kind: .redact, start: $0.rect.origin, end: CGPoint(x: $0.rect.maxX, y: $0.rect.maxY))
+            a.redactStyle = .solid
+            return a
+        }), scale: 4, effects: EffectsCache(base: big, scale: 4)) {
+            try? write(ImageIOHelper.downscale(big, maxPixel: 1400), out.appendingPathComponent("auto-zensur-gross.png"))
+        }
         let kinds = Set(findings.map(\.kind))
         print("Gefunden: \(findings.count) — Arten: \(kinds.map(\.title).sorted().joined(separator: ", "))")
         // Muster ohne OCR
@@ -166,7 +193,7 @@ import SwiftUI
         try write(cg, url)
     }
 
-    static func ui(_ out: URL) throws {
+    static func ui(_ out: URL) async throws {
         let store = CaptureStore.shared
         let image = sampleImage()
         let item = try store.addImage(image, scale: 2)
@@ -190,7 +217,8 @@ import SwiftUI
 
         // Quick-Access-Karten
         let rendered = Renderer.render(base: image, document: doc, scale: 2, effects: EffectsCache(base: image, scale: 2))!
-        let saved = try store.saveImage(rendered, document: doc, for: item)
+        let saved = store.saveImage(rendered, document: doc, for: item)
+        await store.waitUntilWritten(item.id)
         let second = try store.addImage(sampleImage(width: 900, height: 1200), scale: 2)
         var video = second
         video.kind = .video
@@ -221,8 +249,8 @@ import SwiftUI
         let windows = [WindowInfo(windowID: 1, frame: CGRect(x: screen.frame.minX + 420, y: screen.frame.minY + 300, width: 700, height: 420),
                                   owner: "Test", title: "Fenster")]
         for (name, windowMode) in [("bereich", false), ("fenster", true)] {
-            let overlay = SelectionOverlay(frozen: [frozen], windows: windows, purpose: .screenshot, windowMode: windowMode) { _ in }
-            let view = SelectionView(frozen: frozen, overlay: overlay)
+            let overlay = SelectionOverlay(screens: [screen], windows: windows, purpose: .screenshot, windowMode: windowMode) { _ in }
+            let view = SelectionView(screen: screen, overlay: overlay, image: frozen.image)
             view.frame = NSRect(origin: .zero, size: size)
             overlay.mouseMoved(to: CGPoint(x: screen.frame.minX + 700, y: screen.frame.minY + 520))
             if !windowMode { view.debugSelect(CGRect(x: 300, y: 380, width: 640, height: 300)) }
@@ -386,6 +414,93 @@ import SwiftUI
         try await windowShot(videoEditor.window!, out.appendingPathComponent("live-video-editor.png"))
         videoEditor.window?.orderOut(nil)
         model.shutdown()
+    }
+
+    // MARK: Zeitmessung (echtes Bildschirmfoto nur im Speicher, Ausgabe nur Zeiten)
+
+    private static func ms(_ start: CFAbsoluteTime) -> String { String(format: "%6.0f ms", (CFAbsoluteTimeGetCurrent() - start) * 1000) }
+
+    static func perf(_ out: URL) async throws {
+        var t = CFAbsoluteTimeGetCurrent()
+        let content = try await ScreenCapture.content()
+        print("SCShareableContent           \(ms(t))")
+        t = CFAbsoluteTimeGetCurrent()
+        let frozen = try await ScreenCapture.freeze(NSScreen.screens, content: content)
+        print("Einfrieren (\(frozen.count) Bildschirme)   \(ms(t))")
+        if #available(macOS 15.2, *) {
+            t = CFAbsoluteTimeGetCurrent()
+            _ = try await SCScreenshotManager.captureImage(in: NSScreen.screens[0].frame.cocoaToQuartz)
+            print("captureImage(in:) 1 Bildschirm \(ms(t))")
+        }
+        guard let image = frozen.first?.image else { return }
+        t = CFAbsoluteTimeGetCurrent()
+        let crop = ScreenCapture.crop(frozen[0], localRect: CGRect(x: 200, y: 200, width: 1200, height: 700))!
+        print("Zuschneiden                  \(ms(t))")
+        t = CFAbsoluteTimeGetCurrent()
+        let png = image.pngData()!
+        print("PNG 4K kodieren              \(ms(t))  (\(png.count / 1024) KB)")
+        t = CFAbsoluteTimeGetCurrent()
+        _ = crop.pngData()
+        print("PNG Ausschnitt 2400×1400     \(ms(t))")
+        t = CFAbsoluteTimeGetCurrent()
+        _ = ImageIOHelper.downscale(image, maxPixel: 640)
+        print("Vorschaubild 640             \(ms(t))")
+        t = CFAbsoluteTimeGetCurrent()
+        _ = NSBitmapImageRep(cgImage: image).tiffRepresentation
+        print("TIFF 4K                      \(ms(t))")
+
+        var doc = ImageDocument()
+        var a = Annotation(kind: .redact, start: CGPoint(x: 100, y: 100), end: CGPoint(x: 900, y: 300))
+        a.redactStyle = .pixelate
+        doc.annotations = [a]
+        t = CFAbsoluteTimeGetCurrent()
+        let effects = EffectsCache(base: image, scale: 2)
+        _ = Renderer.render(base: image, document: doc, scale: 2, effects: effects)
+        print("Rendern 4K mit Verpixeln     \(ms(t))")
+        a.redactStyle = .solid
+        doc.annotations = [a]
+        t = CFAbsoluteTimeGetCurrent()
+        _ = Renderer.render(base: image, document: doc, scale: 2, effects: EffectsCache(base: image, scale: 2))
+        print("Rendern 4K mit Balken        \(ms(t))")
+
+        for run in ["kalt", "warm"] {
+            t = CFAbsoluteTimeGetCurrent()
+            let found = SensitiveDetector.detectSync(in: image)
+            print("Auto-Zensur 4K (\(run))        \(ms(t))  (\(found.count) Funde)")
+        }
+        t = CFAbsoluteTimeGetCurrent()
+        NSApp.setActivationPolicy(.regular)
+        print("Aktivierung → regular        \(ms(t))")
+        t = CFAbsoluteTimeGetCurrent()
+        NSApp.setActivationPolicy(.accessory)
+        print("Aktivierung → accessory      \(ms(t))")
+
+        let item = try CaptureStore.shared.addImage(crop, scale: 2)
+        t = CFAbsoluteTimeGetCurrent()
+        let editor = EditorWindowController(item: item, base: crop, document: ImageDocument(), tool: .redact)
+        editor.window?.contentView?.layoutSubtreeIfNeeded()
+        print("Editor-Fenster 1. Mal        \(ms(t))")
+        t = CFAbsoluteTimeGetCurrent()
+        let editor2 = EditorWindowController(item: item, base: crop, document: ImageDocument(), tool: .redact)
+        editor2.window?.contentView?.layoutSubtreeIfNeeded()
+        print("Editor-Fenster 2. Mal        \(ms(t))")
+        t = CFAbsoluteTimeGetCurrent()
+        let promise = PNGPromise(image)
+        let item2 = try CaptureStore.shared.addImage(image, scale: 2, png: promise)
+        print("Aufnahme anlegen             \(ms(t))  (Hauptthread, 4K)")
+        t = CFAbsoluteTimeGetCurrent()
+        await CaptureStore.shared.waitUntilWritten(item2.id)
+        print("  … Hintergrund fertig nach  \(ms(t))")
+        t = CFAbsoluteTimeGetCurrent()
+        let settings = SettingsWindowController()
+        settings.window?.contentView?.layoutSubtreeIfNeeded()
+        print("Einstellungen erzeugen       \(ms(t))")
+        t = CFAbsoluteTimeGetCurrent()
+        _ = SystemShortcuts.conflict(for: KeyCombo(keyCode: 21, modifiers: 768))
+        print("Konfliktprüfung 1 Kürzel     \(ms(t))")
+        t = CFAbsoluteTimeGetCurrent()
+        for style in RedactStyle.allCases { _ = RedactPreview.image(for: style) }
+        print("Zensur-Vorschaubilder        \(ms(t))")
     }
 
     // MARK: Echte Aufnahme (nur Metadaten, keine Bildinhalte)

@@ -5,7 +5,6 @@ import ScreenCaptureKit
     static let shared = CaptureCoordinator()
 
     private var overlay: SelectionOverlay?
-    private var busy = false
 
     func perform(_ action: HotkeyAction) {
         switch action {
@@ -17,41 +16,59 @@ import ScreenCaptureKit
         }
     }
 
-    // MARK: Screenshot
+    /// Standbild aller Bildschirme im Hintergrund — Knips-Fenster (also auch das Overlay) sind ausgeschlossen.
+    private typealias Frozen = (content: SCShareableContent, screens: [FrozenScreen])
 
-    func captureInteractive(windowMode: Bool) {
-        guard !busy, overlay == nil, !RecordingController.shared.isBusy else { return }
+    private func startFreeze(_ screens: [NSScreen]) -> Task<Frozen, Error> {
+        Task {
+            let content = try await ScreenCapture.content()
+            let frozen = try await ScreenCapture.freeze(screens, content: content)
+            return (content, frozen)
+        }
+    }
+
+    /// Overlay erscheint sofort; das Standbild wird darunter aufgenommen und nachgereicht.
+    private func presentOverlay(purpose: SelectionPurpose, windowMode: Bool,
+                                onResult: @escaping (SelectionResult, Task<Frozen, Error>) -> Void) {
+        guard overlay == nil, !RecordingController.shared.isBusy else { return }
         guard ensurePermission() else { return }
-        busy = true
+        let screens = NSScreen.screens
+        let freeze = startFreeze(screens)
+        let overlay = SelectionOverlay(screens: screens, windows: ScreenCapture.windows(), purpose: purpose,
+                                       windowMode: windowMode) { [weak self] result in
+            self?.overlay = nil
+            onResult(result, freeze)
+        }
+        self.overlay = overlay
+        overlay.present()
         Task {
             do {
-                let content = try await ScreenCapture.content()
-                let frozen = try await ScreenCapture.freeze(NSScreen.screens, content: content)
-                let windows = ScreenCapture.windows()
-                let overlay = SelectionOverlay(frozen: frozen, windows: windows, purpose: .screenshot, windowMode: windowMode) { [weak self] result in
-                    self?.overlay = nil
-                    self?.busy = false
-                    self?.handleScreenshot(result, content: content)
-                }
-                self.overlay = overlay
-                overlay.present()
+                let frozen = try await freeze.value
+                if overlay.isActive { overlay.setFrozen(frozen.screens) }
             } catch {
-                busy = false
+                if overlay.isActive { overlay.finish(.cancelled) }
                 report(error)
             }
         }
     }
 
+    // MARK: Screenshot
+
+    func captureInteractive(windowMode: Bool) {
+        presentOverlay(purpose: .screenshot, windowMode: windowMode) { [weak self] result, freeze in
+            self?.handleScreenshot(result, freeze: freeze)
+        }
+    }
+
     func captureFullscreen() {
-        guard !busy, overlay == nil else { return }
+        guard overlay == nil else { return }
         guard ensurePermission() else { return }
-        busy = true
         let screen = NSScreen.withMouse
         Task {
-            defer { busy = false }
             do {
                 let content = try await ScreenCapture.content()
                 guard let frozen = try await ScreenCapture.freeze([screen], content: content).first else { return }
+                Sounds.playShutter()
                 finish(image: frozen.image, scale: frozen.scale, screen: screen)
             } catch {
                 report(error)
@@ -59,39 +76,46 @@ import ScreenCaptureKit
         }
     }
 
-    private func handleScreenshot(_ result: SelectionResult, content: SCShareableContent) {
-        switch result {
-        case .cancelled:
-            return
-        case .fullScreen(let f):
-            finish(image: f.image, scale: f.scale, screen: f.screen)
-        case .area(let f, let rect):
-            guard let image = ScreenCapture.crop(f, localRect: rect) else { return }
-            finish(image: image, scale: f.scale, screen: f.screen)
-        case .window(let w, let f):
-            Task {
-                do {
-                    let image = try await ScreenCapture.captureWindow(w, content: content, scale: f.scale)
-                    finish(image: image, scale: f.scale, screen: f.screen)
-                } catch {
+    private func handleScreenshot(_ result: SelectionResult, freeze: Task<Frozen, Error>) {
+        if case .cancelled = result { return }
+        // Auslöser sofort beim Loslassen — die Arbeit danach läuft im Hintergrund weiter.
+        Sounds.playShutter()
+        Task {
+            guard let frozen = try? await freeze.value else { return }
+            func still(for screen: NSScreen) -> FrozenScreen? { frozen.screens.first { $0.screen == screen } }
+            switch result {
+            case .cancelled:
+                return
+            case .fullScreen(let screen):
+                guard let f = still(for: screen) else { return }
+                finish(image: f.image, scale: f.scale, screen: screen)
+            case .area(let screen, let rect):
+                guard let f = still(for: screen), let image = ScreenCapture.crop(f, localRect: rect) else { return }
+                finish(image: image, scale: f.scale, screen: screen)
+            case .window(let w, let screen):
+                guard let f = still(for: screen) else { return }
+                if let image = try? await ScreenCapture.captureWindow(w, content: frozen.content, scale: f.scale) {
+                    finish(image: image, scale: f.scale, screen: screen)
+                } else {
                     // Fallback: Ausschnitt aus dem Standbild
-                    let local = w.frame.offsetBy(dx: -f.screen.frame.minX, dy: -f.screen.frame.minY)
-                        .intersection(CGRect(origin: .zero, size: f.screen.frame.size))
-                    if let image = ScreenCapture.crop(f, localRect: local) { finish(image: image, scale: f.scale, screen: f.screen) }
+                    let local = w.frame.offsetBy(dx: -screen.frame.minX, dy: -screen.frame.minY)
+                        .intersection(CGRect(origin: .zero, size: screen.frame.size))
+                    if let image = ScreenCapture.crop(f, localRect: local) { finish(image: image, scale: f.scale, screen: screen) }
                 }
             }
         }
     }
 
+    /// Legt die Aufnahme an. Kodieren und Schreiben laufen im Hintergrund; die Zwischenablage
+    /// liefert die PNG-Daten erst, wenn eine App sie anfragt.
     func finish(image: CGImage, scale: CGFloat, screen: NSScreen) {
-        Sounds.playShutter()
         let settings = AppSettings.shared
+        let png = PNGPromise(image)
         do {
-            let item = try CaptureStore.shared.addImage(image, scale: scale)
-            if settings.copyToClipboard { Clipboard.copy(image: image, fileURL: item.fileURL) }
+            let item = try CaptureStore.shared.addImage(image, scale: scale, png: png)
+            if settings.copyToClipboard { Clipboard.copy(png: png, fileURL: item.fileURL) }
             if settings.showQuickAccess { QuickAccessController.shared.show(item, on: screen) }
             if settings.openEditorAfterCapture { EditorWindowController.show(item) }
-            StatusBarController.shared?.refreshMenu()
         } catch {
             report(error)
         }
@@ -106,35 +130,21 @@ import ScreenCaptureKit
             recorder.stop(save: true)
             return
         }
-        guard !busy, overlay == nil, !recorder.isBusy else { return }
-        guard ensurePermission() else { return }
-        busy = true
-        Task {
-            do {
-                let content = try await ScreenCapture.content()
-                let frozen = try await ScreenCapture.freeze(NSScreen.screens, content: content)
-                let windows = ScreenCapture.windows()
-                let overlay = SelectionOverlay(frozen: frozen, windows: windows, purpose: .recording, windowMode: false) { [weak self] result in
-                    self?.overlay = nil
-                    self?.busy = false
-                    let area: (NSScreen, SCDisplay?, CGRect)?
-                    switch result {
-                    case .cancelled: area = nil
-                    case .fullScreen(let f): area = (f.screen, f.display, CGRect(origin: .zero, size: f.screen.frame.size))
-                    case .area(let f, let r): area = (f.screen, f.display, r)
-                    case .window(let w, let f):
-                        let local = w.frame.offsetBy(dx: -f.screen.frame.minX, dy: -f.screen.frame.minY)
-                            .intersection(CGRect(origin: .zero, size: f.screen.frame.size)).integral
-                        area = (f.screen, f.display, local)
-                    }
-                    guard let area, let display = area.1 else { return }
-                    RecordingController.shared.begin(screen: area.0, display: display, localRect: area.2, content: content)
+        presentOverlay(purpose: .recording, windowMode: false) { result, freeze in
+            Task {
+                guard let frozen = try? await freeze.value else { return }
+                let area: (NSScreen, CGRect)?
+                switch result {
+                case .cancelled: area = nil
+                case .fullScreen(let s): area = (s, CGRect(origin: .zero, size: s.frame.size))
+                case .area(let s, let r): area = (s, r)
+                case .window(let w, let s):
+                    let local = w.frame.offsetBy(dx: -s.frame.minX, dy: -s.frame.minY)
+                        .intersection(CGRect(origin: .zero, size: s.frame.size)).integral
+                    area = (s, local)
                 }
-                self.overlay = overlay
-                overlay.present()
-            } catch {
-                busy = false
-                report(error)
+                guard let area, let display = frozen.content.displays.first(where: { $0.displayID == area.0.displayID }) else { return }
+                RecordingController.shared.begin(screen: area.0, display: display, localRect: area.1, content: frozen.content)
             }
         }
     }

@@ -21,11 +21,6 @@ import Combine
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.refreshRecordingState() }
             .store(in: &cancellables)
-        AppSettings.shared.$hotkeys
-            .combineLatest(AppSettings.shared.$disabledHotkeys)
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.refreshMenu() }
-            .store(in: &cancellables)
     }
 
     static let icon: NSImage = {
@@ -126,10 +121,15 @@ import Combine
         menu.addItem(quit)
     }
 
-    @objc private func area() { CaptureCoordinator.shared.perform(.captureArea) }
-    @objc private func window() { CaptureCoordinator.shared.perform(.captureWindow) }
-    @objc private func fullscreen() { CaptureCoordinator.shared.perform(.captureFullscreen) }
-    @objc private func record() { CaptureCoordinator.shared.perform(.toggleRecording) }
+    /// Aus dem Menü heraus erst starten, wenn es ausgeblendet ist — sonst überlagern sich Ausblenden und Overlay.
+    private func afterMenu(_ action: HotkeyAction) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { CaptureCoordinator.shared.perform(action) }
+    }
+
+    @objc private func area() { afterMenu(.captureArea) }
+    @objc private func window() { afterMenu(.captureWindow) }
+    @objc private func fullscreen() { afterMenu(.captureFullscreen) }
+    @objc private func record() { afterMenu(.toggleRecording) }
     @objc private func pinClipboard() { CaptureCoordinator.shared.perform(.pinClipboard) }
     @objc private func openImage() { CaptureCoordinator.shared.openImageFile() }
     @objc private func settings() { SettingsWindowController.show() }

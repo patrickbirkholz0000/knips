@@ -49,9 +49,25 @@ Seit macOS 14 clippen NSViews nicht mehr: eigene `draw(_:)` immer auf `bounds` b
 
 ## Bedienung
 
-Kürzel (änderbar): ⌥⇧4 Bereich · ⌥⇧2 Fenster · ⌥⇧3 Vollbild · ⌥⇧5 Aufnahme starten/stoppen.
+Kürzel wie macOS (änderbar): ⌘⇧4 Bereich · ⌘⇧3 Vollbild · ⌘⇧5 Aufnahme starten/stoppen · ⌘⇧2 Fenster.
+Kollidieren sie mit eingeschalteten macOS-Kürzeln, fragt Knips einmal beim Start, ob es sie übernehmen darf
+(`SystemShortcuts.takeOver`: schreibt `com.apple.symbolichotkeys`, lädt per `activateSettings -u` neu;
+rückgängig in Einstellungen → Tastaturkurzbefehle).
+Zensur: Standard „Balken“, Editor startet mit dem Zensur-Werkzeug. Auto-Zensur-Knopf ist standardmäßig aus.
 Im Overlay: Leertaste = Fenstermodus, ⏎ = ganzer Bildschirm, Esc = Abbruch, ⇧ = Quadrat.
 URL-Befehle: `knips://area|window|fullscreen|record|pin|settings`.
+
+## Tempo (gemessen 08.10.2026, M4, zwei 4K-Bildschirme)
+
+- Overlay erscheint sofort als nicht-aktivierendes Panel; das Standbild (~150–260 ms) wird darunter
+  aufgenommen. Knips-Fenster sind per Content-Filter ausgeschlossen, die Ziel-App bleibt aktiv.
+- Nach dem Loslassen: 2 ms im Hauptthread. PNG-Kodierung, Schreiben, Vorschaubild laufen über
+  `PNGPromise` im Hintergrund; die Zwischenablage liefert PNG/TIFF erst bei Anfrage.
+  `CaptureStore.waitUntilWritten` vor Kopieren/Ziehen/Löschen/Öffnen.
+- Texterkennung immer auf ≤ 2048 px (`SensitiveDetector.ocrMaxPixel`): 4K „genau“ dauerte auf einem
+  textreichen Bildschirm 35 s, verkleinert 0,1–0,15 s bei gleicher Trefferzahl. Video: zusätzlich
+  unveränderte Frames überspringen (`FrameSignature`).
+- `--selftest perf` misst das alles (Bildschirmfoto nur im Speicher, gibt nur Zeiten aus).
 
 ## Stand 08.10.2026
 

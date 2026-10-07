@@ -7,7 +7,6 @@ import ScreenCaptureKit
         Paths.ensure(Paths.items)
         _ = CaptureStore.shared
         StatusBarController.shared = StatusBarController()
-        StatusBarController.shared?.refreshMenu()
         _ = QuickAccessController.shared
 
         HotkeyManager.shared.onAction = { action in CaptureCoordinator.shared.perform(action) }
@@ -17,7 +16,13 @@ import ScreenCaptureKit
             UserDefaults.standard.set(true, forKey: "didFirstLaunch")
             if Bundle.main.bundlePath.hasPrefix("/Applications") { AppSettings.shared.launchAtLogin = true }
         }
-        if !ScreenCapture.hasPermission { PermissionWindowController.show() }
+        if !ScreenCapture.hasPermission {
+            PermissionWindowController.show()
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { ShortcutTakeover.offerIfNeeded() }
+        }
+        // SwiftUI und das Einstellungsfenster vorwärmen — das erste Öffnen kostet sonst ~0,4 s.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { SettingsWindowController.prewarm() }
         Log.info("Knips gestartet")
     }
 
@@ -102,5 +107,33 @@ import ScreenCaptureKit
             try? image.pngData()?.write(to: url)
             Log.info("Snapshot \(url.lastPathComponent) frame=\(w.frame)")
         }
+    }
+}
+
+/// Bietet einmalig an, die macOS-Bildschirmfoto-Kürzel für Knips freizumachen.
+@MainActor enum ShortcutTakeover {
+    static func offerIfNeeded() {
+        let combos = Array(AppSettings.shared.activeHotkeys.values)
+        let ids = SystemShortcuts.conflictingIDs(for: combos)
+        guard !ids.isEmpty else { return }
+        let asked = "askedShortcutTakeover"
+        guard !UserDefaults.standard.bool(forKey: asked) else { return }
+        UserDefaults.standard.set(true, forKey: asked)
+
+        let list = combos.filter { SystemShortcuts.conflict(for: $0) != nil }.map(\.display).sorted().joined(separator: ", ")
+        var info: [String] = []
+        if !ids.isEmpty {
+            info.append("macOS belegt \(list) noch für eigene Bildschirmfotos. Knips schaltet diese macOS-Kürzel ab — in den Knips-Einstellungen unter „Tastaturkurzbefehle“ jederzeit wiederherstellbar.")
+        }
+        let alert = NSAlert()
+        alert.messageText = "⌘⇧3, ⌘⇧4 und ⌘⇧5 für Knips übernehmen?"
+        alert.informativeText = info.joined(separator: "\n\n")
+        alert.addButton(withTitle: "Übernehmen")
+        alert.addButton(withTitle: "Nicht jetzt")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        SystemShortcuts.takeOver(ids)
+        HotkeyManager.shared.apply(AppSettings.shared.activeHotkeys)
+        HUD.show("Kürzel übernommen")
     }
 }

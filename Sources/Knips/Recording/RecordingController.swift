@@ -124,8 +124,7 @@ import SwiftUI
                 let settings = AppSettings.shared
                 if settings.copyToClipboard { Clipboard.copy(fileURL: item.fileURL) }
                 if settings.showQuickAccess { QuickAccessController.shared.show(item, on: screen) }
-                StatusBarController.shared?.refreshMenu()
-            } catch {
+                } catch {
                 teardown()
                 Alerts.error("Aufnahme konnte nicht gespeichert werden", error)
             }

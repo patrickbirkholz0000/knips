@@ -16,16 +16,29 @@ import SwiftUI
             return
         }
         let store = CaptureStore.shared
-        guard let base = ImageIOHelper.load(store.originalURL(for: item)) ?? ImageIOHelper.load(item.fileURL) else {
-            Alerts.error("Bild nicht gefunden", info: "Das Original zu „\(item.title)“ ist nicht mehr vorhanden.")
+        // Frisch aufgenommen: Original liegt noch im Speicher, kein Warten auf die Platte.
+        if let base = store.memoryImage(for: item.id) {
+            present(item, base: base, tool: tool)
             return
         }
-        let controller = EditorWindowController(item: item, base: base, document: store.loadImageDocument(for: item), tool: tool)
+        Task {
+            await store.waitUntilWritten(item.id)
+            guard let base = ImageIOHelper.load(store.originalURL(for: item)) ?? ImageIOHelper.load(item.fileURL) else {
+                Alerts.error("Bild nicht gefunden", info: "Das Original zu „\(item.title)“ ist nicht mehr vorhanden.")
+                return
+            }
+            present(item, base: base, tool: tool)
+        }
+    }
+
+    private static func present(_ item: CaptureItem, base: CGImage, tool: EditorTool?) {
+        guard open[item.id] == nil else { return }
+        let controller = EditorWindowController(item: item, base: base, document: CaptureStore.shared.loadImageDocument(for: item), tool: tool)
         open[item.id] = controller
-        DockPresence.windowOpened()
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
         controller.window?.makeFirstResponder(controller.canvas)
+        DockPresence.windowOpened()
     }
 
     init(item: CaptureItem, base: CGImage, document: ImageDocument, tool: EditorTool?) {
@@ -69,37 +82,42 @@ import SwiftUI
 
     // MARK: Aktionen
 
+    /// Speichert im Hintergrund — das Fenster reagiert (und schließt) sofort.
+    @discardableResult
+    private func persist(_ png: PNGPromise? = nil) -> PNGPromise {
+        let promise = png ?? model.renderPromise()
+        if model.dirty {
+            item = CaptureStore.shared.saveImage(png: promise, document: model.document, for: item, size: model.outputSize)
+            model.dirty = false
+        }
+        return promise
+    }
+
     func save(close: Bool) {
         canvas.commitPendingEdits()
-        if model.dirty {
-            guard let image = model.rendered() else {
-                Alerts.error("Speichern fehlgeschlagen", info: "Das Bild konnte nicht gerendert werden.")
-                return
-            }
-            do {
-                item = try CaptureStore.shared.saveImage(image, document: model.document, for: item)
-                model.dirty = false
-                if !close { model.showToast("Gespeichert") }
-            } catch {
-                Alerts.error("Speichern fehlgeschlagen", error)
-                return
-            }
+        let wasDirty = model.dirty
+        if wasDirty { persist() }
+        if close {
+            window?.close()
+        } else if wasDirty {
+            model.showToast("Gespeichert")
         }
-        if close { window?.close() }
     }
 
     func copyImage() {
         canvas.commitPendingEdits()
-        save(close: false)
-        guard let image = model.rendered() else { return }
-        Clipboard.copy(image: image, fileURL: item.fileURL)
+        let png = persist()
+        Clipboard.copy(png: png, fileURL: item.fileURL)
         model.showToast("In die Zwischenablage kopiert")
     }
 
     func pin() {
         canvas.commitPendingEdits()
-        guard let image = model.rendered() else { return }
-        PinWindowController.pin(image, scale: model.scale)
+        let png = model.renderPromise()
+        let scale = model.scale
+        Task {
+            if let image = await png.imageValue() { PinWindowController.pin(image, scale: scale) }
+        }
     }
 
     func reveal() {
@@ -114,10 +132,7 @@ import SwiftUI
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         canvas.commitPendingEdits()
-        if model.dirty, let image = model.rendered() {
-            item = (try? CaptureStore.shared.saveImage(image, document: model.document, for: item)) ?? item
-            model.dirty = false
-        }
+        if model.dirty { persist() }
         return true
     }
 
@@ -189,6 +204,7 @@ struct Pill: View {
 struct EditorToolbar: View {
     static let height: CGFloat = 52
     @ObservedObject var model: EditorModel
+    @ObservedObject private var settings = AppSettings.shared
     let actions: EditorActions
 
     private var activeKind: AnnotationKind? { model.selected?.kind ?? model.tool.annotationKind }
@@ -320,12 +336,14 @@ struct EditorToolbar: View {
 
     private var rightActions: some View {
         HStack(spacing: 6) {
-            Button { model.autoRedact() } label: {
-                Label("Auto-Zensur", systemImage: "wand.and.stars")
+            if settings.showAutoRedact {
+                Button { model.autoRedact() } label: {
+                    Label("Auto-Zensur", systemImage: "wand.and.stars")
+                }
+                .buttonStyle(ToolbarButtonStyle(prominent: false))
+                .help("Findet E-Mails, IBANs, Telefonnummern, Kartennummern und API-Schlüssel und zensiert sie — lokal, ohne Cloud.")
+                .disabled(model.busy != nil)
             }
-            .buttonStyle(ToolbarButtonStyle(prominent: false))
-            .help("Findet E-Mails, IBANs, Telefonnummern, Kartennummern und API-Schlüssel und zensiert sie — lokal, ohne Cloud.")
-            .disabled(model.busy != nil)
 
             HStack(spacing: 0) {
                 iconButton("arrow.uturn.backward", help: "Widerrufen (⌘Z)", enabled: model.canUndo) { model.undo() }

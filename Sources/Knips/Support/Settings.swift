@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import Combine
 import OSLog
 import ServiceManagement
@@ -16,7 +17,7 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .pixelate: "Verpixeln"
         case .blur: "Unschärfe"
-        case .solid: "Schwärzen"
+        case .solid: "Balken"
         }
     }
     var symbol: String {
@@ -46,6 +47,8 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
     @Published var gifFPS: Int { didSet { d.set(gifFPS, forKey: "gifFPS") } }
     @Published var gifWidth: Int { didSet { d.set(gifWidth, forKey: "gifWidth") } }
     @Published var redactStyle: RedactStyle { didSet { d.set(redactStyle.rawValue, forKey: "redactStyle") } }
+    /// Auto-Zensur-Knopf in den Editoren anbieten (standardmäßig aus — Zensur wird von Hand gezogen).
+    @Published var showAutoRedact: Bool { didSet { d.set(showAutoRedact, forKey: "showAutoRedact") } }
     /// Welche Datenarten die Auto-Zensur sucht.
     @Published var autoRedactKinds: Set<SensitiveDetector.Kind> {
         didSet { d.set(autoRedactKinds.map(\.rawValue).sorted(), forKey: "autoRedactKinds") }
@@ -78,7 +81,8 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
         recordingMicrophone = d.object(forKey: "recordingMicrophone") as? Bool ?? false
         gifFPS = d.object(forKey: "gifFPS") as? Int ?? 15
         gifWidth = d.object(forKey: "gifWidth") as? Int ?? 960
-        redactStyle = RedactStyle(rawValue: d.string(forKey: "redactStyle") ?? "") ?? .pixelate
+        redactStyle = RedactStyle(rawValue: d.string(forKey: "redactStyle") ?? "") ?? .solid
+        showAutoRedact = d.object(forKey: "showAutoRedact") as? Bool ?? false
         if let raw = d.stringArray(forKey: "autoRedactKinds") {
             autoRedactKinds = Set(raw.compactMap(SensitiveDetector.Kind.init(rawValue:)))
         } else {
@@ -94,6 +98,22 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
         }
         hotkeys = keys
         disabledHotkeys = Set((d.stringArray(forKey: "disabledHotkeys") ?? []).compactMap(HotkeyAction.init(rawValue:)))
+        migrate()
+    }
+
+    /// v2 (08.10.2026): Kürzel wie macOS (⌘⇧ statt ⌥⇧), Zensur standardmäßig als Balken,
+    /// Editor startet mit dem Zensur-Werkzeug.
+    private func migrate() {
+        guard d.integer(forKey: "settingsVersion") < 2 else { return }
+        let old = UInt32(optionKey | shiftKey)
+        var keys = hotkeys
+        for action in HotkeyAction.allCases {
+            if let combo = keys[action], combo.modifiers == old, let new = action.defaultCombo { keys[action] = new }
+        }
+        hotkeys = keys
+        redactStyle = .solid
+        d.removeObject(forKey: "editorTool")
+        d.set(2, forKey: "settingsVersion")
     }
 
     /// Tatsächlich registrierte Kürzel.

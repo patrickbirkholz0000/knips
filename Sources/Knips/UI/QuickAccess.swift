@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Schwebende Karten unten links nach jeder Aufnahme: kopieren, bearbeiten, anpinnen,
 /// herausziehen oder wegklicken.
@@ -41,7 +42,10 @@ import SwiftUI
             edit: { item in Self.edit(item, tool: nil) },
             redact: { item in Self.edit(item, tool: .redact) },
             pin: { item in
-                if let img = ImageIOHelper.load(item.fileURL) { PinWindowController.pin(img, scale: CGFloat(item.scale)) }
+                Task {
+                    await CaptureStore.shared.waitUntilWritten(item.id)
+                    if let img = ImageIOHelper.load(item.fileURL) { PinWindowController.pin(img, scale: CGFloat(item.scale)) }
+                }
             },
             reveal: { item in NSWorkspace.shared.activateFileViewerSelecting([item.fileURL]) },
             delete: { [weak self] item in
@@ -92,13 +96,14 @@ import SwiftUI
     }
 
     private func copy(_ item: CaptureItem) {
-        switch item.kind {
-        case .image:
-            if let img = ImageIOHelper.load(item.fileURL) { Clipboard.copy(image: img, fileURL: item.fileURL) }
-        case .video, .gif:
-            Clipboard.copy(fileURL: item.fileURL)
-        }
         model.flash(item.id)
+        Task {
+            await CaptureStore.shared.waitUntilWritten(item.id)
+            switch item.kind {
+            case .image: Clipboard.copy(pngFile: item.fileURL)
+            case .video, .gif: Clipboard.copy(fileURL: item.fileURL)
+            }
+        }
     }
 
     private func scheduleAutoClose(_ id: UUID) {
@@ -328,7 +333,7 @@ struct QuickAccessCard: View {
         .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
         .contentShape(RoundedRectangle(cornerRadius: 12))
         .onTapGesture(count: 2) { actions.edit(item) }
-        .onDrag { NSItemProvider(contentsOf: item.fileURL) ?? NSItemProvider() }
+        .onDrag { DragProvider.make(for: item) }
     }
 
     private var hoverOverlay: some View {
@@ -336,14 +341,18 @@ struct QuickAccessCard: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.black.opacity(0.5))
             VStack(spacing: 7) {
                 cardButton("Kopieren", symbol: "doc.on.doc") { actions.copy(item) }
-                cardButton(item.kind == .gif ? "Öffnen" : "Bearbeiten", symbol: item.kind == .gif ? "eye" : "pencil") { actions.edit(item) }
+                switch item.kind {
+                case .image: cardButton("Zensieren", symbol: "eye.slash") { actions.redact(item) }
+                case .video: cardButton("Bearbeiten", symbol: "scissors") { actions.edit(item) }
+                case .gif: cardButton("Öffnen", symbol: "eye") { actions.edit(item) }
+                }
             }
             VStack {
                 HStack {
                     corner("xmark", help: "Schließen") { actions.close(item) }
                     Spacer()
                     if item.kind == .image {
-                        corner("eye.slash", help: "Zensieren") { actions.redact(item) }
+                        corner("pencil", help: "Bearbeiten (Pfeile, Text, Zuschneiden …)") { actions.edit(item) }
                         corner("pin", help: "Anpinnen") { actions.pin(item) }
                     }
                 }
@@ -407,15 +416,49 @@ struct Thumbnail: View {
 @MainActor final class ThumbnailCache {
     static let shared = ThumbnailCache()
     private var cache: [String: NSImage] = [:]
+    /// Vorschau direkt aus dem Speicher, solange die Datei noch geschrieben wird.
+    private var seeded: [String: NSImage] = [:]
+
+    func seed(_ item: CaptureItem, image: CGImage) {
+        let key = "\(item.id)-\(item.revision)"
+        cache[key] = nil
+        if seeded.count > 12 { seeded.removeAll() }
+        seeded[key] = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+    }
 
     func image(for item: CaptureItem) -> NSImage? {
         let key = "\(item.id)-\(item.revision)"
         if let hit = cache[key] { return hit }
+        if let seeded = seeded[key] { return seeded }
         let url = CaptureStore.shared.thumbnailURL(for: item)
         guard let cg = ImageIOHelper.load(url) else { return nil }
         let image = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
         if cache.count > 60 { cache.removeAll() }
         cache[key] = image
         return image
+    }
+}
+
+/// Datei zum Herausziehen — wartet notfalls, bis sie fertig geschrieben ist.
+@MainActor enum DragProvider {
+    static func make(for item: CaptureItem) -> NSItemProvider {
+        let url = item.fileURL
+        // Fertige Datei: normaler Datei-Drag (funktioniert überall, auch im Finder).
+        if !CaptureStore.shared.isWriting(item.id), let ready = NSItemProvider(contentsOf: url) { return ready }
+        let type: UTType = switch item.kind {
+        case .image: .png
+        case .video: .mpeg4Movie
+        case .gif: .gif
+        }
+        let provider = NSItemProvider()
+        provider.suggestedName = url.deletingPathExtension().lastPathComponent
+        provider.registerFileRepresentation(forTypeIdentifier: type.identifier, fileOptions: [], visibility: .all) { completion in
+            Task { @MainActor in
+                await CaptureStore.shared.waitUntilWritten(item.id)
+                completion(url, false, nil)
+            }
+            return nil
+        }
+        return provider
     }
 }

@@ -120,7 +120,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         switch self {
         case .general: ["zwischenablage", "karte", "quick access", "editor", "ton", "sound", "anmelden", "autostart", "ausblenden"]
         case .shortcuts: ["kürzel", "hotkey", "taste", "tastatur", "shortcut", "bereich", "fenster", "vollbild"]
-        case .recording: ["video", "fps", "bildrate", "mauszeiger", "cursor", "countdown", "mikrofon", "audio"]
+        case .recording: ["video", "fps", "bildrate", "mauszeiger", "cursor", "countdown", "mikrofon", "audio", "klicks", "hevc", "h.264", "größe", "retina"]
         case .redaction: ["verpixeln", "unschärfe", "schwärzen", "auto", "e-mail", "iban", "telefon", "schlüssel", "token", "ip"]
         case .export: ["gif", "mp4", "breite", "bildrate", "größe", "auflösung", "retina", "png", "jpeg", "jpg", "datei", "klein"]
         case .storage: ["ordner", "speicherort", "original", "aufbewahren", "löschen", "speicher"]
@@ -466,12 +466,29 @@ private struct RecordingPane: View {
     var body: some View {
         Form {
             PaneHeader(pane: .recording)
-            Section("Video") {
+            Section {
+                Picker("Größe", selection: $settings.recordingAtScreenSize) {
+                    Text("Bildschirmgröße (1×)").tag(true)
+                    Text("Retina (2×, volle Schärfe)").tag(false)
+                }
+                Picker("Format", selection: $settings.recordingHEVC) {
+                    Text("H.264 – überall abspielbar").tag(false)
+                    Text("HEVC – rund 30 % kleiner").tag(true)
+                }
                 Picker("Bildrate", selection: $settings.recordingFPS) {
                     Text("30 Bilder pro Sekunde").tag(30)
                     Text("60 Bilder pro Sekunde").tag(60)
                 }
+            } header: {
+                Text("Video")
+            } footer: {
+                Text("Gemessen am Vollbild: Retina-H.264 2,2 MB, 1×-H.264 1,2 MB, 1×-HEVC 0,9 MB je 4 Sekunden. HEVC spielt jeder Mac ab, unter Windows nicht immer.")
+                    .settingsFootnote()
+            }
+            Section("Darstellung") {
                 Toggle("Mauszeiger aufnehmen", isOn: $settings.recordingShowCursor)
+                Toggle("Mausklicks hervorheben", isOn: $settings.recordingShowClicks)
+                    .disabled(!micAvailable)
                 Toggle("Countdown vor dem Start (3 – 2 – 1)", isOn: $settings.recordingCountdown)
             }
             Section {
@@ -490,7 +507,7 @@ private struct RecordingPane: View {
                     Text("Stopp-Leiste, Menüleisten-Symbol oder \(settings.activeHotkeys[.toggleRecording]?.display ?? "Kürzel")")
                         .foregroundStyle(.secondary)
                 }
-                LabeledContent("Format") { Text("MP4 (H.264)").foregroundStyle(.secondary) }
+                LabeledContent("Datei") { Text(settings.recordingHEVC ? "MP4 (HEVC)" : "MP4 (H.264)").foregroundStyle(.secondary) }
             }
         }
         .formStyle(.grouped)

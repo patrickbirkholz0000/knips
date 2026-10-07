@@ -84,7 +84,11 @@ enum VideoRedactor {
     static func exportMP4(asset: AVAsset, state: RedactionState, range: CMTimeRange, to url: URL,
                           progress: @escaping @Sendable (Double) -> Void) async throws {
         try? FileManager.default.removeItem(at: url)
-        guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else { throw ExportError.session }
+        // HEVC-Aufnahmen bleiben HEVC (kleiner), alles andere wird H.264.
+        let isHEVC = (try? await asset.loadTracks(withMediaType: .video).first?.load(.formatDescriptions).first)
+            .flatMap { $0 }.map { CMFormatDescriptionGetMediaSubType($0) == kCMVideoCodecType_HEVC } ?? false
+        guard let session = AVAssetExportSession(asset: asset, presetName: isHEVC ? AVAssetExportPresetHEVCHighestQuality : AVAssetExportPresetHighestQuality)
+        else { throw ExportError.session }
         session.outputURL = url
         session.outputFileType = .mp4
         session.timeRange = range

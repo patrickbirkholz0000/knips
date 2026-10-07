@@ -49,6 +49,7 @@ import Vision
                 NSApp.setActivationPolicy(.accessory)
                 try runAsync { try await perf(out) }
             case "record": try runAsync { try await record(out, seconds: Double(args.count > 2 ? args[2] : "3") ?? 3) }
+            case "record-bench": try runAsync { try await recordBench(out) }
             default:
                 print("Unbekannter Test \(args[0])")
                 return 2
@@ -275,11 +276,11 @@ import Vision
 
     // MARK: Video
 
-    static func makeSampleVideo(_ url: URL, seconds: Int = 3, fps: Int = 30) async throws -> CGRect {
+    static func makeSampleVideo(_ url: URL, seconds: Int = 3, fps: Int = 30, hevc: Bool = false) async throws -> CGRect {
         try? FileManager.default.removeItem(at: url)
         let w = 1280, h = 720
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
-        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: w, AVVideoHeightKey: h])
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: hevc ? AVVideoCodecType.hevc : AVVideoCodecType.h264, AVVideoWidthKey: w, AVVideoHeightKey: h])
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey as String: w, kCVPixelBufferHeightKey as String: h,
         ])
@@ -344,6 +345,18 @@ import Vision
             print("Auto: \(Int(r.rect.minX)),\(Int(r.rect.minY)) \(Int(r.rect.width))×\(Int(r.rect.height)) von \(String(format: "%.1f", r.start)) bis \(String(format: "%.1f", r.end)) s")
         }
         guard !found.isEmpty else { throw CaptureError.noDisplay }
+
+        // HEVC-Quelle bleibt beim Zensur-Export HEVC
+        let hevcSource = out.appendingPathComponent("video-hevc.mp4")
+        _ = try await makeSampleVideo(hevcSource, hevc: true)
+        let hevcOut = out.appendingPathComponent("video-hevc-zensiert.mp4")
+        try await VideoRedactor.exportMP4(asset: AVURLAsset(url: hevcSource), state: state, range: range, to: hevcOut) { _ in }
+        func codec(_ url: URL) async -> String {
+            guard let fd = try? await AVURLAsset(url: url).loadTracks(withMediaType: .video).first?.load(.formatDescriptions).first else { return "?" }
+            let c = CMFormatDescriptionGetMediaSubType(fd)
+            return String(bytes: [UInt8(c >> 24 & 255), UInt8(c >> 16 & 255), UInt8(c >> 8 & 255), UInt8(c & 255)], encoding: .ascii) ?? "?"
+        }
+        print("Codec: H.264-Export \(await codec(exported)) · HEVC-Export \(await codec(hevcOut))")
     }
 
     // MARK: Live-Fenster (nur eigene Fenster, abseits des sichtbaren Bereichs)
@@ -597,6 +610,32 @@ import Vision
         let frozen = try await ScreenCapture.freeze(NSScreen.screens, content: content)
         for f in frozen { print("Bildschirm \(f.screen.localizedName): \(f.image.width)×\(f.image.height) px, Faktor \(f.scale)") }
         print("Fenster erkannt: \(ScreenCapture.windows().count)")
+    }
+
+    /// Vollbild-Aufnahmen in vier Varianten: nur Größe, Dauer und Rechenzeit, Dateien werden gelöscht.
+    static func recordBench(_ out: URL) async throws {
+        let content = try await ScreenCapture.content()
+        guard let screen = NSScreen.main, let display = content.displays.first(where: { $0.displayID == screen.displayID }) else { throw CaptureError.noDisplay }
+        func cpu() -> Double {
+            var u = rusage(); getrusage(RUSAGE_SELF, &u)
+            return Double(u.ru_utime.tv_sec + u.ru_stime.tv_sec) + Double(u.ru_utime.tv_usec + u.ru_stime.tv_usec) / 1e6
+        }
+        let rect = CGRect(origin: .zero, size: screen.frame.size)
+        for (name, factor, hevc) in [("Retina 2×, H.264", 2.0, false), ("Bildschirm 1×, H.264", 1.0, false),
+                                     ("Bildschirm 1×, HEVC", 1.0, true), ("Retina 2×, HEVC", 2.0, true)] {
+            let url = out.appendingPathComponent("bench.mp4")
+            let recorder = ScreenRecorder(url: url)
+            let size = CGSize(width: (rect.width * factor / 2).rounded(.down) * 2, height: (rect.height * factor / 2).rounded(.down) * 2)
+            let c0 = cpu()
+            try await recorder.start(.init(display: display, sourceRect: rect, pixelSize: size, excludedApps: [], fps: 30,
+                                           showsCursor: true, microphone: false, hevc: hevc))
+            try await Task.sleep(nanoseconds: 4_000_000_000)
+            _ = try await recorder.stop()
+            let used = cpu() - c0
+            let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+            print("\(name.padding(toLength: 22, withPad: " ", startingAt: 0)) \(Int(size.width))×\(Int(size.height))  \(bytes / 1024) KB / 4 s  · CPU \(String(format: "%.2f", used)) s")
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
     static func record(_ out: URL, seconds: Double) async throws {

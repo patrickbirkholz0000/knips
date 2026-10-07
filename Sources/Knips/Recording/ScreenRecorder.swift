@@ -22,6 +22,8 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         var fps: Int
         var showsCursor: Bool
         var microphone: Bool
+        var hevc = false
+        var showsClicks = false
     }
 
     let url: URL
@@ -46,17 +48,20 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         let w = Int(o.pixelSize.width), h = Int(o.pixelSize.height)
         try? FileManager.default.removeItem(at: url)
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
-        let bitrate = max(2_000_000, min(40_000_000, Int(Double(w * h * o.fps) * 0.09)))
+        // HEVC braucht für gleiche Qualität gut die Hälfte der Bitrate.
+        let bitsPerPixel = o.hevc ? 0.05 : 0.09
+        let bitrate = max(1_500_000, min(40_000_000, Int(Double(w * h * o.fps) * bitsPerPixel)))
+        var compression: [String: Any] = [
+            AVVideoAverageBitRateKey: bitrate,
+            AVVideoExpectedSourceFrameRateKey: o.fps,
+            AVVideoMaxKeyFrameIntervalKey: o.fps * 2,
+        ]
+        if !o.hevc { compression[AVVideoProfileLevelKey] = AVVideoProfileLevelH264HighAutoLevel }
         let video = AVAssetWriterInput(mediaType: .video, outputSettings: [
-            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoCodecKey: o.hevc ? AVVideoCodecType.hevc : AVVideoCodecType.h264,
             AVVideoWidthKey: w,
             AVVideoHeightKey: h,
-            AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: bitrate,
-                AVVideoExpectedSourceFrameRateKey: o.fps,
-                AVVideoMaxKeyFrameIntervalKey: o.fps * 2,
-                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
-            ],
+            AVVideoCompressionPropertiesKey: compression,
             AVVideoColorPropertiesKey: [
                 AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
                 AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
@@ -94,8 +99,11 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(o.fps))
         config.showsCursor = o.showsCursor
         config.queueDepth = 6
-        config.pixelFormat = kCVPixelFormatType_32BGRA
+        // YUV 4:2:0 direkt aus ScreenCaptureKit: halb so viele Bytes pro Bild wie BGRA, keine Umrechnung im Encoder.
+        config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        config.colorMatrix = CGDisplayStream.yCbCrMatrix_ITU_R_709_2
         config.colorSpaceName = CGColorSpace.sRGB
+        if o.showsClicks, #available(macOS 15.0, *) { config.showMouseClicks = true }
         config.capturesAudio = false
         if wantsMic, #available(macOS 15.0, *) {
             config.captureMicrophone = true

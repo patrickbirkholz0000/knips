@@ -31,7 +31,7 @@ import SwiftUI
         let global = localRect.offsetBy(dx: screen.frame.minX, dy: screen.frame.minY)
         let isFull = localRect.size == screen.frame.size
 
-        var pxScale = screen.backingScaleFactor
+        var pxScale = settings.recordingAtScreenSize ? 1 : screen.backingScaleFactor
         let longest = max(localRect.width, localRect.height) * pxScale
         if longest > 4096 { pxScale *= 4096 / longest }
         func even(_ v: CGFloat) -> CGFloat { max(2, (v / 2).rounded(.down) * 2) }
@@ -53,7 +53,8 @@ import SwiftUI
         let options = ScreenRecorder.Options(display: display, sourceRect: sourceRect, pixelSize: pixelSize,
                                              excludedApps: ScreenCapture.ownApp(in: content).map { [$0] } ?? [],
                                              fps: settings.recordingFPS, showsCursor: settings.recordingShowCursor,
-                                             microphone: settings.recordingMicrophone)
+                                             microphone: settings.recordingMicrophone, hevc: settings.recordingHEVC,
+                                             showsClicks: settings.recordingShowClicks)
         if !isFull { showFrame(around: global) }
         StatusBarController.shared?.refreshRecordingState()
 

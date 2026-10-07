@@ -44,6 +44,11 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
     @Published var recordingShowCursor: Bool { didSet { d.set(recordingShowCursor, forKey: "recordingShowCursor") } }
     @Published var recordingCountdown: Bool { didSet { d.set(recordingCountdown, forKey: "recordingCountdown") } }
     @Published var recordingMicrophone: Bool { didSet { d.set(recordingMicrophone, forKey: "recordingMicrophone") } }
+    /// Videos in Bildschirmgröße (1×): halb so große Dateien wie Retina (gemessen 08.10.2026).
+    @Published var recordingAtScreenSize: Bool { didSet { d.set(recordingAtScreenSize, forKey: "recordingAtScreenSize") } }
+    @Published var recordingHEVC: Bool { didSet { d.set(recordingHEVC, forKey: "recordingHEVC") } }
+    /// Klicks als Kreis einblenden (ScreenCaptureKit, macOS 15+).
+    @Published var recordingShowClicks: Bool { didSet { d.set(recordingShowClicks, forKey: "recordingShowClicks") } }
     @Published var gifFPS: Int { didSet { d.set(gifFPS, forKey: "gifFPS") } }
     @Published var gifWidth: Int { didSet { d.set(gifWidth, forKey: "gifWidth") } }
     @Published var redactStyle: RedactStyle { didSet { d.set(redactStyle.rawValue, forKey: "redactStyle") } }
@@ -82,6 +87,9 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
         recordingShowCursor = d.object(forKey: "recordingShowCursor") as? Bool ?? true
         recordingCountdown = d.object(forKey: "recordingCountdown") as? Bool ?? true
         recordingMicrophone = d.object(forKey: "recordingMicrophone") as? Bool ?? false
+        recordingAtScreenSize = d.object(forKey: "recordingAtScreenSize") as? Bool ?? true
+        recordingHEVC = d.object(forKey: "recordingHEVC") as? Bool ?? false
+        recordingShowClicks = d.object(forKey: "recordingShowClicks") as? Bool ?? true
         gifFPS = d.object(forKey: "gifFPS") as? Int ?? 15
         gifWidth = d.object(forKey: "gifWidth") as? Int ?? 960
         redactStyle = RedactStyle(rawValue: d.string(forKey: "redactStyle") ?? "") ?? .solid

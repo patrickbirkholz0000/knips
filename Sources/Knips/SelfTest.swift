@@ -27,12 +27,17 @@ import Vision
             case "menu":
                 NSApp.setActivationPolicy(.accessory)
                 try runAsync { try await menu(out) }
+            case "history":
+                NSApp.setActivationPolicy(.accessory)
+                try runAsync { try await history(out) }
             case "settings":
                 NSApp.setActivationPolicy(.accessory)
                 try runAsync { try await settings(out, panes: args.count > 2 ? args[2].split(separator: ",").compactMap { SettingsPane(rawValue: String($0)) } : SettingsPane.allCases) }
             case "video": try runAsync { try await video(out) }
             case "capture": try runAsync { try await capture() }
-            case "output": try runAsync { try await output(out) }
+            case "output":
+                NSApp.setActivationPolicy(.accessory)
+                try runAsync { try await output(out) }
             case "shortcut-roundtrip":
                 // Schaltet ⌃⌘⇧3 (ID 29) kurz ab und wieder ein — prüft den Übernahme-Mechanismus.
                 func state() -> String {
@@ -426,7 +431,7 @@ import Vision
         let model = MenuPanelModel()
         model.recent = Array(store.recent.prefix(4))
         let view = MenuHostingView(rootView: MenuPanelView(model: model, actions: MenuActions(
-            capture: { _ in }, openImage: {}, openFolder: {}, openRecent: { _ in }, settings: {}, quit: {})))
+            capture: { _ in }, openImage: {}, openFolder: {}, openRecent: { _ in }, settings: {}, history: {}, quit: {})))
         view.model = model
         let size = view.fittingSize
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: .borderless, backing: .buffered, defer: false)
@@ -437,6 +442,17 @@ import Vision
         model.hovered = "full"
         try await windowShot(window, out.appendingPathComponent("menu-hover.png"))
         print("   Panelgröße \(Int(size.width))×\(Int(size.height)), Hover-Flächen: \(model.frames.keys.sorted().joined(separator: ", "))")
+        window.orderOut(nil)
+    }
+
+    static func history(_ out: URL) async throws {
+        let store = CaptureStore.shared
+        for (w, h) in [(1400, 880), (900, 1200), (1600, 700), (1200, 800), (1000, 1000)] {
+            let item = try store.addImage(sampleImage(width: w, height: h), scale: 2)
+            await store.waitUntilWritten(item.id)
+        }
+        let window = HistoryWindowController().window!
+        try await windowShot(window, out.appendingPathComponent("verlauf.png"))
         window.orderOut(nil)
     }
 
@@ -651,7 +667,7 @@ import Vision
 
     // MARK: Ausgabegröße
 
-    static func output(_ out: URL) async throws {
+    @MainActor static func output(_ out: URL) async throws {
         let store = CaptureStore.shared
         let image = sampleImage(width: 2800, height: 1760, scale: 4)   // „Retina“-Screenshot, 2 px pro Punkt
         func describe(_ url: URL) -> String {
@@ -676,6 +692,19 @@ import Vision
         editor.save(close: false)
         await store.waitUntilWritten(item.id)
         let saved = store.item(with: item.id)!
+        // Rahmen: 48 pt Abstand → bei 1× Ausgabe 1400+96 × 880+96
+        editor.model.setFrame(FrameStyle(gradient: 0, padding: 48, cornerRadius: 12, shadow: true))
+        editor.save(close: false)
+        await store.waitUntilWritten(item.id)
+        if let framed = ImageIOHelper.load(store.item(with: item.id)!.fileURL) {
+            print("Mit Rahmen: \(framed.width)×\(framed.height) (erwartet 1496×976)")
+            try write(framed, out.appendingPathComponent("ausgabe-rahmen.png"))
+        }
+        editor.window?.setContentSize(NSSize(width: 1180, height: 700))
+        try await windowShot(editor.window!, out.appendingPathComponent("ausgabe-rahmen-editor.png"))
+        editor.model.setFrame(nil)
+        editor.save(close: false)
+        await store.waitUntilWritten(item.id)
         print("Editor gespeichert: \(describe(saved.fileURL)) · Original \(describe(store.originalURL(for: saved))) · Dokument \(store.loadImageDocument(for: saved).annotations.count) Balken")
         if let img = ImageIOHelper.load(saved.fileURL) {
             try write(img, out.appendingPathComponent("ausgabe-editor.png"))

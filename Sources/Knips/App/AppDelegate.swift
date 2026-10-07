@@ -48,6 +48,7 @@ import ScreenCaptureKit
             case "text": CaptureCoordinator.shared.perform(.captureText)
             case "settings": SettingsWindowController.show()
             case "menu": StatusBarController.shared?.togglePanel()
+            case "history": HistoryWindowController.show()
             case "debug-sample" where Paths.testRoot != nil:
                 if let item = try? CaptureStore.shared.addImage(SelfTest.sampleImage(), scale: 2) {
                     QuickAccessController.shared.show(item, on: NSScreen.main ?? NSScreen.withMouse)

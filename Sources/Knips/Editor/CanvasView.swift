@@ -53,8 +53,14 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
 
     private var viewport: CGRect { model.tool == .crop ? model.fullRect : (model.crop ?? model.fullRect) }
 
+    /// Rahmen-Abstand in Bildpixeln (nur Vorschau, nicht beim Zuschneiden).
+    private var framePadding: CGFloat {
+        guard let f = model.frame, model.tool != .crop else { return 0 }
+        return CGFloat(f.padding) * model.scale
+    }
+
     private var fitScale: CGFloat {
-        let vp = viewport
+        let vp = viewport.insetBy(dx: -framePadding, dy: -framePadding)
         let pad: CGFloat = 32
         let s = min((bounds.width - 2 * pad) / vp.width, (bounds.height - 2 * pad) / vp.height)
         // Höchstens 1:1 in Punkten — ein Retina-Screenshot erscheint so groß wie auf dem Bildschirm.
@@ -185,14 +191,32 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
         let vp = viewport, s = scaleFactor
         let imageRect = toView(vp)
 
-        ctx.saveGState()
-        ctx.setShadow(offset: CGSize(width: 0, height: -6), blur: 24, color: NSColor.black.withAlphaComponent(0.55).cgColor)
-        ctx.setFillColor(NSColor.black.cgColor)
-        ctx.fill(imageRect)
-        ctx.restoreGState()
+        var clip = CGPath(rect: imageRect, transform: nil)
+        if let f = model.frame, model.tool != .crop {
+            // Vorschau des Rahmens: Verlauf, Schatten, runde Ecken — wie im gespeicherten Bild.
+            let pad = framePadding * s
+            Renderer.drawFrameBackground(f, in: imageRect.insetBy(dx: -pad, dy: -pad), ctx: ctx)
+            let radius = min(CGFloat(f.cornerRadius) * model.scale * s, min(imageRect.width, imageRect.height) / 2)
+            clip = CGPath(roundedRect: imageRect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+            if f.shadow {
+                ctx.saveGState()
+                ctx.setShadow(offset: CGSize(width: 0, height: -10 * model.scale * s), blur: 32 * model.scale * s, color: CGColor(gray: 0, alpha: 0.35))
+                ctx.addPath(clip)
+                ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+                ctx.fillPath()
+                ctx.restoreGState()
+            }
+        } else {
+            ctx.saveGState()
+            ctx.setShadow(offset: CGSize(width: 0, height: -6), blur: 24, color: NSColor.black.withAlphaComponent(0.55).cgColor)
+            ctx.setFillColor(NSColor.black.cgColor)
+            ctx.fill(imageRect)
+            ctx.restoreGState()
+        }
 
         ctx.saveGState()
-        ctx.clip(to: imageRect)
+        ctx.addPath(clip)
+        ctx.clip()
         ctx.translateBy(x: origin.x, y: origin.y)
         ctx.scaleBy(x: s, y: s)
         ctx.translateBy(x: -vp.minX, y: -vp.minY)

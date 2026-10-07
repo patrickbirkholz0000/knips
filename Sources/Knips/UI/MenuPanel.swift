@@ -84,6 +84,7 @@ import SwiftUI
             },
             openRecent: { [weak self] item in self?.run { QuickAccessController.edit(item, tool: nil) } },
             settings: { [weak self] in self?.run { SettingsWindowController.show() } },
+            history: { [weak self] in self?.run { HistoryWindowController.show() } },
             quit: { NSApp.terminate(nil) }
         )
     }
@@ -124,6 +125,7 @@ struct MenuActions {
     var openFolder: () -> Void
     var openRecent: (CaptureItem) -> Void
     var settings: () -> Void
+    var history: () -> Void
     var quit: () -> Void
 }
 
@@ -312,10 +314,24 @@ struct MenuPanelView: View {
 
     private var recentRow: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Zuletzt")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.45))
-                .padding(.horizontal, 4)
+            HStack {
+                Text("Zuletzt")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.45))
+                Spacer()
+                Button { actions.history() } label: {
+                    HStack(spacing: 4) {
+                        Text("Alle anzeigen")
+                        Image(systemName: "arrow.right")
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(model.hovered == "history" ? 0.95 : 0.6))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .hoverID("history")
+            }
+            .padding(.horizontal, 4)
             HStack(spacing: 8) {
                 ForEach(model.recent) { item in
                     let id = "recent-\(item.id)"

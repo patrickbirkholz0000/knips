@@ -373,6 +373,7 @@ struct EditorToolbar: View {
                 iconButton("arrow.uturn.backward", help: "Widerrufen (⌘Z)", enabled: model.canUndo) { model.undo() }
                 iconButton("arrow.uturn.forward", help: "Wiederholen (⇧⌘Z)", enabled: model.canRedo) { model.redo() }
             }
+            FrameButton(model: model)
             iconButton("text.viewfinder", help: "Text kopieren — zensierte Wörter werden zu █", enabled: true, action: actions.copyText)
             iconButton("pin", help: "Anpinnen (schwebt über allen Fenstern)", enabled: true, action: actions.pin)
             Button { actions.copy() } label: { Label("Kopieren", systemImage: "doc.on.doc") }
@@ -454,5 +455,74 @@ private struct ZoomControl: View {
         }
         .buttonStyle(.plain)
         .help(help)
+    }
+}
+
+/// Hintergrund und Rahmen: Farbverlauf, Abstand, Ecken, Schatten.
+private struct FrameButton: View {
+    @ObservedObject var model: EditorModel
+    @State private var open = false
+
+    var body: some View {
+        Button { open.toggle() } label: {
+            Image(systemName: model.frame == nil ? "square.on.square.dashed" : "square.on.square.fill")
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 30, height: 28)
+                .foregroundStyle(model.frame == nil ? Color.white.opacity(0.85) : Color.accentColor)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Hintergrund und Rahmen")
+        .popover(isPresented: $open, arrowEdge: .bottom) { FramePanel(model: model) }
+    }
+}
+
+private struct FramePanel: View {
+    @ObservedObject var model: EditorModel
+
+    private var style: FrameStyle { model.frame ?? EditorModel.lastFrameStyle }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Toggle("Hintergrund und Rahmen", isOn: Binding(get: { model.frame != nil }, set: { model.setFrame($0 ? style : nil) }))
+                .toggleStyle(.switch)
+                .font(.system(size: 13, weight: .semibold))
+            HStack(spacing: 8) {
+                ForEach(FrameStyle.gradients.indices, id: \.self) { i in
+                    let colors = FrameStyle.gradients[i].colors.map { Color(nsColor: $0.nsColor) }
+                    Button { update { $0.gradient = i } } label: {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing))
+                            .frame(width: 30, height: 30)
+                            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .strokeBorder(model.frame?.gradient == i ? Color.primary : Color.primary.opacity(0.12), lineWidth: model.frame?.gradient == i ? 2.5 : 1))
+                    }
+                    .buttonStyle(.plain)
+                    .help(FrameStyle.gradients[i].name)
+                }
+            }
+            Picker("Abstand", selection: Binding(get: { style.padding }, set: { v in update { $0.padding = v } })) {
+                Text("Klein").tag(24.0)
+                Text("Mittel").tag(48.0)
+                Text("Groß").tag(80.0)
+            }
+            .pickerStyle(.segmented)
+            Picker("Ecken", selection: Binding(get: { style.cornerRadius }, set: { v in update { $0.cornerRadius = v } })) {
+                Text("Eckig").tag(0.0)
+                Text("Rund").tag(12.0)
+                Text("Sehr rund").tag(24.0)
+            }
+            .pickerStyle(.segmented)
+            Toggle("Schatten", isOn: Binding(get: { style.shadow }, set: { v in update { $0.shadow = v } }))
+        }
+        .padding(16)
+        .frame(width: 300)
+    }
+
+    /// Jede Änderung schaltet den Rahmen ein.
+    private func update(_ change: (inout FrameStyle) -> Void) {
+        var s = style
+        change(&s)
+        model.setFrame(s)
     }
 }

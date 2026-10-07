@@ -420,6 +420,7 @@ struct QuickAccessCard: View {
 
 struct Thumbnail: View {
     let item: CaptureItem
+    var background = Color(white: 0.1)
 
     var body: some View {
         if let image = ThumbnailCache.shared.image(for: item) {
@@ -428,7 +429,7 @@ struct Thumbnail: View {
                 .interpolation(.high)
                 .aspectRatio(contentMode: .fit)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(white: 0.1))
+                .background(background)
         } else {
             Image(systemName: item.kind == .image ? "photo" : "film")
                 .font(.system(size: 28))

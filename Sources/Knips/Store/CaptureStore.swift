@@ -29,6 +29,25 @@ struct ImageDocument: Codable {
     var version = 1
     var annotations: [Annotation] = []
     var crop: CGRect?
+    /// Hintergrund und Rahmen („Beautify“) — nil = ohne.
+    var frame: FrameStyle?
+}
+
+/// Farbverlauf, Abstand, Ecken und Schatten rund um den Screenshot. Maße in Punkten.
+struct FrameStyle: Codable, Equatable {
+    var gradient = 0
+    var padding: Double = 48
+    var cornerRadius: Double = 12
+    var shadow = true
+
+    static let gradients: [(name: String, colors: [RGBA])] = [
+        ("Indigo", [RGBA(r: 0.39, g: 0.40, b: 0.95), RGBA(r: 0.66, g: 0.33, b: 0.97)]),
+        ("Abendrot", [RGBA(r: 0.98, g: 0.45, b: 0.09), RGBA(r: 0.93, g: 0.28, b: 0.60)]),
+        ("Ozean", [RGBA(r: 0.02, g: 0.71, b: 0.83), RGBA(r: 0.23, g: 0.51, b: 0.96)]),
+        ("Minze", [RGBA(r: 0.65, g: 0.95, b: 0.82), RGBA(r: 0.20, g: 0.78, b: 0.55)]),
+        ("Graphit", [RGBA(r: 0.22, g: 0.25, b: 0.32), RGBA(r: 0.07, g: 0.09, b: 0.15)]),
+        ("Hell", [RGBA(r: 0.96, g: 0.96, b: 0.97), RGBA(r: 0.88, g: 0.89, b: 0.91)]),
+    ]
 }
 
 struct VideoRedaction: Codable, Identifiable, Equatable {

@@ -75,6 +75,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
     @Published var annotations: [Annotation]
     @Published var crop: CGRect?
     @Published var cropDraft: CGRect?
+    @Published var frame: FrameStyle?
     @Published var tool: EditorTool {
         didSet {
             guard tool != oldValue else { return }
@@ -109,7 +110,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
     private var textWaiters: [CheckedContinuation<Void, Never>] = []
     @Published private(set) var canRedo = false
 
-    private struct Snapshot { var annotations: [Annotation]; var crop: CGRect? }
+    private struct Snapshot { var annotations: [Annotation]; var crop: CGRect?; var frame: FrameStyle? }
     private var undoStack: [Snapshot] = []
     private var redoStack: [Snapshot] = []
     private var toastWork: DispatchWorkItem?
@@ -122,6 +123,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
         self.effects = EffectsCache(base: base, scale: CGFloat(max(1, item.scale)))
         self.annotations = document.annotations
         self.crop = document.crop
+        self.frame = document.frame
         let d = UserDefaults.standard
         self.tool = initialTool ?? EditorTool(rawValue: d.string(forKey: "editorTool") ?? "") ?? .redact
         if let data = d.data(forKey: "editorColor"), let c = try? JSONDecoder().decode(RGBA.self, from: data) {
@@ -183,13 +185,25 @@ enum EditorTool: String, CaseIterable, Identifiable {
     }
 
     var fullRect: CGRect { CGRect(x: 0, y: 0, width: base.width, height: base.height) }
-    var document: ImageDocument { ImageDocument(annotations: annotations, crop: crop) }
+    var document: ImageDocument { ImageDocument(annotations: annotations, crop: crop, frame: frame) }
+
+    func setFrame(_ style: FrameStyle?) {
+        guard style != frame else { return }
+        checkpoint()
+        frame = style
+        if let style { UserDefaults.standard.set(try? JSONEncoder().encode(style), forKey: "lastFrameStyle") }
+    }
+
+    /// Zuletzt benutzter Rahmen als Vorschlag.
+    static var lastFrameStyle: FrameStyle {
+        (UserDefaults.standard.data(forKey: "lastFrameStyle")).flatMap { try? JSONDecoder().decode(FrameStyle.self, from: $0) } ?? FrameStyle()
+    }
     var selected: Annotation? { annotations.first { $0.id == selectedID } }
 
     // MARK: Undo
 
     func checkpoint() {
-        undoStack.append(Snapshot(annotations: annotations, crop: crop))
+        undoStack.append(Snapshot(annotations: annotations, crop: crop, frame: frame))
         if undoStack.count > 300 { undoStack.removeFirst() }
         redoStack.removeAll()
         dirty = true
@@ -204,9 +218,10 @@ enum EditorTool: String, CaseIterable, Identifiable {
 
     func undo() {
         guard let snap = undoStack.popLast() else { return }
-        redoStack.append(Snapshot(annotations: annotations, crop: crop))
+        redoStack.append(Snapshot(annotations: annotations, crop: crop, frame: frame))
         annotations = snap.annotations
         crop = snap.crop
+        frame = snap.frame
         if let id = selectedID, !annotations.contains(where: { $0.id == id }) { selectedID = nil }
         dirty = true
         refreshUndoState()
@@ -214,9 +229,10 @@ enum EditorTool: String, CaseIterable, Identifiable {
 
     func redo() {
         guard let snap = redoStack.popLast() else { return }
-        undoStack.append(Snapshot(annotations: annotations, crop: crop))
+        undoStack.append(Snapshot(annotations: annotations, crop: crop, frame: frame))
         annotations = snap.annotations
         crop = snap.crop
+        frame = snap.frame
         dirty = true
         refreshUndoState()
     }
@@ -381,7 +397,11 @@ enum EditorTool: String, CaseIterable, Identifiable {
     var outputFactor: CGFloat { AppSettings.shared.outputFactor(sourceScale: scale) }
 
     var outputSize: CGSize {
-        let s = (crop ?? fullRect).integral.intersection(fullRect).size
+        var s = (crop ?? fullRect).integral.intersection(fullRect).size
+        if let frame {
+            s.width += 2 * CGFloat(frame.padding) * scale
+            s.height += 2 * CGFloat(frame.padding) * scale
+        }
         return CGSize(width: (s.width * outputFactor).rounded(), height: (s.height * outputFactor).rounded())
     }
 }

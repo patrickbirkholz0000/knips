@@ -70,7 +70,54 @@ enum Renderer {
         drawImage(base, in: full, ctx: ctx)
         drawAll(document.annotations, ctx: ctx, scale: scale, effects: effects, hiding: nil)
         NSGraphicsContext.restoreGraphicsState()
+        guard let content = ctx.makeImage() else { return nil }
+        if let frame = document.frame { return framed(content, style: frame, scale: scale) }
+        return content
+    }
+
+    /// Screenshot auf Farbverlauf mit Abstand, runden Ecken und weichem Schatten.
+    static func framed(_ content: CGImage, style: FrameStyle, scale: CGFloat) -> CGImage? {
+        let pad = CGFloat(style.padding) * scale
+        let w = content.width + Int(2 * pad), h = content.height + Int(2 * pad)
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: rgbSpace(content.colorSpace),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return content }
+        let canvas = CGRect(x: 0, y: 0, width: w, height: h)
+        drawFrameBackground(style, in: canvas, ctx: ctx)
+        let imageRect = CGRect(x: pad, y: pad, width: CGFloat(content.width), height: CGFloat(content.height))
+        drawFramedImage(content, in: imageRect, style: style, scale: scale, ctx: ctx, flipped: false)
         return ctx.makeImage()
+    }
+
+    static func drawFrameBackground(_ style: FrameStyle, in rect: CGRect, ctx: CGContext) {
+        let colors = FrameStyle.gradients[max(0, min(style.gradient, FrameStyle.gradients.count - 1))].colors
+        guard let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors.map(\.cgColor) as CFArray, locations: [0, 1])
+        else { return }
+        ctx.saveGState()
+        ctx.clip(to: rect)
+        ctx.drawLinearGradient(gradient, start: CGPoint(x: rect.minX, y: rect.maxY), end: CGPoint(x: rect.maxX, y: rect.minY), options: [])
+        ctx.restoreGState()
+    }
+
+    /// `flipped`: Kontext mit Ursprung oben links (Editor-Ansicht).
+    static func drawFramedImage(_ image: CGImage, in rect: CGRect, style: FrameStyle, scale: CGFloat, ctx: CGContext, flipped: Bool) {
+        let radius = min(CGFloat(style.cornerRadius) * scale, min(rect.width, rect.height) / 2)
+        let path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+        if style.shadow {
+            ctx.saveGState()
+            // Schatten-Versatz gilt im Geräteraum (y nach oben) — negativ heißt in beiden Fällen „nach unten“.
+            ctx.setShadow(offset: CGSize(width: 0, height: -10 * scale), blur: 32 * scale, color: CGColor(gray: 0, alpha: 0.35))
+            ctx.addPath(path)
+            ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+            ctx.fillPath()
+            ctx.restoreGState()
+        }
+        ctx.saveGState()
+        ctx.addPath(path)
+        ctx.clip()
+        if flipped { drawImage(image, in: rect, ctx: ctx) } else { ctx.draw(image, in: rect) }
+        ctx.restoreGState()
     }
 
     /// Zensur zuerst (sie verdeckt Bildinhalt, nicht andere Markierungen), danach alles andere in Reihenfolge.

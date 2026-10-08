@@ -14,8 +14,8 @@ BUILD_NUMBER=$(git rev-list --count HEAD 2>/dev/null || echo 1)
 
 echo "→ Kompiliere (Release)…"
 if [[ "${UNIVERSAL:-0}" == "1" ]]; then
-  swift build -c release --arch arm64 --arch x86_64
-  BIN=.build/apple/Products/Release/Knips
+  swift build -c release --arch arm64 --arch x86_64 2>&1 | grep -v "x86_64 architecture is deprecated" || true
+  BIN="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/Knips"
 else
   swift build -c release
   BIN=.build/release/Knips

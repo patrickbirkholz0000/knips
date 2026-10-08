@@ -1,0 +1,24 @@
+Knips – Screenshots und Bildschirmaufnahmen mit Zensur
+=====================================================
+
+Voraussetzung: macOS 14 (Sonoma) oder neuer.
+
+1. Knips auf „Applications“ (Programme) ziehen.
+
+2. Knips aus dem Programme-Ordner öffnen.
+   Falls macOS meldet, dass Knips nicht geprüft werden konnte:
+   „Fertig“ klicken, dann Systemeinstellungen → Datenschutz & Sicherheit,
+   ganz nach unten scrollen und bei „Knips“ auf „Dennoch öffnen“ klicken.
+   (Alternativ im Terminal: xattr -dr com.apple.quarantine /Applications/Knips.app)
+
+3. Bildschirmaufnahme erlauben: Knips zeigt beim ersten Start, wie es geht.
+   Danach Knips einmal neu starten.
+
+4. Loslegen:
+   ⇧⌘4  Bereich aufnehmen (Leertaste: Fenster)
+   ⇧⌘3  ganzer Bildschirm
+   ⇧⌘5  Bildschirmvideo starten/stoppen
+   Knips fragt beim Start, ob es diese Kürzel von macOS übernehmen darf.
+
+Alles Weitere über das Knips-Symbol in der Menüleiste.
+Alle Aufnahmen bleiben auf dem Mac – Knips hat kein Konto und sendet nichts ins Internet.

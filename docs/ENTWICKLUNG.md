@@ -12,6 +12,12 @@ swift build                 # nur kompilieren (Debug)
 swift scripts/make-icon.swift   # Icon neu erzeugen
 ```
 
+**Weitergeben:** `scripts/package.sh` → `build/Knips-<version>-<build>.dmg` (Universal, mit „Zuerst lesen.txt“,
+ohne Aufnahmen/Einstellungen — die liegen nur in `~/Pictures/Knips`, `~/Library/Application Support/Knips`
+und den Defaults). Mit „Apple Development“ signiert lehnt Gatekeeper auf fremden Macs ab; Empfänger gibt
+Knips einmal unter Datenschutz & Sicherheit frei. Ohne Warnung: Developer-ID-Zertifikat + Notarisierung,
+siehe Kopf von `scripts/package.sh` (Hardened Runtime, `Resources/Knips.entitlements`).
+
 **Signatur:** `build.sh` nimmt die jüngste gültige „Apple Development“-Identität (ab 08.10.2026
 gültig, weil das Apple-Zwischenzertifikat WWDR G3 im Anmelde-Schlüsselbund liegt). Damit bleibt die
 Freigabe „Bildschirm- & Systemaudioaufnahme“ über Updates hinweg erhalten. Ad hoc signiert müsste sie

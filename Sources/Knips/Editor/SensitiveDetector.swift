@@ -27,10 +27,10 @@ enum SensitiveDetector {
     }
 
     private static let patterns: [(Kind, NSRegularExpression)] = {
-        func re(_ p: String, _ opts: NSRegularExpression.Options = []) -> NSRegularExpression {
-            try! NSRegularExpression(pattern: p, options: opts)
+        func re(_ p: String, _ opts: NSRegularExpression.Options = []) -> NSRegularExpression? {
+            try? NSRegularExpression(pattern: p, options: opts)
         }
-        return [
+        let list: [(Kind, NSRegularExpression?)] = [
             (.email, re(#"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}"#, .caseInsensitive)),
             (.iban, re(#"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){3,7}(?:[ ]?[A-Z0-9]{1,4})?\b"#)),
             (.secret, re(#"\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{10,}\b"#)),
@@ -47,10 +47,11 @@ enum SensitiveDetector {
             (.phone, re(#"\b0[1-9][0-9]{1,4}[ /\-]?[0-9]{3,}(?:[ \-]?[0-9]{2,})*\b"#)),
             (.ip, re(#"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b"#)),
         ]
+        return list.compactMap { kind, regex in regex.map { (kind, $0) } }
     }()
 
     /// Lange Zeichenketten aus Buchstaben UND Ziffern ohne Leerzeichen: typisch für Tokens/Hashes.
-    private static let generic = try! NSRegularExpression(pattern: #"\b[A-Za-z0-9_\-]{28,}\b"#)
+    private static let generic = try? NSRegularExpression(pattern: #"\b[A-Za-z0-9_\-]{28,}\b"#)
 
     static func detect(in image: CGImage, kinds: Set<Kind> = Set(Kind.allCases)) async -> [Finding] {
         await Task.detached(priority: .userInitiated) { detectSync(in: image, kinds: kinds) }.value
@@ -114,7 +115,7 @@ enum SensitiveDetector {
                 add(kind, m.range)
             }
         }
-        for m in generic.matches(in: text, range: full) where kinds.contains(.secret) {
+        for m in generic?.matches(in: text, range: full) ?? [] where kinds.contains(.secret) {
             let s = ns.substring(with: m.range)
             let digits = s.filter(\.isNumber).count, letters = s.filter(\.isLetter).count
             if digits >= 4 && letters >= 8 { add(.secret, m.range) }

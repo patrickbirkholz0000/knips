@@ -93,7 +93,7 @@ import SwiftUI
         removeMonitors()
         // Klick irgendwo anders schließt das Panel (globale Maus-Monitore brauchen keine Freigabe).
         if let g = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
-            MainActor.assumeIsolated { self?.close() }
+            onMainActor { self?.close() }
         }) { monitors.append(g) }
         if let l = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown], handler: { [weak self] event in
             guard let self else { return event }
@@ -154,7 +154,7 @@ final class MenuHostingView: NSHostingView<MenuPanelView> {
         super.mouseMoved(with: event)
         let p = convert(event.locationInWindow, from: nil)
         let point = CGPoint(x: p.x, y: isFlipped ? p.y : bounds.height - p.y)
-        MainActor.assumeIsolated {
+        onMainActor {
             guard let model else { return }
             let hit = model.frames.first { $0.value.contains(point) }?.key
             if model.hovered != hit { model.hovered = hit }
@@ -163,7 +163,7 @@ final class MenuHostingView: NSHostingView<MenuPanelView> {
 
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
-        MainActor.assumeIsolated { model?.hovered = nil }
+        onMainActor { model?.hovered = nil }
     }
 }
 
@@ -211,7 +211,7 @@ struct MenuPanelView: View {
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .coordinateSpace(name: "menu")
         .onPreferenceChange(HoverFrames.self) { frames in
-            MainActor.assumeIsolated { model.frames = frames }
+            onMainActor { model.frames = frames }
         }
         .environment(\.colorScheme, .dark)
         .animation(.easeOut(duration: 0.1), value: model.hovered)

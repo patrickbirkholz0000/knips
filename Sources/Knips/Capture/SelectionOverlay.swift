@@ -162,7 +162,7 @@ final class SelectionView: NSView {
         setupLayers()
     }
 
-    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+    @available(*, unavailable) required init?(coder: NSCoder) { nil }
 
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -315,8 +315,10 @@ final class SelectionView: NSView {
 
     override func rightMouseDown(with event: NSEvent) { overlay.finish(.cancelled) }
 
+    #if KNIPS_DEV
     /// Nur für Selbsttests.
     func debugSelect(_ r: CGRect) { selection = r }
+    #endif
 
     private func clamp(_ p: CGPoint) -> CGPoint {
         CGPoint(x: max(0, min(p.x, bounds.width)), y: max(0, min(p.y, bounds.height)))

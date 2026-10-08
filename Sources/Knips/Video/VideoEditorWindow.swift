@@ -64,7 +64,7 @@ import SwiftUI
         window.center()
     }
 
-    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+    @available(*, unavailable) required init?(coder: NSCoder) { nil }
 
     private func save(close: Bool) {
         Task {
@@ -150,7 +150,7 @@ final class VideoCanvasView: NSView {
             .store(in: &cancellables)
     }
 
-    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+    @available(*, unavailable) required init?(coder: NSCoder) { nil }
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -306,7 +306,7 @@ final class VideoOverlayView: NSView {
         super.init(frame: frame)
         clipsToBounds = true
     }
-    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+    @available(*, unavailable) required init?(coder: NSCoder) { nil }
     override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override func draw(_ dirtyRect: NSRect) {

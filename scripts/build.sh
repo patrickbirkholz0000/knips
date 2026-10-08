@@ -12,12 +12,15 @@ BUILD_NUMBER=$(git rev-list --count HEAD 2>/dev/null || echo 1)
 
 [[ -f Resources/AppIcon.icns ]] || swift scripts/make-icon.swift
 
-echo "→ Kompiliere (Release)…"
+# Eigene Builds enthalten Selbsttests und Test-Befehle (KNIPS_DEV); RELEASE=1 lässt sie weg (Weitergabe).
+FLAGS=(-Xswiftc -DKNIPS_DEV)
+[[ "${RELEASE:-0}" == "1" ]] && FLAGS=()
+echo "→ Kompiliere (Release${RELEASE:+, ohne Entwickler-Code})…"
 if [[ "${UNIVERSAL:-0}" == "1" ]]; then
-  swift build -c release --arch arm64 --arch x86_64 2>&1 | grep -v "x86_64 architecture is deprecated" || true
-  BIN="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/Knips"
+  swift build -c release --arch arm64 --arch x86_64 "${FLAGS[@]}" 2>&1 | grep -E "error|warning: unre" || true
+  BIN="$(swift build -c release --arch arm64 --arch x86_64 "${FLAGS[@]}" --show-bin-path)/Knips"
 else
-  swift build -c release
+  swift build -c release "${FLAGS[@]}"
   BIN=.build/release/Knips
 fi
 
@@ -29,6 +32,9 @@ cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$BUILD_NUMBER" "$APP/Contents/Info.plist"
+
+# Weitergabe-Build: Debug-Symbole entfernen (wie Xcode bei Release-Archiven).
+[[ "${RELEASE:-0}" == "1" ]] && strip "$APP/Contents/MacOS/Knips"
 
 IDENTITY=${KNIPS_SIGN_IDENTITY:-}
 if [[ -z "$IDENTITY" ]]; then

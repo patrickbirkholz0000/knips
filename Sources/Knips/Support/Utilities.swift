@@ -5,7 +5,11 @@ import UniformTypeIdentifiers
 enum Paths {
     /// Selbsttests laufen isoliert in `KNIPS_TEST_DIR`, nie in der echten Ablage.
     static var testRoot: URL? {
-        ProcessInfo.processInfo.environment["KNIPS_TEST_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        #if KNIPS_DEV
+        return ProcessInfo.processInfo.environment["KNIPS_TEST_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        #else
+        return nil
+        #endif
     }
 
     static var appSupport: URL {
@@ -397,4 +401,9 @@ extension CGRect {
         count = max(0, count - 1)
         if count == 0 { NSApp.setActivationPolicy(.accessory) }
     }
+}
+
+/// Wie `MainActor.assumeIsolated`, aber ohne Quelldatei-Namen im fertigen Programm.
+func onMainActor<T: Sendable>(_ body: @MainActor () throws -> T) rethrows -> T {
+    try MainActor.assumeIsolated(body, file: "", line: 0)
 }

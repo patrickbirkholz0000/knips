@@ -158,7 +158,7 @@ enum HotkeyAction: String, CaseIterable, Codable, Identifiable {
                                         nil, MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID)
             guard err == noErr else { return err }
             let id = hotKeyID.id
-            DispatchQueue.main.async { MainActor.assumeIsolated { HotkeyManager.shared.fire(id: id) } }
+            DispatchQueue.main.async { onMainActor { HotkeyManager.shared.fire(id: id) } }
             return noErr
         }, 1, &spec, nil, nil)
         handlerInstalled = status == noErr

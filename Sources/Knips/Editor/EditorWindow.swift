@@ -72,7 +72,7 @@ import SwiftUI
         window.setFrameAutosaveName("")
     }
 
-    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+    @available(*, unavailable) required init?(coder: NSCoder) { nil }
 
     private static func initialSize(for item: CaptureItem, base: CGImage) -> NSSize {
         let scale = CGFloat(max(1, item.scale))

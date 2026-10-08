@@ -25,7 +25,7 @@ import SwiftUI
         window.center()
     }
 
-    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+    @available(*, unavailable) required init?(coder: NSCoder) { nil }
 
     func windowWillClose(_ notification: Notification) { DockPresence.windowClosed() }
 }

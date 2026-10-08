@@ -43,7 +43,7 @@ import SwiftUI
         let recorder = ScreenRecorder(url: url)
         recorder.onStreamError = { [weak self] error in
             DispatchQueue.main.async {
-                MainActor.assumeIsolated {
+                onMainActor {
                     Log.error("Aufnahme-Stream beendet: \(error.localizedDescription)")
                     if self?.phase == .recording { self?.stop(save: true) }
                 }
@@ -77,7 +77,7 @@ import SwiftUI
                 self.startDate = Date()
                 self.elapsed = 0
                 self.ticker = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
-                    MainActor.assumeIsolated {
+                    onMainActor {
                         guard let start = RecordingController.shared.startDate else { return }
                         RecordingController.shared.elapsed = Date().timeIntervalSince(start)
                     }

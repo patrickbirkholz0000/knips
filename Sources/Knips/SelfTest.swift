@@ -1,3 +1,4 @@
+#if KNIPS_DEV
 import AppKit
 import AVFoundation
 import ScreenCaptureKit
@@ -807,3 +808,4 @@ import Vision
         try? FileManager.default.removeItem(at: url)
     }
 }
+#endif

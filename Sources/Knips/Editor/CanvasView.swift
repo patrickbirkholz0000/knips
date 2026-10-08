@@ -43,7 +43,7 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
             .store(in: &cancellables)
     }
 
-    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+    @available(*, unavailable) required init?(coder: NSCoder) { nil }
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }

@@ -23,13 +23,15 @@ import ScreenCaptureKit
         }
         // SwiftUI und das Einstellungsfenster vorwärmen — das erste Öffnen kostet sonst ~0,4 s.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { SettingsWindowController.prewarm() }
+        #if KNIPS_DEV
         // Test-Sandbox: Befehle per Distributed Notification (URL-Aufrufe landen sonst bei der installierten App).
         if Paths.testRoot != nil {
             DistributedNotificationCenter.default().addObserver(forName: Notification.Name("de.birkgroup.knips.test"), object: nil, queue: .main) { note in
                 guard let command = note.object as? String, let url = URL(string: "knips://\(command)") else { return }
-                MainActor.assumeIsolated { (NSApp.delegate as? AppDelegate)?.application(NSApp, open: [url]) }
+                onMainActor { (NSApp.delegate as? AppDelegate)?.application(NSApp, open: [url]) }
             }
         }
+        #endif
         Log.info("Knips gestartet")
     }
 
@@ -50,6 +52,7 @@ import ScreenCaptureKit
             case "settings": SettingsWindowController.show()
             case "menu": StatusBarController.shared?.togglePanel()
             case "history": HistoryWindowController.show()
+            #if KNIPS_DEV
             case "debug-sample" where Paths.testRoot != nil:
                 if let item = try? CaptureStore.shared.addImage(SelfTest.sampleImage(), scale: 2) {
                     QuickAccessController.shared.show(item, on: NSScreen.main ?? NSScreen.withMouse)
@@ -66,6 +69,7 @@ import ScreenCaptureKit
                 ScrollCaptureController.shared.finish(save: true)
             case "debug-snapshot" where Paths.testRoot != nil:
                 Task { await Self.snapshotOwnWindows() }
+            #endif
             default: Log.info("Unbekannter Befehl: \(url.absoluteString)")
             }
         }
@@ -115,6 +119,7 @@ import ScreenCaptureKit
 
     @objc func openSettings() { SettingsWindowController.show() }
 
+    #if KNIPS_DEV
     /// Nur in der Test-Sandbox: fotografiert die eigenen sichtbaren Fenster einzeln (nie den Bildschirm).
     private static func snapshotOwnWindows() async {
         guard let root = Paths.testRoot,
@@ -130,6 +135,7 @@ import ScreenCaptureKit
             Log.info("Snapshot \(url.lastPathComponent) frame=\(w.frame)")
         }
     }
+    #endif
 }
 
 /// Bietet einmalig an, die macOS-Bildschirmfoto-Kürzel für Knips freizumachen.

@@ -40,7 +40,7 @@ import AppKit
                                      y: min(max(vf.minY, mouse.y - size.height / 2), vf.maxY - size.height)))
     }
 
-    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+    @available(*, unavailable) required init?(coder: NSCoder) { nil }
 
     func windowWillClose(_ notification: Notification) {
         Self.pins.removeAll { $0 === self }
@@ -81,7 +81,7 @@ private final class PinView: NSView {
         addSubview(closeButton)
     }
 
-    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+    @available(*, unavailable) required init?(coder: NSCoder) { nil }
 
     override func layout() {
         super.layout()

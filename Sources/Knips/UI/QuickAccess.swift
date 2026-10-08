@@ -249,7 +249,7 @@ final class QuickAccessHostingView: NSHostingView<QuickAccessRoot> {
 
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
-        MainActor.assumeIsolated {
+        onMainActor {
             model?.hovered = nil
             model?.headerHovered = false
         }
@@ -258,7 +258,7 @@ final class QuickAccessHostingView: NSHostingView<QuickAccessRoot> {
     private func updateHover(_ event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
         let yFromTop = isFlipped ? p.y : bounds.height - p.y
-        MainActor.assumeIsolated {
+        onMainActor {
             guard let model else { return }
             let n = model.cards.count
             let header = n > 1 ? QuickAccessController.headerHeight : 0

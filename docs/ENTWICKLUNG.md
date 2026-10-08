@@ -12,7 +12,9 @@ swift build                 # nur kompilieren (Debug)
 swift scripts/make-icon.swift   # Icon neu erzeugen
 ```
 
-**Weitergeben:** `scripts/package.sh` → `build/Knips-<version>-<build>.dmg` (Universal, mit „Zuerst lesen.txt“,
+**Weitergeben:** `scripts/package.sh` baut mit `RELEASE=1`: ohne Selbsttests/Test-Befehle (`#if KNIPS_DEV`),
+ohne Debug-Symbole, ohne Quelldatei-Namen (`onMainActor` statt `MainActor.assumeIsolated`, kein `fatalError`/`try!`).
+Eigene Builds (`build.sh`, `install.sh`) enthalten den Entwickler-Code weiterhin. Paket: → `build/Knips-<version>-<build>.dmg` (Universal, mit „Zuerst lesen.txt“,
 ohne Aufnahmen/Einstellungen — die liegen nur in `~/Pictures/Knips`, `~/Library/Application Support/Knips`
 und den Defaults). Mit „Apple Development“ signiert lehnt Gatekeeper auf fremden Macs ab; Empfänger gibt
 Knips einmal unter Datenschutz & Sicherheit frei. Ohne Warnung: Developer-ID-Zertifikat + Notarisierung,

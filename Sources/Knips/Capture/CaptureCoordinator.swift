@@ -112,11 +112,13 @@ import ScreenCaptureKit
         }
     }
 
+    #if KNIPS_DEV
     /// Nur Test-Sandbox: letzten Bereich setzen, ohne Maus.
     func debugSetLastArea(_ rect: CGRect) {
         guard Paths.testRoot != nil, let screen = NSScreen.main else { return }
         lastArea = (screen.displayID, rect)
     }
+    #endif
 
     /// Gleicher Ausschnitt wie beim letzten Mal — ohne Overlay.
     func captureLastArea() {

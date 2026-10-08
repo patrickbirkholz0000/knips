@@ -10,7 +10,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-UNIVERSAL=1 scripts/build.sh
+RELEASE=1 UNIVERSAL=1 scripts/build.sh
 APP=build/Knips.app
 VERSION=$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist")
 BUILD=$(plutil -extract CFBundleVersion raw "$APP/Contents/Info.plist")

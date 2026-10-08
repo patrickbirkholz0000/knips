@@ -44,7 +44,7 @@ import Combine
         player.currentItem?.videoComposition = VideoRedactor.composition(for: asset, state: state)
         player.actionAtItemEnd = .pause
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 30), queue: .main) { [weak self] time in
-            MainActor.assumeIsolated {
+            onMainActor {
                 guard let self else { return }
                 self.currentTime = time.seconds
                 if self.isPlaying, time.seconds >= self.trimEnd - 0.01 {

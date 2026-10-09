@@ -322,6 +322,10 @@ extension CGRect {
     var center: CGPoint { CGPoint(x: midX, y: midY) }
 }
 
+extension Comparable {
+    func clamped(to range: ClosedRange<Self>) -> Self { min(max(self, range.lowerBound), range.upperBound) }
+}
+
 /// Kurze Einblendung („Kopiert“, „Gespeichert“) unten mittig.
 @MainActor enum HUD {
     private static var panel: NSPanel?

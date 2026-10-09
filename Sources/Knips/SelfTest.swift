@@ -31,6 +31,9 @@ import Vision
             case "history":
                 NSApp.setActivationPolicy(.accessory)
                 try runAsync { try await history(out) }
+            case "cards":
+                NSApp.setActivationPolicy(.accessory)
+                try runAsync { try await cards(out) }
             case "settings":
                 NSApp.setActivationPolicy(.accessory)
                 try runAsync { try await settings(out, panes: args.count > 2 ? args[2].split(separator: ",").compactMap { SettingsPane(rawValue: String($0)) } : SettingsPane.allCases) }
@@ -458,6 +461,106 @@ import Vision
         window.orderOut(nil)
     }
 
+    /// Klicks auf eine Karte: die Fläche öffnet, die Knöpfe lösen nur ihre eigene Aktion aus.
+    /// Echte Mausereignisse an ein Fenster, das bis auf 1 pt neben dem Bildschirm liegt.
+    static func cards(_ out: URL) async throws {
+        let store = CaptureStore.shared
+        let item = try store.addImage(sampleImage(), scale: 2)
+        await store.waitUntilWritten(item.id)
+        var calls: [String] = []
+        let log: (String) -> (CaptureItem) -> Void = { name in { _ in calls.append(name) } }
+        let actions = QuickAccessActions(copy: log("kopieren"), open: log("öffnen"), pin: log("anpinnen"), reveal: log("finder"),
+                                         copyText: log("text"), delete: log("löschen"), close: log("schließen"),
+                                         closeAll: { calls.append("alle") })
+        let model = QuickAccessModel()
+        model.cards = [item]
+        model.hovered = item.id
+        let size = QuickAccessController.panelSize(cards: 1)
+        let panel = QuickAccessPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel],
+                                     backing: .buffered, defer: false)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        let host = QuickAccessHostingView(rootView: QuickAccessRoot(model: model, actions: actions))
+        host.model = model
+        panel.contentView = host
+        try await windowShot(panel, out.appendingPathComponent("karte-hover.png"))
+
+        // Fensterkoordinaten, Ursprung unten links; die Karte beginnt bei `padding`.
+        let pad = QuickAccessController.padding, card = QuickAccessController.cardSize
+        let midX = pad + card.width / 2, midY = pad + card.height / 2, top = pad + card.height
+        let cases: [(name: String, point: CGPoint, hovered: Bool, expected: String)] = [
+            ("Fläche links", CGPoint(x: pad + 30, y: midY), true, "öffnen"),
+            ("Fläche unten Mitte", CGPoint(x: midX, y: pad + 12), true, "öffnen"),
+            ("Mitte ohne Hover", CGPoint(x: midX, y: midY), false, "öffnen"),
+            ("Knopf Kopieren", CGPoint(x: midX, y: midY + 18.5), true, "kopieren"),
+            ("Knopf Öffnen", CGPoint(x: midX, y: midY - 18.5), true, "öffnen"),
+            ("Ecke Schließen", CGPoint(x: pad + 19, y: top - 19), true, "schließen"),
+            ("Ecke Anpinnen", CGPoint(x: pad + card.width - 19, y: top - 19), true, "anpinnen"),
+            ("Ecke Finder", CGPoint(x: pad + 19, y: pad + 19), true, "finder"),
+            ("Ecke Löschen", CGPoint(x: pad + card.width - 19, y: pad + 19), true, "löschen"),
+        ]
+        var failed: [String] = []
+        for c in cases {
+            calls.removeAll()
+            model.hovered = c.hovered ? item.id : nil
+            pumpEvents(for: 0.25)
+            try click(panel, at: c.point)
+            let ok = calls == [c.expected]
+            print("   \(ok ? "ok    " : "FALSCH") \(c.name): \(calls.isEmpty ? "nichts" : calls.joined(separator: ", "))")
+            if !ok { failed.append(c.name) }
+        }
+        panel.orderOut(nil)
+        if !failed.isEmpty { throw CheckFailed(message: "Karten-Klicks falsch: \(failed.joined(separator: ", "))") }
+    }
+
+    /// Klick als echte Ereignisse über die App-Warteschlange (wie von der Maus).
+    private static func click(_ window: NSWindow, at point: CGPoint) throws {
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            guard let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                                                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                 context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)
+            else { throw CheckFailed(message: "Mausereignis nicht erzeugt") }
+            NSApp.postEvent(event, atStart: false)
+            pumpEvents(for: 0.08)
+        }
+        pumpEvents(for: 0.4)
+    }
+
+    private static func pumpEvents(for seconds: TimeInterval) {
+        let end = Date().addingTimeInterval(seconds)
+        while Date() < end {
+            if let event = NSApp.nextEvent(matching: .any, until: Date().addingTimeInterval(0.02), inMode: .default, dequeue: true) {
+                NSApp.sendEvent(event)
+            }
+        }
+    }
+
+    /// Tippt in das (einzige) Zahlenfeld der Seite und bestätigt mit ⏎.
+    private static func enter(_ text: String, in window: NSWindow) async throws -> Int {
+        func field(in view: NSView) -> NSTextField? {
+            if let f = view as? NSTextField, f.isEditable { return f }
+            return view.subviews.lazy.compactMap(field).first
+        }
+        guard let target = field(in: window.contentView!) else { throw CheckFailed(message: "Zahlenfeld nicht gefunden") }
+        window.makeFirstResponder(target)
+        (window.firstResponder as? NSTextView)?.selectAll(nil)
+        for (chars, keyCode) in text.map({ (String($0), UInt16(0)) }) + [("\r", 36)] {
+            guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                               timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                               context: nil, characters: chars, charactersIgnoringModifiers: chars,
+                                               isARepeat: false, keyCode: keyCode)
+            else { throw CheckFailed(message: "Tastenereignis nicht erzeugt") }
+            window.sendEvent(event)
+        }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        return AppSettings.shared.quickAccessSeconds
+    }
+
+    struct CheckFailed: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
     static func settings(_ out: URL, panes: [SettingsPane]) async throws {
         let controller = SettingsWindowController()
         let window = controller.window!
@@ -468,6 +571,25 @@ import Vision
                 HotkeyRecorderState.shared.recording = .captureArea
                 try await windowShot(window, out.appendingPathComponent("einstellungen-shortcuts-eingabe.png"))
                 HotkeyRecorderState.shared.recording = nil
+            }
+            if pane == .general {
+                // Anzeigedauer eingeschaltet; die Einstellungen danach exakt wiederherstellen.
+                let settings = AppSettings.shared, defaults = UserDefaults.standard
+                let saved = ["quickAccessAutoHide", "quickAccessSeconds"].map { ($0, defaults.object(forKey: $0)) }
+                let (hide, seconds) = (settings.quickAccessAutoHide, settings.quickAccessSeconds)
+                settings.quickAccessAutoHide = true
+                settings.quickAccessSeconds = 7
+                try await windowShot(window, out.appendingPathComponent("einstellungen-general-ausblenden.png"))
+                var wrong: [String] = []
+                for (input, expected) in [("25", 25), ("0", 1), ("90000", 3600), ("x", 3600), ("4", 4)] {
+                    let got = try await enter(input, in: window)
+                    print("   \(got == expected ? "ok    " : "FALSCH") Anzeigedauer „\(input)“ → \(got) s")
+                    if got != expected { wrong.append(input) }
+                }
+                settings.quickAccessAutoHide = hide
+                settings.quickAccessSeconds = seconds
+                for (key, value) in saved { defaults.set(value, forKey: key) }
+                if !wrong.isEmpty { throw CheckFailed(message: "Anzeigedauer falsch übernommen: \(wrong.joined(separator: ", "))") }
             }
         }
         window.orderOut(nil)

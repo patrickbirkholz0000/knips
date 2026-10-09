@@ -34,8 +34,9 @@ nach jedem Build neu erteilt werden.
 | `render` | Renderer: alle Werkzeuge, Zensurstile, Zuschnitt → PNG |
 | `detect` | Auto-Zensur (Vision + Muster) am Testbild |
 | `ui` / `selection` | Karten, Einstellungen, Auswahl-Overlay offscreen |
+| `cards` | Klicks auf eine Karte als echte Mausereignisse: Fläche öffnet, jeder Knopf nur seine Aktion |
 | `live` | Bild- und Video-Editor als echtes Fenster, 1 pt in der Bildschirmecke, per SCK fotografiert |
-| `settings [bereich,…]` | Einstellungsfenster (Stil Systemeinstellungen) je Bereich, inkl. Kürzel-Eingabe |
+| `settings [bereich,…]` | Einstellungsfenster (Stil Systemeinstellungen) je Bereich, inkl. Kürzel-Eingabe und Eintippen der Anzeigedauer |
 | `output` | Ausgabe 1× + PNG/JPEG, Rahmen, Speichern aus dem Editor, „Text kopieren“ ohne Zensiertes |
 | `track` | Mitlaufender Zensurbalken in scrollendem Video (Texterkennung prüft jeden Zeitpunkt) |
 | `stitch` | Scroll-Screenshot: Ausschnitte → exakt das Originalbild (Pixelvergleich) |
@@ -71,6 +72,9 @@ Kürzel wie macOS (änderbar): ⌘⇧4 Bereich · ⌘⇧3 Vollbild · ⌘⇧5 Au
 Kollidieren sie mit eingeschalteten macOS-Kürzeln, fragt Knips einmal beim Start, ob es sie übernehmen darf
 (`SystemShortcuts.takeOver`: schreibt `com.apple.symbolichotkeys`, lädt per `activateSettings -u` neu;
 rückgängig in Einstellungen → Tastaturkurzbefehle).
+Karten unten links: Klick irgendwo auf die Karte öffnet sie (Bild-/Video-Editor, GIF in der Standard-App), die Knöpfe
+darauf haben Vorrang. Ausblenden nach frei wählbaren Sekunden (1–3600, `quickAccessAutoHide` + `quickAccessSeconds`,
+alter Schlüssel `quickAccessAutoClose` wird beim Start übernommen); unter der Maus nie.
 Zensur: Standard „Balken“, Editor startet mit dem Zensur-Werkzeug. Auto-Zensur-Knopf ist standardmäßig aus.
 Im Overlay: Leertaste = Fenstermodus, ⏎ = ganzer Bildschirm, Esc = Abbruch, ⇧ = Quadrat.
 URL-Befehle: `knips://area|window|fullscreen|record|last|text|scroll|pin|menu|history|settings`.
@@ -101,7 +105,7 @@ Eintrag), heller Fläche, weißen Karten, schwarzen Knöpfen (`Theme`). Verlauf-
 
 Gebaut und geprüft (Selbsttests + Live-Fenster + End-to-End über URL-Befehle): Aufnahme, Overlay,
 Karten, Bild-Editor, Auto-Zensur, Bildschirmaufnahme, Video-Editor mit Zensur, MP4/GIF-Export.
-Nicht automatisch prüfbar, muss am Gerät getestet werden: Maus-Hover auf den Karten, Ziehen aus den
+Nicht automatisch prüfbar, muss am Gerät getestet werden: Maus-Hover auf den Karten (Klicks prüft `cards`), Ziehen aus den
 Karten in andere Apps, das interaktive Auswahl-Overlay, Mikrofon-Aufnahme.
 Seitdem dazu: Editor-Zoom, schlaue Zensurbalken (Klick auf Text), Text kopieren/erfassen, Letzter Bereich,
 Scroll-Screenshots, Verlauf, Rahmen, Videos 1×/HEVC/Klicks, mitlaufende Video-Balken, kleinere GIFs.

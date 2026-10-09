@@ -3,7 +3,7 @@ import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Schwebende Karten unten links nach jeder Aufnahme: kopieren, bearbeiten, anpinnen,
+/// Schwebende Karten unten links nach jeder Aufnahme: Klick öffnet, außerdem kopieren, anpinnen,
 /// herausziehen oder wegklicken.
 @MainActor final class QuickAccessController {
     static let shared = QuickAccessController()
@@ -34,13 +34,23 @@ import UniformTypeIdentifiers
                 if id == nil { self.model.cards.forEach { self.scheduleAutoClose($0.id) } }
             }
             .store(in: &cancellables)
+        // Neue Anzeigedauer gilt sofort auch für Karten, die gerade stehen.
+        let settings = AppSettings.shared
+        settings.$quickAccessAutoHide.combineLatest(settings.$quickAccessSeconds)
+            .dropFirst()
+            .removeDuplicates { $0 == $1 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.model.cards.forEach { self.scheduleAutoClose($0.id) }
+            }
+            .store(in: &cancellables)
     }
 
     var actions: QuickAccessActions {
         QuickAccessActions(
             copy: { [weak self] item in self?.copy(item) },
-            edit: { item in Self.edit(item, tool: nil) },
-            redact: { item in Self.edit(item, tool: .redact) },
+            open: { item in Self.edit(item, tool: nil) },
             pin: { item in
                 Task {
                     await CaptureStore.shared.waitUntilWritten(item.id)
@@ -191,8 +201,7 @@ import UniformTypeIdentifiers
 
 struct QuickAccessActions {
     var copy: (CaptureItem) -> Void
-    var edit: (CaptureItem) -> Void
-    var redact: (CaptureItem) -> Void
+    var open: (CaptureItem) -> Void
     var pin: (CaptureItem) -> Void
     var reveal: (CaptureItem) -> Void
     var copyText: (CaptureItem) -> Void
@@ -353,7 +362,8 @@ struct QuickAccessCard: View {
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
         .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
         .contentShape(RoundedRectangle(cornerRadius: 12))
-        .onTapGesture(count: 2) { actions.edit(item) }
+        // Klick irgendwo auf die Karte öffnet sie; die Knöpfe darauf haben Vorrang.
+        .onTapGesture { actions.open(item) }
         .onDrag { DragProvider.make(for: item) }
     }
 
@@ -362,18 +372,13 @@ struct QuickAccessCard: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.black.opacity(0.5))
             VStack(spacing: 7) {
                 cardButton("Kopieren", symbol: "doc.on.doc") { actions.copy(item) }
-                switch item.kind {
-                case .image: cardButton("Zensieren", symbol: "eye.slash") { actions.redact(item) }
-                case .video: cardButton("Bearbeiten", symbol: "scissors") { actions.edit(item) }
-                case .gif: cardButton("Öffnen", symbol: "eye") { actions.edit(item) }
-                }
+                cardButton("Öffnen", symbol: "arrow.up.forward.app") { actions.open(item) }
             }
             VStack {
                 HStack {
                     corner("xmark", help: "Schließen") { actions.close(item) }
                     Spacer()
                     if item.kind == .image {
-                        corner("pencil", help: "Bearbeiten (Pfeile, Text, Zuschneiden …)") { actions.edit(item) }
                         corner("pin", help: "Anpinnen") { actions.pin(item) }
                     }
                 }

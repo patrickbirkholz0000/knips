@@ -316,6 +316,47 @@ private struct Choice<Value: Hashable>: View {
     }
 }
 
+/// Zahl frei eintippen oder mit den Pfeilen ändern. Übernimmt jede gültige Eingabe sofort,
+/// beim Verlassen des Felds wird eine ungültige auf den letzten Wert zurückgesetzt.
+private struct SecondsField: View {
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            TextField("", text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13.5, weight: .medium).monospacedDigit())
+                .foregroundStyle(Theme.ink)
+                .multilineTextAlignment(.center)
+                .focused($focused)
+                .frame(width: 52, height: 28)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.soft))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(focused ? Theme.ink.opacity(0.4) : Theme.border))
+                .onSubmit(normalize)
+                .onChange(of: text) { _, new in
+                    if let n = Int(new.filter(\.isNumber)), range.contains(n), n != value { value = n }
+                }
+                .onChange(of: focused) { _, isFocused in if !isFocused { normalize() } }
+            Text(value == 1 ? "Sekunde" : "Sekunden")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.muted)
+                .frame(width: 62, alignment: .leading)
+            Stepper("", value: $value, in: range).labelsHidden()
+        }
+        .onAppear { text = "\(value)" }
+        .onChange(of: value) { _, new in if Int(text) != new { text = "\(new)" } }
+    }
+
+    private func normalize() {
+        if let n = Int(text.filter(\.isNumber)) { value = n.clamped(to: range) }
+        text = "\(value)"
+    }
+}
+
 /// Schwarze Schaltfläche als Hauptaktion, hellgrau als Nebenaktion.
 private struct PillButtonStyle: ButtonStyle {
     var primary = false
@@ -385,14 +426,19 @@ private struct GeneralPane: View {
                 Row(title: "Auslöser-Ton") { Switch(isOn: $settings.playSound) }
             }
             Card(title: "Karten unten links",
-                 footer: "Auf der Karte kannst du kopieren, zensieren, anpinnen, Text kopieren oder sie in eine andere App ziehen. Unter der Maus blendet sie sich nie aus.") {
+                 footer: "Ein Klick auf die Karte öffnet die Aufnahme. Über die Knöpfe darauf kopierst du, pinnst an oder kopierst den Text, und du kannst die Karte in eine andere App ziehen. Solange die Maus darauf liegt, bleibt sie stehen.") {
                 Row(title: "Karte anzeigen") { Switch(isOn: $settings.showQuickAccess) }
                 RowDivider()
                 Row(title: "Automatisch ausblenden") {
-                    Choice(selection: $settings.quickAccessAutoClose,
-                           options: [(0, "Nie"), (5, "nach 5 s"), (10, "nach 10 s"), (30, "nach 30 s"), (60, "nach 1 min")])
-                        .disabled(!settings.showQuickAccess)
+                    Switch(isOn: $settings.quickAccessAutoHide).disabled(!settings.showQuickAccess)
                 }
+                RowDivider()
+                let timed = settings.showQuickAccess && settings.quickAccessAutoHide
+                Row(title: "Anzeigedauer", subtitle: timed ? "So lange bleibt die Karte stehen" : "Die Karte bleibt, bis du sie schließt") {
+                    SecondsField(value: $settings.quickAccessSeconds, range: AppSettings.quickAccessSecondsRange)
+                }
+                .disabled(!timed)
+                .opacity(timed ? 1 : 0.45)
             }
             Card(title: "Start") {
                 Row(title: "Beim Anmelden öffnen") {

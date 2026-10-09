@@ -36,8 +36,19 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
     @Published var saveFolderPath: String { didSet { d.set(saveFolderPath, forKey: "saveFolder") } }
     @Published var copyToClipboard: Bool { didSet { d.set(copyToClipboard, forKey: "copyToClipboard") } }
     @Published var showQuickAccess: Bool { didSet { d.set(showQuickAccess, forKey: "showQuickAccess") } }
+    /// Karten unten links nach `quickAccessSeconds` ausblenden.
+    @Published var quickAccessAutoHide: Bool { didSet { d.set(quickAccessAutoHide, forKey: "quickAccessAutoHide") } }
+    /// Anzeigedauer der Karten, frei wählbar.
+    @Published var quickAccessSeconds: Int {
+        didSet {
+            let clamped = quickAccessSeconds.clamped(to: Self.quickAccessSecondsRange)
+            if clamped != quickAccessSeconds { quickAccessSeconds = clamped }
+            d.set(quickAccessSeconds, forKey: "quickAccessSeconds")
+        }
+    }
+    static let quickAccessSecondsRange = 1...3600
     /// 0 = nie automatisch ausblenden.
-    @Published var quickAccessAutoClose: Int { didSet { d.set(quickAccessAutoClose, forKey: "quickAccessAutoClose") } }
+    var quickAccessAutoClose: Int { quickAccessAutoHide ? quickAccessSeconds : 0 }
     @Published var openEditorAfterCapture: Bool { didSet { d.set(openEditorAfterCapture, forKey: "openEditorAfterCapture") } }
     @Published var playSound: Bool { didSet { d.set(playSound, forKey: "playSound") } }
     @Published var recordingFPS: Int { didSet { d.set(recordingFPS, forKey: "recordingFPS") } }
@@ -80,7 +91,11 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
         saveFolderPath = d.string(forKey: "saveFolder") ?? pictures.appendingPathComponent("Knips").path
         copyToClipboard = d.object(forKey: "copyToClipboard") as? Bool ?? true
         showQuickAccess = d.object(forKey: "showQuickAccess") as? Bool ?? true
-        quickAccessAutoClose = d.object(forKey: "quickAccessAutoClose") as? Int ?? 0
+        // Bis 09.10.2026 eine feste Auswahl (0 = nie) unter „quickAccessAutoClose“.
+        let legacyAutoClose = d.object(forKey: "quickAccessAutoClose") as? Int ?? 0
+        quickAccessAutoHide = d.object(forKey: "quickAccessAutoHide") as? Bool ?? (legacyAutoClose > 0)
+        quickAccessSeconds = (d.object(forKey: "quickAccessSeconds") as? Int ?? (legacyAutoClose > 0 ? legacyAutoClose : 10))
+            .clamped(to: Self.quickAccessSecondsRange)
         openEditorAfterCapture = d.object(forKey: "openEditorAfterCapture") as? Bool ?? false
         playSound = d.object(forKey: "playSound") as? Bool ?? true
         recordingFPS = d.object(forKey: "recordingFPS") as? Int ?? 30

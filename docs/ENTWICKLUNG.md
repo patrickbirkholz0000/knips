@@ -34,7 +34,7 @@ nach jedem Build neu erteilt werden.
 | `render` | Renderer: alle Werkzeuge, Zensurstile, Zuschnitt → PNG |
 | `detect` | Auto-Zensur (Vision + Muster) am Testbild |
 | `ui` / `selection` | Karten, Einstellungen, Auswahl-Overlay offscreen |
-| `cards` | Klicks auf eine Karte als echte Mausereignisse: Fläche öffnet, jeder Knopf nur seine Aktion |
+| `cards` | Klicks auf eine Karte als echte Mausereignisse: Fläche öffnet, jeder Knopf nur seine Aktion; Raster mit mehreren Spalten trifft die richtige Karte |
 | `live` | Bild- und Video-Editor als echtes Fenster, 1 pt in der Bildschirmecke, per SCK fotografiert |
 | `settings [bereich,…]` | Einstellungsfenster (Stil Systemeinstellungen) je Bereich, inkl. Kürzel-Eingabe und Eintippen der Anzeigedauer |
 | `output` | Ausgabe 1× + PNG/JPEG, Rahmen, Speichern aus dem Editor, „Text kopieren“ ohne Zensiertes |
@@ -75,6 +75,8 @@ rückgängig in Einstellungen → Tastaturkurzbefehle).
 Karten unten links: Klick irgendwo auf die Karte öffnet sie (Bild-/Video-Editor, GIF in der Standard-App), die Knöpfe
 darauf haben Vorrang. Ausblenden nach frei wählbaren Sekunden (1–3600, `quickAccessAutoHide` + `quickAccessSeconds`,
 alter Schlüssel `quickAccessAutoClose` wird beim Start übernommen); unter der Maus nie.
+Ist die Spalte bis zur Bildschirmhöhe voll, stapeln sich neue Karten rechts daneben weiter (`QuickAccessController.grid`,
+`cardOrigin`; 2048×1028-pt-Bildschirm: 6 hoch, 8 Spalten). Erst wenn auch die Breite voll ist, fällt die älteste weg.
 Zensur: Standard „Balken“, Editor startet mit dem Zensur-Werkzeug. Auto-Zensur-Knopf ist standardmäßig aus.
 Im Overlay: Leertaste = Fenstermodus, ⏎ = ganzer Bildschirm, Esc = Abbruch, ⇧ = Quadrat.
 URL-Befehle: `knips://area|window|fullscreen|record|last|text|scroll|pin|menu|history|settings`.

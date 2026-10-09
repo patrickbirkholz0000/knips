@@ -254,6 +254,27 @@ import Vision
         panelWindow.contentView = backdrop
         try snapshot(backdrop, out.appendingPathComponent("ui-karten.png"))
 
+        // Volle Spalte (hier 3 Karten hoch): weitere Karten stapeln sich rechts daneben.
+        var extra: [CaptureItem] = []
+        for (w, h) in [(1400, 880), (1600, 700), (900, 1200)] {
+            let more = try store.addImage(sampleImage(width: w, height: h), scale: 2)
+            await store.waitUntilWritten(more.id)
+            extra.append(more)
+        }
+        let gridModel = QuickAccessModel()
+        gridModel.cards = [video, saved] + extra
+        gridModel.rows = 3
+        gridModel.hovered = extra.last?.id
+        let gridHost = NSHostingView(rootView: QuickAccessRoot(model: gridModel, actions: QuickAccessController.shared.actions))
+        gridHost.frame = NSRect(origin: .zero, size: QuickAccessController.panelSize(cards: gridModel.cards.count, rows: gridModel.rows))
+        gridHost.appearance = NSAppearance(named: .darkAqua)
+        let gridBackdrop = NSView(frame: gridHost.frame)
+        gridBackdrop.wantsLayer = true
+        gridBackdrop.layer?.backgroundColor = backdrop.layer?.backgroundColor
+        gridBackdrop.addSubview(gridHost)
+        let gridWindow = NSWindow(contentRect: gridHost.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        gridWindow.contentView = gridBackdrop
+        try snapshot(gridBackdrop, out.appendingPathComponent("ui-karten-spalten.png"))
     }
 
     static func selection(_ out: URL) throws {
@@ -468,8 +489,10 @@ import Vision
         let item = try store.addImage(sampleImage(), scale: 2)
         await store.waitUntilWritten(item.id)
         var calls: [String] = []
+        var opened: UUID?
         let log: (String) -> (CaptureItem) -> Void = { name in { _ in calls.append(name) } }
-        let actions = QuickAccessActions(copy: log("kopieren"), open: log("öffnen"), pin: log("anpinnen"), reveal: log("finder"),
+        let open: (CaptureItem) -> Void = { calls.append("öffnen"); opened = $0.id }
+        let actions = QuickAccessActions(copy: log("kopieren"), open: open, pin: log("anpinnen"), reveal: log("finder"),
                                          copyText: log("text"), delete: log("löschen"), close: log("schließen"),
                                          closeAll: { calls.append("alle") })
         let model = QuickAccessModel()
@@ -507,6 +530,44 @@ import Vision
             try click(panel, at: c.point)
             let ok = calls == [c.expected]
             print("   \(ok ? "ok    " : "FALSCH") \(c.name): \(calls.isEmpty ? "nichts" : calls.joined(separator: ", "))")
+            if !ok { failed.append(c.name) }
+        }
+
+        // Zwei Karten pro Spalte, fünf Karten: links [0, 1], Mitte [2, 3], rechts nur [4] — unten.
+        var stack = [item]
+        for _ in 0..<4 {
+            let more = try store.addImage(sampleImage(), scale: 2)
+            await store.waitUntilWritten(more.id)
+            stack.append(more)
+        }
+        model.cards = stack
+        model.rows = 2
+        model.hovered = nil
+        let gridSize = QuickAccessController.panelSize(cards: stack.count, rows: 2)
+        let stride = CGSize(width: card.width + QuickAccessController.spacing, height: card.height + QuickAccessController.spacing)
+        let expectedSize = CGSize(width: 3 * stride.width - QuickAccessController.spacing + 2 * pad,
+                                  height: 2 * stride.height - QuickAccessController.spacing + QuickAccessController.headerHeight + 2 * pad)
+        if gridSize != expectedSize { failed.append("Panelgröße \(gridSize) statt \(expectedSize)") }
+        panel.setContentSize(gridSize)
+        try await windowShot(panel, out.appendingPathComponent("karten-spalten.png"))
+        let gridCases: [(name: String, point: CGPoint, expected: Int?)] = [
+            ("links oben = älteste", CGPoint(x: pad + 30, y: pad + stride.height + 30), 0),
+            ("links unten", CGPoint(x: pad + 30, y: pad + 30), 1),
+            ("Mitte oben", CGPoint(x: pad + stride.width + 30, y: pad + stride.height + 30), 2),
+            ("Mitte unten", CGPoint(x: pad + stride.width + 30, y: pad + 30), 3),
+            ("rechts unten = neueste", CGPoint(x: pad + 2 * stride.width + 30, y: pad + 30), 4),
+            ("rechts oben leer", CGPoint(x: pad + 2 * stride.width + 30, y: pad + stride.height + 30), nil),
+            ("Spalt zwischen Spalten", CGPoint(x: pad + card.width + QuickAccessController.spacing / 2, y: pad + 30), nil),
+        ]
+        for c in gridCases {
+            calls.removeAll()
+            opened = nil
+            let hit = QuickAccessController.cardIndex(at: c.point, of: stack.count, rows: 2)
+            pumpEvents(for: 0.25)
+            try click(panel, at: c.point)
+            let clicked = opened.flatMap { id in stack.firstIndex { $0.id == id } }
+            let ok = hit == c.expected && clicked == c.expected && calls == (c.expected == nil ? [] : ["öffnen"])
+            print("   \(ok ? "ok    " : "FALSCH") \(c.name): Hover \(hit.map(String.init) ?? "–"), Klick \(clicked.map(String.init) ?? "–")")
             if !ok { failed.append(c.name) }
         }
         panel.orderOut(nil)

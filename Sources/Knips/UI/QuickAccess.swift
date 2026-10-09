@@ -12,7 +12,8 @@ import UniformTypeIdentifiers
     static let spacing: CGFloat = 10
     static let padding: CGFloat = 16
     static let headerHeight: CGFloat = 30
-    static let maxCards = 5
+    /// Abstand des Panels zum Rand des sichtbaren Bildschirmbereichs.
+    static let margin: CGFloat = 4
 
     let model = QuickAccessModel()
     private var panel: QuickAccessPanel?
@@ -97,9 +98,12 @@ import UniformTypeIdentifiers
 
     func show(_ item: CaptureItem, on screen: NSScreen) {
         self.screen = screen
+        let grid = Self.grid(in: screen.visibleFrame)
+        model.rows = grid.rows
         model.cards.removeAll { $0.id == item.id }
         model.cards.append(item)
-        while model.cards.count > Self.maxCards {
+        // Erst wenn auch nebeneinander nichts mehr passt, fällt die älteste Karte weg.
+        while model.cards.count > grid.rows * grid.columns {
             let old = model.cards.removeFirst()
             timers[old.id]?.cancel()
         }
@@ -179,11 +183,37 @@ import UniformTypeIdentifiers
         hosting = host
     }
 
-    static func panelSize(cards n: Int) -> CGSize {
+    /// Karten pro Spalte (bis zur Bildschirmhöhe) und Spalten nebeneinander (bis zur Bildschirmbreite).
+    static func grid(in visibleFrame: CGRect) -> (rows: Int, columns: Int) {
+        let height = visibleFrame.height - 2 * margin - headerHeight - 2 * padding + spacing
+        let width = visibleFrame.width - 2 * margin - 2 * padding + spacing
+        return (max(1, Int(height / (cardSize.height + spacing))), max(1, Int(width / (cardSize.width + spacing))))
+    }
+
+    static func panelSize(cards n: Int, rows: Int = .max) -> CGSize {
         guard n > 0 else { return .zero }
+        let rows = max(1, rows)
+        let tall = min(n, rows)
+        let columns = (n - 1) / rows + 1
         let header = n > 1 ? headerHeight : 0
-        return CGSize(width: cardSize.width + 2 * padding,
-                      height: CGFloat(n) * cardSize.height + CGFloat(n - 1) * spacing + header + 2 * padding)
+        return CGSize(width: CGFloat(columns) * cardSize.width + CGFloat(columns - 1) * spacing + 2 * padding,
+                      height: CGFloat(tall) * cardSize.height + CGFloat(tall - 1) * spacing + header + 2 * padding)
+    }
+
+    /// Lage der Karte `index` im Panel, Ursprung unten links. Ist eine Spalte voll, stapeln sich
+    /// neue Karten rechts daneben weiter; in jeder Spalte sitzt die neueste unten.
+    static func cardOrigin(_ index: Int, of n: Int, rows: Int) -> CGPoint {
+        let rows = max(1, rows)
+        let column = index / rows
+        let inColumn = min(rows, n - column * rows)
+        let fromBottom = inColumn - 1 - index % rows
+        return CGPoint(x: padding + CGFloat(column) * (cardSize.width + spacing),
+                       y: padding + CGFloat(fromBottom) * (cardSize.height + spacing))
+    }
+
+    /// Karte unter einem Punkt im Panel (Ursprung unten links).
+    static func cardIndex(at point: CGPoint, of n: Int, rows: Int) -> Int? {
+        (0..<n).first { CGRect(origin: cardOrigin($0, of: n, rows: rows), size: cardSize).contains(point) }
     }
 
     private func layout(animated: Bool) {
@@ -191,9 +221,9 @@ import UniformTypeIdentifiers
         let n = model.cards.count
         if n == 0 { panel.orderOut(nil); return }
         let screen = screen ?? NSScreen.withMouse
-        let size = Self.panelSize(cards: n)
+        let size = Self.panelSize(cards: n, rows: model.rows)
         let vf = screen.visibleFrame
-        let frame = NSRect(x: vf.minX + 4, y: vf.minY + 4, width: size.width, height: size.height)
+        let frame = NSRect(x: vf.minX + Self.margin, y: vf.minY + Self.margin, width: size.width, height: size.height)
         panel.setFrame(frame, display: true, animate: false)
         if !panel.isVisible { panel.orderFrontRegardless() }
     }
@@ -213,6 +243,8 @@ struct QuickAccessActions {
 @MainActor final class QuickAccessModel: ObservableObject {
     /// Älteste zuerst — die neueste Karte sitzt unten, am nächsten an der Ecke.
     @Published var cards: [CaptureItem] = []
+    /// Karten pro Spalte, aus der Höhe des Bildschirms (`QuickAccessController.grid`).
+    @Published var rows = Int.max
     @Published var hovered: UUID?
     @Published var headerHovered = false
     @Published var flashed: UUID?
@@ -266,23 +298,16 @@ final class QuickAccessHostingView: NSHostingView<QuickAccessRoot> {
 
     private func updateHover(_ event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        let yFromTop = isFlipped ? p.y : bounds.height - p.y
+        let point = CGPoint(x: p.x, y: isFlipped ? bounds.height - p.y : p.y)
+        let yFromTop = bounds.height - point.y
         onMainActor {
             guard let model else { return }
             let n = model.cards.count
-            let header = n > 1 ? QuickAccessController.headerHeight : 0
-            var y = yFromTop - QuickAccessController.padding - header
-            model.headerHovered = n > 1 && yFromTop < QuickAccessController.padding + header
-            let x = p.x - QuickAccessController.padding
-            guard x >= 0, x <= QuickAccessController.cardSize.width, y >= 0 else { model.hovered = nil; return }
-            let stride = QuickAccessController.cardSize.height + QuickAccessController.spacing
-            let index = Int(y / stride)
-            y -= CGFloat(index) * stride
-            if index < n, y <= QuickAccessController.cardSize.height {
-                model.hovered = model.cards[index].id
-            } else {
-                model.hovered = nil
-            }
+            let pad = QuickAccessController.padding
+            // „Alle schließen“ steht über der ersten Spalte.
+            model.headerHovered = n > 1 && yFromTop < pad + QuickAccessController.headerHeight
+                && point.x >= pad && point.x <= pad + QuickAccessController.cardSize.width
+            model.hovered = QuickAccessController.cardIndex(at: point, of: n, rows: model.rows).map { model.cards[$0].id }
         }
     }
 }
@@ -292,8 +317,20 @@ struct QuickAccessRoot: View {
     let actions: QuickAccessActions
 
     var body: some View {
-        VStack(spacing: QuickAccessController.spacing) {
-            if model.cards.count > 1 {
+        let n = model.cards.count
+        // Von unten links aus angeordnet wie das Panel selbst: Wächst es, bleiben die Karten stehen.
+        ZStack(alignment: .bottomLeading) {
+            Color.clear
+            ForEach(Array(model.cards.enumerated()), id: \.element.id) { index, item in
+                let origin = QuickAccessController.cardOrigin(index, of: n, rows: model.rows)
+                QuickAccessCard(item: item, hovered: model.hovered == item.id, flashed: model.flashed == item.id, actions: actions)
+                    .offset(x: origin.x, y: -origin.y)
+                    .transition(.asymmetric(insertion: .move(edge: .leading).combined(with: .opacity),
+                                            removal: .move(edge: .leading).combined(with: .opacity)))
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            if n > 1 {
                 HStack {
                     Spacer()
                     Button { actions.closeAll() } label: {
@@ -308,17 +345,14 @@ struct QuickAccessRoot: View {
                     .buttonStyle(.plain)
                     .opacity(model.headerHovered || model.hovered != nil ? 1 : 0.0)
                 }
-                .frame(height: QuickAccessController.headerHeight - QuickAccessController.spacing)
-            }
-            ForEach(model.cards) { item in
-                QuickAccessCard(item: item, hovered: model.hovered == item.id, flashed: model.flashed == item.id, actions: actions)
-                    .transition(.asymmetric(insertion: .move(edge: .leading).combined(with: .opacity),
-                                            removal: .move(edge: .leading).combined(with: .opacity)))
+                .frame(width: QuickAccessController.cardSize.width,
+                       height: QuickAccessController.headerHeight - QuickAccessController.spacing)
+                .padding([.top, .leading], QuickAccessController.padding)
             }
         }
-        .padding(QuickAccessController.padding)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.spring(duration: 0.3, bounce: 0.15), value: model.cards)
+        .animation(.spring(duration: 0.3, bounce: 0.15), value: model.rows)
         .animation(.easeOut(duration: 0.12), value: model.hovered)
     }
 }

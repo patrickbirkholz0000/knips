@@ -38,6 +38,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: windows
+          cache-on-failure: true
 
       - name: Abhängigkeiten
         run: pnpm install --frozen-lockfile
@@ -48,12 +49,12 @@ jobs:
       - name: Kern-Tests
         run: cargo test -p knips-core
 
-      - name: Texterkennung (Sprachpakete) und Media Foundation
+      # Die Texterkennung nimmt die Sprache des Benutzerprofils (auf dem Runner en-US); das deutsche
+      # Paket nachzuinstallieren kostete 18 Minuten und wurde nie benutzt.
+      - name: Texterkennung (Sprachpaket) und Media Foundation
         continue-on-error: true
         run: |
-          foreach ($lang in "de-DE", "en-US") {
-            Add-WindowsCapability -Online -Name "Language.OCR~~~$lang~0.0.1.0" | Out-String | Write-Host
-          }
+          Add-WindowsCapability -Online -Name "Language.OCR~~~en-US~0.0.1.0" | Out-String | Write-Host
           Get-WindowsFeature Server-Media-Foundation | Out-String | Write-Host
           Install-WindowsFeature Server-Media-Foundation | Out-String | Write-Host
 

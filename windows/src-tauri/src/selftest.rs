@@ -126,13 +126,36 @@ fn detect(out: &Path) -> Result<()> {
         outline(&mut marked, &f.rect, [255, 40, 40, 255]);
     }
     write(&marked, &out.join("detect-funde.png"))?;
+    ocr_variants(&img, &lines);
     let kinds: BTreeSet<_> = findings.iter().map(|f| f.kind).collect();
     for want in [SensitiveKind::Email, SensitiveKind::Iban, SensitiveKind::Phone, SensitiveKind::Secret] {
         if !kinds.contains(&want) {
             bail!("{want:?} nicht gefunden");
         }
     }
+    // Der ganze Schlüssel muss verdeckt sein — auch wenn die Texterkennung seinen Anfang verliert:
+    // vom Bezeichner „Stripe-Key:“ bis zum Zeilenende.
+    let line = lines.iter().find(|l| l.text.contains("Stripe")).context("Zeile mit dem Stripe-Key fehlt")?;
+    let label_end = line.words.first().map(|w| w.rect.max_x()).unwrap_or(0.0);
+    let covered = findings
+        .iter()
+        .any(|f| f.kind == SensitiveKind::Secret && f.rect.x <= label_end + 1.0 && f.rect.max_x() >= line.rect.max_x() - 2.0);
+    if !covered {
+        bail!("Stripe-Key nicht vollständig verdeckt");
+    }
     Ok(())
+}
+
+/// Diagnose: liest die Windows-Texterkennung die Schlüssel-Zeile vergrößert vollständiger?
+fn ocr_variants(img: &RgbaImage, lines: &[knips_core::model::TextLine]) {
+    let Some(line) = lines.iter().find(|l| l.text.contains("Stripe")) else { return };
+    let r = line.rect.inset(-12.0, -8.0).integral();
+    let Some(cut) = imageops::crop(img, IRect::new(r.x as i32, r.y as i32, r.width as i32, r.height as i32)) else { return };
+    for factor in [1u32, 2, 3] {
+        let big = image::imageops::resize(&cut, cut.width() * factor, cut.height() * factor, image::imageops::FilterType::CatmullRom);
+        let text = ocr::recognize(&big).map(|ls| ls.iter().map(|l| l.text.clone()).collect::<Vec<_>>().join(" / ")).unwrap_or_else(|e| format!("Fehler: {e:#}"));
+        println!("   Zeile {factor}×: {text}");
+    }
 }
 
 // ------------------------------------------------------------------ output
@@ -564,6 +587,7 @@ fn track(out: &Path) -> Result<()> {
         let truth = Rect::new(300.0, truth_y, 320.0, 40.0);
         worst = worst.max((p.rect.mid_y() - truth.mid_y()).abs());
         if p.rect.intersection(&truth).area() < truth.area() * 0.95 {
+            println!("   nicht verdeckt bei {:.3} s (Bild {frame}): Balken y {:.0}–{:.0}, Inhalt y {truth_y:.0}–{:.0}", p.time, p.rect.y, p.rect.max_y(), truth.max_y());
             uncovered += 1;
         }
     }

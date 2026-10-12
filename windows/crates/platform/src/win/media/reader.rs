@@ -116,7 +116,13 @@ pub struct FrameReader {
     cur: Option<Cur>,
     ahead: Option<(i64, IMFSample)>,
     eos: bool,
+    /// Zeitstempel des ersten Bildes. Ohne Edit-Liste (B-Bilder) beginnt ein Video bei 1/fps statt 0;
+    /// wie AVFoundation auf dem Mac zählt das erste Bild als 0.
+    base: i64,
 }
+
+/// Größter Versatz des ersten Bildes, der als Umordnung gilt (später beginnende Spuren bleiben).
+const MAX_BASE: i64 = pure::TICKS / 2;
 
 // SAFETY: Reader ist MTA-fähig; `FrameReader` wird nur über `&mut self` benutzt.
 unsafe impl Send for FrameReader {}
@@ -125,7 +131,17 @@ impl FrameReader {
     pub fn open(path: &Path, max_size: Option<u32>) -> Result<Self> {
         let _com = enter()?;
         let (reader, m) = open_rgb(path)?;
-        Ok(Self { reader, w: m.w, h: m.h, max_size, cur: None, ahead: None, eos: false })
+        let mut me = Self { reader, w: m.w, h: m.h, max_size, cur: None, ahead: None, eos: false, base: 0 };
+        match me.read_next()? {
+            Some((ts, sample)) => {
+                if ts > 0 && ts <= MAX_BASE {
+                    me.base = ts;
+                }
+                me.ahead = Some((ts - me.base, sample));
+            }
+            None => me.eos = true,
+        }
+        Ok(me)
     }
 
     pub(super) fn size(&self) -> (u32, u32) {
@@ -151,7 +167,7 @@ impl FrameReader {
                 }
             }
             if let Some(s) = sample {
-                return Ok(Some((ts, s)));
+                return Ok(Some((ts - self.base, s)));
             }
             if flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0 {
                 return Ok(None);
@@ -163,7 +179,7 @@ impl FrameReader {
         self.cur = None;
         self.ahead = None;
         self.eos = false;
-        let pv = PROPVARIANT::from(ticks.max(0));
+        let pv = PROPVARIANT::from(ticks.max(0) + self.base);
         // SAFETY: GUID_NULL = Zeitformat 100 ns; `pv` lebt über den Aufruf.
         unsafe { self.reader.SetCurrentPosition(&windows::core::GUID::zeroed(), &pv) }.ctx("Springen im Video")
     }

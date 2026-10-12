@@ -233,8 +233,22 @@ pub fn window_image(w: &WindowInfo) -> Result<RgbaImage> {
 }
 
 /// Eigenes Fenster fotografieren (Selbsttests). Darf nicht ausgeschlossen sein.
+/// Rahmenlose, nicht aktivierbare Leisten (Karten, Menü, Einblendung …) lehnt Graphics Capture mit
+/// E_INVALIDARG ab — die werden aus dem Bildschirmbild ausgeschnitten (sie liegen immer obenauf).
 pub fn own_window_image(handle: isize) -> Result<RgbaImage> {
-    window_capture(handle, None)
+    window_capture(handle, None).or_else(|err| {
+        log::debug!("Graphics Capture lehnt Fenster ab ({err:#}), schneide es aus dem Bildschirm aus");
+        screen_cut(handle).map_err(|e| anyhow!("{err:#}; Bildschirmausschnitt: {e:#}"))
+    })
+}
+
+fn screen_cut(handle: isize) -> Result<RgbaImage> {
+    let r = frame_bounds(hwnd(handle)).ok_or_else(|| anyhow!("Fensterrahmen unbekannt"))?;
+    let overlap = |m: &Monitor| m.rect.intersection(&r).map(|i| i.width as i64 * i.height as i64).unwrap_or(0);
+    let m = crate::monitors::list().into_iter().max_by_key(overlap).ok_or_else(|| anyhow!("kein Bildschirm"))?;
+    let local = r.offset(-m.rect.x, -m.rect.y);
+    let shot = freeze_one(&m)?;
+    knips_core::imageops::crop(&shot, local).ok_or_else(|| anyhow!("Fenster liegt außerhalb des Bildschirms"))
 }
 
 // ---------------------------------------------------------------- Bereichsaufnahme

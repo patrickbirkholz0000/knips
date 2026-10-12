@@ -26,7 +26,10 @@ fn patterns() -> &'static [(SensitiveKind, Regex)] {
             (Secret, r"\bAKIA[0-9A-Z]{16}\b"),
             (Secret, r"\bAIza[0-9A-Za-z_\-]{30,}"),
             (Secret, r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{4,}"),
-            (Secret, r"(?i)(?:passwor[dt]|password|pwd|secret|token|api[_ -]?key)\s*[:=]\s*\S{4,}"),
+            // Wie auf dem Mac, dazu „…-Key:“ und „Schlüssel:“ als Bezeichner: die Windows-Texterkennung
+            // verliert bei Schlüsseln mit Unterstrichen gern den Anfang („sk_live_51…“), der Rest
+            // hängt dann nur noch am Bezeichner.
+            (Secret, r"(?i)(?:passwor[dt]|password|pwd|secret|token|api[_ -]?key|\bkey|schl[üu]ssel)\s*[:=]\s*\S{4,}"),
             (Card, r"\b(?:\d[ \-]?){12,18}\d\b"),
             (Phone, r"(?:\+|00)[1-9][0-9 ()/.\-]{7,}[0-9]"),
             (Phone, r"\b0[1-9][0-9]{1,4}[ /\-]?[0-9]{3,}(?:[ \-]?[0-9]{2,})*\b"),
@@ -243,6 +246,9 @@ mod tests {
         assert_eq!(only(jwt), vec![(Secret, jwt.into())]);
         assert_eq!(only("Passwort: hunter22"), vec![(Secret, "Passwort: hunter22".into())]);
         assert_eq!(only("API_KEY=abcd1234"), vec![(Secret, "API_KEY=abcd1234".into())]);
+        assert_eq!(only("Stripe-key: HxQ2aBcDeFgHiJkLmNoPqRsTu"), vec![(Secret, "key: HxQ2aBcDeFgHiJkLmNoPqRsTu".into())]);
+        assert_eq!(only("Lizenzschlüssel: ABCD-EFGH"), vec![(Secret, "schlüssel: ABCD-EFGH".into())]);
+        assert!(only("Hotkey: Strg+Druck").is_empty());
         // generisch: >= 28 Zeichen, >= 4 Ziffern, >= 8 Buchstaben
         assert_eq!(kinds_of("d41d8cd98f00b204e9800998ecf8427e1234"), vec![Secret]);
         assert!(kinds_of("abcdefghijklmnopqrstuvwxyzabcdefgh").is_empty()); // keine Ziffern

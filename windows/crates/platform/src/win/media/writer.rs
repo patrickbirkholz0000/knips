@@ -101,19 +101,23 @@ impl Mp4Writer {
             set_bt709(&out)?;
             let video = sw.AddStream(&out).ctx("Videospur")?;
 
-            // Eingangstyp NV12; Encoder-Parameter (GOP, Bitrate). Manche Hardware-Encoder lehnen
-            // einzelne Parameter ab → zweiter Versuch ohne.
+            // Eingangstyp NV12; Encoder-Parameter (GOP, Bitrate, keine B-Bilder). Manche Hardware-Encoder
+            // lehnen einzelne Parameter ab → zweiter Versuch ohne. B-Bilder ausdrücklich aus: der
+            // MPEG-4-Schreiber legt sonst keine Edit-Liste an, alle Zeitstempel rutschen um ein Bild nach
+            // hinten (erstes Bild bei 1/fps statt 0, Bild ein Bild später als der Ton).
             let inp = video_type(&MFVideoFormat_NV12, spec.w, spec.h, spec.fps)?;
             inp.SetUINT32(&MF_MT_DEFAULT_STRIDE, spec.w).ctx("Stride")?;
             set_bt709(&inp)?;
-            let params = new_attrs(4)?;
+            let params = new_attrs(5)?;
             params.SetUINT32(&CODECAPI_AVEncMPVGOPSize, pure::gop(spec.fps)).ctx("GOP")?;
+            params.SetUINT32(&CODECAPI_AVEncMPVDefaultBPictureCount, 0).ctx("B-Bilder")?;
             params.SetUINT32(&CODECAPI_AVEncCommonRateControlMode, eAVEncCommonRateControlMode_UnconstrainedVBR.0 as u32).ctx("Ratenregelung")?;
             params.SetUINT32(&CODECAPI_AVEncCommonMeanBitRate, spec.bitrate).ctx("Mittlere Bitrate")?;
             if let Err(e) = sw.SetInputMediaType(video, &inp, &params) {
                 log::warn!("Encoder-Parameter abgelehnt ({e}), neuer Versuch ohne");
-                let params2 = new_attrs(1)?;
+                let params2 = new_attrs(2)?;
                 params2.SetUINT32(&CODECAPI_AVEncMPVGOPSize, pure::gop(spec.fps)).ctx("GOP")?;
+                params2.SetUINT32(&CODECAPI_AVEncMPVDefaultBPictureCount, 0).ctx("B-Bilder")?;
                 if sw.SetInputMediaType(video, &inp, &params2).is_err() {
                     sw.SetInputMediaType(video, &inp, None::<&IMFAttributes>).ctx("Videoeingang")?;
                 }

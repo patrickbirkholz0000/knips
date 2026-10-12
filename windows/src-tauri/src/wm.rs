@@ -20,6 +20,9 @@ pub struct Spec {
     pub decorated: bool,
     pub dark: bool,
     pub resizable: bool,
+    /// Darf den Fokus bekommen. Karten, Einblendung und Leisten nicht — sonst verliert die App,
+    /// in der gearbeitet wird, beim Erscheinen den Fokus.
+    pub focusable: bool,
 }
 
 impl Spec {
@@ -35,6 +38,7 @@ impl Spec {
             decorated: false,
             dark: true,
             resizable: false,
+            focusable: false,
         }
     }
 
@@ -49,6 +53,7 @@ impl Spec {
             decorated: true,
             dark: false,
             resizable: true,
+            focusable: true,
         }
     }
 }
@@ -87,6 +92,7 @@ pub fn ensure(app: &AppHandle, spec: &Spec) -> Result<WebviewWindow> {
             .skip_taskbar(true)
             .shadow(false)
             .focused(false)
+            .focusable(spec.focusable)
             .maximizable(false)
             .minimizable(false);
     } else {

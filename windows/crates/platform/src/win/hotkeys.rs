@@ -142,20 +142,28 @@ fn extended(vk: u16) -> bool {
     matches!(vk, v if v == VK_RMENU.0 || v == VK_RCONTROL.0 || v == VK_RWIN.0 || v == VK_LWIN.0)
 }
 
+/// Kennung in `dwExtraInfo` für Tasten, die Knips selbst sendet — nur diese ignoriert der Hook.
+/// Fremde simulierte Tasten (Stream Deck, AutoHotkey, Selbsttest) lösen Kürzel wie echte aus.
+const OWN_INJECT: usize = 0x4B4E_5053;
+
 fn key_input(vk: u16, up: bool) -> INPUT {
+    key_input_with(vk, up, OWN_INJECT)
+}
+
+fn key_input_with(vk: u16, up: bool, extra: usize) -> INPUT {
     let mut flags = if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) };
     if extended(vk) {
         flags |= KEYEVENTF_EXTENDEDKEY;
     }
     INPUT {
         r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VIRTUAL_KEY(vk), wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 } },
+        Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VIRTUAL_KEY(vk), wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: extra } },
     }
 }
 
 /// Key-Up in eine Strg-Hülle packen (Strg↓, Taste↑, Strg↑): Windows sieht dann kein „sauberes“
 /// Win-/Alt-Loslassen und öffnet weder Startmenü noch Menüleiste. Hält der Nutzer Strg, entfällt das
-/// abschließende Strg↑. Der Hook ignoriert injizierte Ereignisse, also keine Rekursion.
+/// abschließende Strg↑. Der Hook ignoriert die eigenen injizierten Ereignisse, also keine Rekursion.
 fn send_wrapped_key_up(vk: u32) {
     let ctrl_held = key_down_now(VK_CONTROL.0);
     let inputs = [key_input(VK_CONTROL.0, false), key_input(vk as u16, true), key_input(VK_CONTROL.0, true)];
@@ -255,8 +263,9 @@ unsafe extern "system" fn hook_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESUL
     if code == HC_ACTION as i32 {
         // SAFETY: Bei HC_ACTION zeigt lParam auf eine gültige KBDLLHOOKSTRUCT.
         let kb = unsafe { &*(lp.0 as *const KBDLLHOOKSTRUCT) };
-        // Eigene (und fremde) injizierte Ereignisse zählen nicht und werden nie geschluckt.
-        if !kb.flags.contains(LLKHF_INJECTED) {
+        // Eigene injizierte Ereignisse zählen nicht und werden nie geschluckt.
+        let own = kb.flags.contains(LLKHF_INJECTED) && kb.dwExtraInfo == OWN_INJECT;
+        if !own {
             let msg = wp.0 as u32;
             let down = matches!(msg, WM_KEYDOWN | WM_SYSKEYDOWN);
             let up = matches!(msg, WM_KEYUP | WM_SYSKEYUP);
@@ -653,4 +662,21 @@ pub fn set_snipping_key(enabled: bool) -> Result<()> {
         SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, WPARAM(0), LPARAM(area.as_ptr() as isize), SMTO_ABORTIFHUNG, 1000, None);
     }
     Ok(())
+}
+
+/// Tastenkombination simulieren wie von der Tastatur (Selbsttest `hotkeys`).
+pub fn simulate(combo: KeyCombo) {
+    let mods: Vec<u16> = [(MOD_WIN, VK_LWIN.0), (MOD_CONTROL, VK_CONTROL.0), (MOD_ALT, VK_MENU.0), (MOD_SHIFT, VK_SHIFT.0)]
+        .into_iter()
+        .filter(|(m, _)| combo.mods & m != 0)
+        .map(|(_, vk)| vk)
+        .collect();
+    let mut inputs: Vec<INPUT> = mods.iter().map(|vk| key_input_with(*vk, false, 0)).collect();
+    inputs.push(key_input_with(combo.vk as u16, false, 0));
+    inputs.push(key_input_with(combo.vk as u16, true, 0));
+    inputs.extend(mods.iter().rev().map(|vk| key_input_with(*vk, true, 0)));
+    // SAFETY: inputs ist ein gültiges Feld von INPUT-Strukturen.
+    unsafe {
+        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    }
 }

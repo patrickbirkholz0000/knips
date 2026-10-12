@@ -54,6 +54,7 @@ impl Pins {
         let k = knips();
         let mut spec = wm::Spec::floating(&format!("pin-{n}"), &format!("pin/{n}"), size);
         spec.resizable = true;
+        spec.focusable = true;
         let window = wm::ensure(&k.app, &spec)?;
         let (cx, cy) = monitors::cursor_pos();
         let (pw, ph) = ((size.0 * m.scale) as i32, (size.1 * m.scale) as i32);

@@ -2,6 +2,8 @@
 
 Screenshot- und Bildschirmaufnahme-App als native Swift-Menüleisten-App, macOS 14+.
 
+**Windows-Fassung** (Tauri 2 + Rust + React, 1:1 nach dieser App) liegt in `windows/` — eigene Anleitung
+`windows/ENTWICKLUNG.md`; geprüft über die GitHub-CI `.github/workflows/windows.yml` auf echtem Windows.
 
 ## Bauen
 

@@ -22,7 +22,7 @@ Auf Windows (Rust MSVC + Node 22 + pnpm):
 ```
 pnpm install
 pnpm tauri build                                   # Installer: target\release\bundle\nsis\Knips_*_x64-setup.exe
-cargo build --release -p knips --features dev      # mit Selbsttests
+cargo build --release -p knips --features dev,custom-protocol   # mit Selbsttests (ohne custom-protocol lädt die App vom Dev-Server :1430)
 ```
 Auf dem Mac (Attrappe statt Windows-Teilen, nur zum Entwickeln):
 ```
@@ -51,6 +51,8 @@ Alle zusammen: `scripts/selftest.ps1` (macht die CI).
 | `track` | mitlaufender Balken in scrollendem Testvideo deckt zu jedem Zeitpunkt ab |
 | `video` | MP4-Export mit Kürzen + Balken, GIF-Export, Auto-Zensur im Video |
 | `perf` | Zeiten: Standbild, 1×+PNG, Texterkennung |
+| `hotkeys` | Kürzel über RegisterHotKey und Tastatur-Hook mit simulierten Tastendrücken (auch Druck, Win-Kombination) |
+| `clipboard` | echte Zwischenablage: Bild verzögert anbieten (PNG/JPEG) und zurücklesen — nur für die CI |
 | `render` | Renderer der Oberfläche — gleiche Dokumente wie `SelfTest.render` auf dem Mac (Vergleich: `tests/reference/mac-render-*.png`) |
 | `ui` | alle Fenster mit Beispieldaten, je ein Bild (Vergleich: `tests/reference/mac-ui/`) |
 

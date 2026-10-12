@@ -2,7 +2,8 @@
 //! (Feature `dev`). Läuft isoliert in `<ordner>\sandbox` (Ablage, Originale, Einstellungen) und
 //! fasst die echte Zwischenablage nie an.
 //!
-//! Ohne Fenster: detect, output, selection, capture, record [s], track, video, perf.
+//! Ohne Fenster: detect, output, selection, capture, record [s], track, video, perf, hotkeys
+//! (simulierte Tastendrücke), clipboard (echte Zwischenablage, nur für die CI).
 //! Mit Fenstern (startet die App unsichtbar für den Nutzer, fotografiert nur eigene Fenster): ui, render.
 
 use std::collections::BTreeSet;
@@ -52,6 +53,8 @@ pub fn run(args: &[String]) -> Option<i32> {
         "track" => track(&out),
         "video" => video(&out),
         "perf" => perf(),
+        "hotkeys" => hotkeys_test(),
+        "clipboard" => clipboard_test(),
         other => {
             eprintln!("Unbekannter Test: {other}");
             return Some(2);
@@ -314,6 +317,89 @@ fn perf() -> Result<()> {
                 println!("Texterkennung (≤ 2048 px): {} ms, {} Zeilen", t.elapsed().as_millis(), lines.len());
             }
         }
+    }
+    Ok(())
+}
+
+// ------------------------------------------------------------------ hotkeys / clipboard
+
+/// Kürzel über beide Wege: `RegisterHotKey` (Strg+Alt+F9, Alt+Druck) und Tastatur-Hook (Win+Umschalt+4,
+/// Druck solange Windows ihn dem Bildschirmausschnitt gibt). Tasten werden simuliert wie von der Tastatur.
+fn hotkeys_test() -> Result<()> {
+    use knips_core::settings::{KeyCombo, MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, VK_SNAPSHOT};
+    use knips_platform::hotkeys;
+    let (tx, rx) = std::sync::mpsc::channel::<u32>();
+    let tx = parking_lot::Mutex::new(tx);
+    hotkeys::start(Box::new(move |id| {
+        let _ = tx.lock().send(id);
+    }));
+    std::thread::sleep(Duration::from_millis(300));
+    println!("Druck-Taste beim Bildschirmausschnitt: {}", hotkeys::snipping_key_enabled());
+    let bindings = [
+        (1, KeyCombo::new(0x78, MOD_CONTROL | MOD_ALT)),
+        (2, KeyCombo::new(0x34, MOD_WIN | MOD_SHIFT)),
+        (3, KeyCombo::new(VK_SNAPSHOT, MOD_ALT)),
+        (4, KeyCombo::new(VK_SNAPSHOT, MOD_SHIFT)),
+    ];
+    let failed = hotkeys::apply(&bindings);
+    println!("Nicht registrierbar: {failed:?}");
+    let mut missing = vec![];
+    for (id, combo) in bindings {
+        while rx.try_recv().is_ok() {}
+        hotkeys::simulate(combo);
+        match rx.recv_timeout(Duration::from_millis(1500)) {
+            Ok(got) if got == id => println!("   ok     {}", combo.display()),
+            Ok(got) => {
+                println!("   FALSCH {}: Kennung {got}", combo.display());
+                missing.push(combo.display());
+            }
+            Err(_) => {
+                println!("   FALSCH {}: nichts ausgelöst", combo.display());
+                missing.push(combo.display());
+            }
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    // Abgeschaltet: darf nicht mehr auslösen.
+    hotkeys::apply(&[]);
+    while rx.try_recv().is_ok() {}
+    hotkeys::simulate(bindings[0].1);
+    if rx.recv_timeout(Duration::from_millis(800)).is_ok() {
+        missing.push("nach dem Abmelden ausgelöst".into());
+    }
+    if !missing.is_empty() {
+        bail!("Kürzel: {}", missing.join(", "));
+    }
+    Ok(())
+}
+
+/// Echte Zwischenablage (nur auf dem CI-Rechner sinnvoll): Bild verzögert anbieten und zurücklesen.
+fn clipboard_test() -> Result<()> {
+    use knips_platform::clipboard;
+    clipboard::set_disabled(false);
+    let mut failures = vec![];
+    for format in [ImageFormat::Png, ImageFormat::Jpeg] {
+        let img = sample::sample_image(800, 500, 1.0);
+        clipboard::set_image(Arc::new(crate::promise::ImagePromise::of(img.clone(), format)))?;
+        std::thread::sleep(Duration::from_millis(300));
+        match clipboard::get_image() {
+            Some(back) if (back.width(), back.height()) == (800, 500) => {
+                let (a, b) = (img.get_pixel(400, 300).0, back.get_pixel(400, 300).0);
+                let diff: i32 = (0..3).map(|i| (a[i] as i32 - b[i] as i32).abs()).sum();
+                println!("   {format:?}: {}×{} zurückgelesen, Farbabweichung {diff}", back.width(), back.height());
+                if diff > 30 {
+                    failures.push(format!("{format:?}: Farben weichen ab"));
+                }
+            }
+            Some(back) => failures.push(format!("{format:?}: {}×{} statt 800×500", back.width(), back.height())),
+            None => failures.push(format!("{format:?}: kein Bild in der Zwischenablage")),
+        }
+    }
+    clipboard::set_text("Knips Selbsttest äöü")?;
+    clipboard::set_files(&[std::env::temp_dir()])?;
+    clipboard::set_disabled(true);
+    if !failures.is_empty() {
+        bail!(failures.join("; "));
     }
     Ok(())
 }

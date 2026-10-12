@@ -22,7 +22,9 @@ fn now_ms() -> u64 {
 }
 
 pub fn spec() -> wm::Spec {
-    wm::Spec::floating(LABEL, "menu", (WIDTH, 520.0))
+    let mut spec = wm::Spec::floating(LABEL, "menu", (WIDTH, 520.0));
+    spec.focusable = true;
+    spec
 }
 
 fn height() -> f64 {

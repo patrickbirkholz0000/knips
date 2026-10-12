@@ -259,13 +259,12 @@ pub fn open_item(app: &AppHandle, id: Id, tool: Option<String>) {
                 wm::present(&w);
                 return;
             }
-            let info = match k.store.item(id).map(|i| crate::video::VideoJobs::default().open(i.id)) {
-                Some(Ok(session)) => session.info,
-                Some(Err(e)) => {
+            let info = match k.video.open(id) {
+                Ok(session) => session.info,
+                Err(e) => {
                     k.alert("Video konnte nicht geöffnet werden", &format!("{e:#}"));
                     return;
                 }
-                None => return,
             };
             let m = knips_platform::monitors::at_cursor();
             let scale = item.scale.max(1.0);

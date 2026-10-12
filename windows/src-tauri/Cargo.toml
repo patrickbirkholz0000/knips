@@ -36,5 +36,8 @@ dirs = "6"
 
 [features]
 default = []
+# Oberfläche aus der eingebauten Seite statt vom Entwicklungsserver (setzt `pnpm tauri build` selbst;
+# bei `cargo build` angeben).
+custom-protocol = ["tauri/custom-protocol"]
 # Selbsttests und Test-Befehle (wie KNIPS_DEV auf dem Mac). Weitergabe-Builds ohne.
 dev = []

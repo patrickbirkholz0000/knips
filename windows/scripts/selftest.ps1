@@ -3,7 +3,7 @@
 param(
   [string]$Exe = "target/release/knips.exe",
   [string]$Out = "shots",
-  [string[]]$Tests = @("detect", "output", "selection", "capture", "record", "track", "video", "perf", "render", "ui")
+  [string[]]$Tests = @("detect", "output", "selection", "capture", "record", "track", "video", "perf", "hotkeys", "clipboard", "render", "ui")
 )
 $ErrorActionPreference = "Continue"
 New-Item -ItemType Directory -Force -Path $Out | Out-Null

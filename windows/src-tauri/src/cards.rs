@@ -76,9 +76,8 @@ impl Cards {
                 inner.timers.remove(&old.id);
             }
         }
-        if let Ok(window) = wm::ensure(&knips().app, &spec()) {
-            let _ = window.set_ignore_cursor_events(false);
-        }
+        // Fenster existiert (vorgewärmt); gezeigt wird es, sobald die Seite ihre Größe meldet.
+        let _ = wm::ensure(&knips().app, &spec());
         self.publish();
         self.schedule_auto_close(item.id);
     }

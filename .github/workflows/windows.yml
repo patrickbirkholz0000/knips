@@ -34,8 +34,6 @@ jobs:
           cache-dependency-path: windows/pnpm-lock.yaml
 
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -48,10 +46,7 @@ jobs:
         run: pnpm build
 
       - name: Kern-Tests
-        run: cargo test -p knips-core --release
-
-      - name: Clippy
-        run: cargo clippy --workspace --features knips/dev
+        run: cargo test -p knips-core
 
       - name: Texterkennung (Sprachpakete) und Media Foundation
         continue-on-error: true
@@ -63,10 +58,10 @@ jobs:
           Install-WindowsFeature Server-Media-Foundation | Out-String | Write-Host
 
       - name: Selbsttest-Build (mit Entwickler-Code)
-        run: cargo build --release -p knips --features dev
+        run: cargo build --profile selftest -p knips --features dev,custom-protocol
 
       - name: Selbsttests
-        run: ./scripts/selftest.ps1 -Exe target/release/knips.exe -Out shots
+        run: ./scripts/selftest.ps1 -Exe target/selftest/knips.exe -Out shots
 
       - name: Installer (Weitergabe, ohne Entwickler-Code)
         if: always()

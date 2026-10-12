@@ -279,6 +279,11 @@ pub mod hotkeys {
 
     pub fn cancel_record() {}
 
+    /// Tastenkombination simulieren wie von der Tastatur (Selbsttest `hotkeys`).
+    pub fn simulate(combo: KeyCombo) {
+        let _ = combo;
+    }
+
     /// „Druck-Taste zum Öffnen der Bildschirmausschnitterstellung verwenden“ (Windows 11).
     pub fn snipping_key_enabled() -> bool {
         false

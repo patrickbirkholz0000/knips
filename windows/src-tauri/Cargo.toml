@@ -1,0 +1,44 @@
+[package]
+name = "knips"
+description = "Knips — Screenshots und Bildschirmaufnahmen mit Zensur (Windows)"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+default-run = "knips"
+
+[[bin]]
+name = "knips"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+knips-core = { path = "../crates/core" }
+knips-platform = { path = "../crates/platform" }
+tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-deep-link = "2"
+tauri-plugin-log = "2"
+drag = "2"
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+image.workspace = true
+anyhow.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+chrono.workspace = true
+dirs = "6"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Nur Entwicklung auf dem Mac: transparente Fenster (Karten, Menü, HUD).
+tauri = { version = "2", features = ["macos-private-api"] }
+
+[features]
+default = []
+# Selbsttests und Test-Befehle (wie KNIPS_DEV auf dem Mac). Weitergabe-Builds ohne.
+dev = []

@@ -1,0 +1,72 @@
+/* Grundstil aller Fenster. Farben aus der Mac-Fassung (Theme in SettingsWindow.swift, MenuPanel.swift). */
+:root {
+  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  /* Dunkle Panels (Menü, Karten, Leisten) */
+  --panel: rgb(28, 28, 31);
+  --panel-line: rgba(255, 255, 255, 0.09);
+  /* Einstellungen (hell) */
+  --page: rgb(244, 244, 246);
+  --ink: rgb(20, 20, 23);
+  --muted: rgb(110, 112, 120);
+  --card: #fff;
+  --accent: rgb(0, 122, 255);
+  --green: rgb(51, 184, 102);
+  --red: rgb(255, 59, 48);
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: var(--font);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+/* Transparente Fenster (Menü, Karten, HUD, Leisten, Pins): kein Hintergrund. */
+html[data-view="menu"],
+html[data-view="cards"],
+html[data-view="hud"],
+html[data-view="pin"],
+html[data-view="rec-controls"],
+html[data-view="rec-countdown"],
+html[data-view="scroll-controls"] {
+  background: transparent;
+}
+html[data-view="menu"] body,
+html[data-view="cards"] body,
+html[data-view="hud"] body,
+html[data-view="pin"] body,
+html[data-view="rec-controls"] body,
+html[data-view="rec-countdown"] body,
+html[data-view="scroll-controls"] body {
+  background: transparent;
+  overflow: hidden;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: default;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+}

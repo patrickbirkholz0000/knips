@@ -1,0 +1,19 @@
+[package]
+name = "knips-core"
+description = "Plattformunabhängiger Kern von Knips: Datenmodell, Einstellungen, Bildoperationen, Erkennung sensibler Daten, Scroll-Zusammensetzen, Verfolgen, GIF."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+image.workspace = true
+anyhow.workspace = true
+log.workspace = true
+regex.workspace = true
+gif.workspace = true
+color_quant.workspace = true
+chrono.workspace = true

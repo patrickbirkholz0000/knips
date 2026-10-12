@@ -12,3 +12,4 @@ pub mod shell;
 pub mod sound;
 pub mod sample;
 pub mod media;
+pub mod testinput;

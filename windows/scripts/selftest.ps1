@@ -3,7 +3,7 @@
 param(
   [string]$Exe = "target/release/knips.exe",
   [string]$Out = "shots",
-  [string[]]$Tests = @("detect", "output", "selection", "capture", "record", "track", "video", "perf", "hotkeys", "clipboard", "render", "ui")
+  [string[]]$Tests = @("detect", "output", "selection", "capture", "record", "track", "video", "perf", "hotkeys", "clipboard", "overlay", "render", "ui")
 )
 $ErrorActionPreference = "Continue"
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
@@ -15,10 +15,10 @@ foreach ($test in $Tests) {
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
   $log = Join-Path (Resolve-Path $Out).Path "$test.log"
   $err = Join-Path (Resolve-Path $Out).Path "$test.err.log"
-  $args = @("--selftest", $test, "`"$dir`"")
-  if ($test -eq "record") { $args += "3" }
+  $argList = @("--selftest", $test, "`"$dir`"")
+  if ($test -eq "record") { $argList += "3" }
   $sw = [Diagnostics.Stopwatch]::StartNew()
-  $p = Start-Process -FilePath $exePath -ArgumentList $args -PassThru -NoNewWindow -RedirectStandardOutput $log -RedirectStandardError $err
+  $p = Start-Process -FilePath $exePath -ArgumentList $argList -PassThru -NoNewWindow -RedirectStandardOutput $log -RedirectStandardError $err
   $done = $p.WaitForExit(240000)
   $sw.Stop()
   if (-not $done) {

@@ -54,6 +54,7 @@ pub fn run(args: &[String]) -> Option<i32> {
         "video" => video(&out),
         "perf" => perf(),
         "hotkeys" => hotkeys_test(),
+        "overlay" => overlay_test(),
         "clipboard" => clipboard_test(),
         other => {
             eprintln!("Unbekannter Test: {other}");
@@ -317,6 +318,92 @@ fn perf() -> Result<()> {
                 println!("Texterkennung (≤ 2048 px): {} ms, {} Zeilen", t.elapsed().as_millis(), lines.len());
             }
         }
+    }
+    Ok(())
+}
+
+// ------------------------------------------------------------------ overlay (interaktiv)
+
+/// Das echte Auswahl-Overlay mit simulierter Maus und Tastatur: Ziehen, Umschalt-Quadrat, Esc,
+/// Eingabe, Leertaste + Fensterklick. Nur auf einem Rechner ohne Nutzer (CI) laufen lassen.
+fn overlay_test() -> Result<()> {
+    use knips_platform::overlay::Selection;
+    use knips_platform::testinput;
+    let m = monitors::primary();
+    let (ox, oy) = (m.rect.x, m.rect.y);
+    let run = |window_mode: bool, act: &dyn Fn()| -> Result<Selection> {
+        let frozen = capture::freeze(&monitors::list())?;
+        let windows = capture::windows();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = parking_lot::Mutex::new(tx);
+        overlay::present(frozen, windows, Purpose::Screenshot, window_mode, Box::new(move |sel| {
+            let _ = tx.lock().send(sel);
+        }))?;
+        std::thread::sleep(Duration::from_millis(900));
+        act();
+        let sel = rx.recv_timeout(Duration::from_secs(6)).context("Overlay hat nicht geantwortet")?;
+        std::thread::sleep(Duration::from_millis(300));
+        if overlay::is_active() {
+            bail!("Overlay meldet sich nach dem Ende noch aktiv");
+        }
+        Ok(sel)
+    };
+    let mut failures = vec![];
+    let describe = |s: &Selection| match s {
+        Selection::Area { rect, .. } => format!("Bereich {}×{} bei {},{}", rect.width, rect.height, rect.x, rect.y),
+        Selection::Window { window, .. } => format!("Fenster {} ({})", window.owner, window.title),
+        Selection::FullScreen { monitor } => format!("ganzer Bildschirm {}", monitor.name),
+        Selection::Cancelled => "abgebrochen".into(),
+    };
+
+    // 1. Bereich ziehen
+    let sel = run(false, &|| testinput::drag((ox + 200, oy + 200), (ox + 600, oy + 500), false))?;
+    println!("Ziehen: {}", describe(&sel));
+    match sel {
+        Selection::Area { rect, .. } if (rect.x - 200).abs() <= 2 && (rect.y - 200).abs() <= 2 && (rect.width - 400).abs() <= 3 && (rect.height - 300).abs() <= 3 => {}
+        _ => failures.push("Ziehen ergab nicht 400×300 bei 200,200".to_string()),
+    }
+    // 2. Umschalt = Quadrat
+    let sel = run(false, &|| testinput::drag((ox + 150, oy + 150), (ox + 550, oy + 350), true))?;
+    println!("Umschalt-Ziehen: {}", describe(&sel));
+    if !matches!(sel, Selection::Area { rect, .. } if rect.width == rect.height) {
+        failures.push("Umschalt-Ziehen ergab kein Quadrat".into());
+    }
+    // 3. Esc bricht ab
+    let sel = run(false, &|| testinput::key(0x1B, 0))?;
+    println!("Esc: {}", describe(&sel));
+    if !matches!(sel, Selection::Cancelled) {
+        failures.push("Esc hat nicht abgebrochen".into());
+    }
+    // 4. Eingabe = ganzer Bildschirm (Maus auf dem Hauptbildschirm)
+    let sel = run(false, &|| {
+        testinput::move_to(ox + 300, oy + 300);
+        std::thread::sleep(Duration::from_millis(150));
+        testinput::key(0x0D, 0);
+    })?;
+    println!("Eingabe: {}", describe(&sel));
+    if !matches!(sel, Selection::FullScreen { .. }) {
+        failures.push("Eingabe ergab nicht den ganzen Bildschirm".into());
+    }
+    // 5. Leertaste → Fenstermodus, Klick auf ein Fenster
+    if let Some(target) = capture::windows().into_iter().find(|w| m.rect.contains(w.rect.x + w.rect.width / 2, w.rect.y + w.rect.height / 2)) {
+        let (cx, cy) = (target.rect.x + target.rect.width / 2, target.rect.y + target.rect.height / 2);
+        let sel = run(false, &|| {
+            testinput::move_to(cx, cy);
+            std::thread::sleep(Duration::from_millis(150));
+            testinput::key(0x20, 0);
+            std::thread::sleep(Duration::from_millis(250));
+            testinput::click(cx, cy);
+        })?;
+        println!("Leertaste + Klick: {} (erwartet {})", describe(&sel), target.owner);
+        if !matches!(sel, Selection::Window { .. }) {
+            failures.push("Fenstermodus lieferte kein Fenster".into());
+        }
+    } else {
+        println!("Kein fremdes Fenster auf dem Hauptbildschirm — Fenstermodus übersprungen");
+    }
+    if !failures.is_empty() {
+        bail!(failures.join("; "));
     }
     Ok(())
 }

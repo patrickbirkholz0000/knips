@@ -680,3 +680,12 @@ pub fn simulate(combo: KeyCombo) {
         SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
     }
 }
+
+/// Umschalt drücken/loslassen wie von der Tastatur (Selbsttest: Quadrat beim Ziehen).
+pub(crate) fn press_modifier(down: bool) {
+    let input = key_input_with(VK_SHIFT.0, !down, 0);
+    // SAFETY: ein gültiges INPUT.
+    unsafe {
+        SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+    }
+}

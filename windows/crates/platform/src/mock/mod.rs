@@ -496,3 +496,22 @@ pub mod media {
         bail!("Video nur unter Windows")
     }
 }
+
+pub mod testinput {
+    //! Simulierte Maus und Tastatur für Selbsttests (wie von der Hardware).
+
+    pub fn move_to(x: i32, y: i32) {
+        let _ = (x, y);
+    }
+    /// Linke Maustaste von `from` nach `to` ziehen (globale physische Pixel), in Schritten.
+    pub fn drag(from: (i32, i32), to: (i32, i32), shift: bool) {
+        let _ = (from, to, shift);
+    }
+    pub fn click(x: i32, y: i32) {
+        let _ = (x, y);
+    }
+    /// Taste (Virtual-Key) mit Modifier-Bits drücken und loslassen.
+    pub fn key(vk: u32, mods: u32) {
+        let _ = (vk, mods);
+    }
+}

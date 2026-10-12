@@ -1,5 +1,7 @@
 //! Windows-Implementierung. Signaturen exakt wie in `mock/mod.rs`.
 
+mod util;
+mod d3d;
 pub mod monitors;
 pub mod capture;
 pub mod overlay;

@@ -17,7 +17,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 knips-core = { path = "../crates/core" }
 knips-platform = { path = "../crates/platform" }
-tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset", "macos-private-api"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
@@ -33,10 +33,6 @@ log.workspace = true
 parking_lot.workspace = true
 chrono.workspace = true
 dirs = "6"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-# Nur Entwicklung auf dem Mac: transparente Fenster (Karten, Menü, HUD).
-tauri = { version = "2", features = ["macos-private-api"] }
 
 [features]
 default = []

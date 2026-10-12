@@ -1,0 +1,70 @@
+/* Menü-Panel — Maße aus MenuPanel.swift */
+.menu {
+  width: 340px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: rgb(28, 28, 31);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 18px;
+  color: #fff;
+  overflow: hidden;
+}
+.menu svg { flex: none; }
+.menu-divider { height: 1px; background: rgba(255, 255, 255, 0.08); flex: none; }
+.menu-header { display: flex; align-items: center; gap: 9px; padding: 0 4px; }
+.menu-header .title { font-size: 14px; font-weight: 600; }
+.menu-header .rec { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--red); }
+
+.menu-primary {
+  display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 12px; width: 100%;
+  border-radius: 11px; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 13.5px; font-weight: 500; color: #fff; text-align: left;
+  transition: background 0.1s ease-out;
+}
+.menu-primary:hover { background: rgba(255, 255, 255, 0.11); }
+.menu-primary .grow { flex: 1; }
+
+.menu-tile .menu-shortcut { font-size: 10px; margin-left: auto; }
+.menu-shortcut { flex: none; font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.4); white-space: nowrap; }
+
+.menu-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; }
+.menu-tile {
+  display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 6px 0 9px; min-width: 0;
+  border-radius: 9px; font-size: 12.5px; font-weight: 500; color: rgba(255, 255, 255, 0.92); text-align: left;
+  transition: background 0.1s ease-out;
+}
+.menu-tile:hover { background: rgba(255, 255, 255, 0.1); }
+.menu-tile .ico { width: 16px; flex: none; display: flex; justify-content: center; color: rgba(255, 255, 255, 0.75); }
+.menu-tile .label { flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.menu-tile.red, .menu-tile.red .ico { color: var(--red); }
+
+.menu-recent { display: flex; flex-direction: column; gap: 8px; }
+.menu-recent-head { display: flex; align-items: center; justify-content: space-between; padding: 0 4px; }
+.menu-recent-head .t { font-size: 11px; font-weight: 600; color: rgba(255, 255, 255, 0.45); }
+.menu-all { display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: rgba(255, 255, 255, 0.6); transition: color 0.1s ease-out; }
+.menu-all:hover { color: rgba(255, 255, 255, 0.95); }
+.menu-thumbs { display: flex; gap: 8px; }
+.menu-thumb {
+  position: relative; width: 70px; height: 46px; border-radius: 7px; overflow: hidden; flex: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+.menu-thumb > .th { position: absolute; inset: 0; }
+.menu-thumb::after {
+  content: ""; position: absolute; inset: 0; border-radius: 7px; pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12); transition: box-shadow 0.1s ease-out;
+}
+.menu-thumb:hover::after { box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.5); }
+.menu-thumb .kind {
+  position: absolute; left: 4px; bottom: 4px; width: 14px; height: 14px; border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6); display: flex; align-items: center; justify-content: center;
+}
+
+.menu-footer { display: flex; align-items: center; gap: 4px; }
+.menu-footer .sp { flex: 1; }
+.menu-foot {
+  display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 8px; border-radius: 7px;
+  font-size: 12px; font-weight: 500; color: rgba(255, 255, 255, 0.6); transition: background 0.1s, color 0.1s;
+}
+.menu-foot:hover { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.95); }

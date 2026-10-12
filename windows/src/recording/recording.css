@@ -1,0 +1,39 @@
+/* Aufnahme-Leisten — Maße aus RecordingController.swift / ScrollCapture.swift */
+.bar {
+  width: 100%; height: 100%; display: flex; align-items: center; gap: 10px; padding: 0 12px; color: #fff;
+  border-radius: 999px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+.bar svg { flex: none; }
+.rec-bar { background: rgba(23, 23, 23, 0.92); }
+.rec-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--red); animation: blink 0.8s ease-in-out infinite alternate; flex: none; }
+@keyframes blink { to { opacity: 0.35; } }
+.rec-time { width: 44px; font-family: var(--mono); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pill-red, .pill-white {
+  display: flex; align-items: center; gap: 5px; height: 28px; padding: 0 12px; border-radius: 14px;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+}
+.pill-red { background: var(--red); color: #fff; }
+.pill-white { background: #fff; color: #000; }
+.pill-red:active, .pill-white:active { filter: brightness(0.85); }
+.round {
+  width: 28px; height: 28px; border-radius: 50%; background: rgba(255, 255, 255, 0.14); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+}
+.round:hover { background: rgba(255, 255, 255, 0.22); }
+
+.scroll-bar { background: rgba(28, 28, 31, 0.95); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12); }
+.scroll-text { display: flex; flex-direction: column; gap: 1px; white-space: nowrap; flex: 1; }
+.scroll-text .a { font-size: 12px; font-weight: 600; }
+.scroll-text .b { font-size: 11px; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.6); }
+
+.countdown { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+.countdown .disc {
+  width: 128px; height: 128px; border-radius: 50%; background: rgba(0, 0, 0, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18); display: flex; align-items: center; justify-content: center;
+  color: #fff; font-family: var(--font-display); font-size: 64px; font-weight: 700;
+}
+.countdown .num { animation: pop 0.3s cubic-bezier(0.3, 1.3, 0.5, 1); }
+@keyframes pop { from { transform: scale(1.35); opacity: 0; } }
+.countdown .cancel {
+  height: 26px; padding: 0 12px; border-radius: 13px; background: rgba(0, 0, 0, 0.72); color: #fff; font-size: 12px; font-weight: 600;
+}

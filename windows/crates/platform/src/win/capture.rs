@@ -1,61 +1,317 @@
-//! TODO(Windows): Startfassung = Kopie der Attrappe. Durch die echte Implementierung ersetzen,
-//! Signaturen exakt beibehalten (Referenz: `mock/mod.rs`).
+//! Bildschirmaufnahme: Desktop Duplication (schnell) mit Graphics Capture als Rückfall,
+//! Fensterliste, Fensterbild, Bereichs-Aufnahme für Scroll-Screenshots.
 
-use anyhow::Result;
+use std::collections::HashMap;
+use std::ffi::c_void;
+use std::time::{Duration, Instant};
+
+use anyhow::{anyhow, bail, Result};
 use knips_core::RgbaImage;
+use windows::core::PWSTR;
+use windows::core::BOOL;
+use windows::Win32::Foundation::{CloseHandle, LPARAM, RECT};
+use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
+use windows::Win32::System::Threading::{
+    GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+    PROCESS_QUERY_LIMITED_INFORMATION,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    EnumWindows, GetClassNameW, GetLayeredWindowAttributes, GetWindowLongPtrW, GetWindowRect, GetWindowTextW,
+    GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetWindowDisplayAffinity, GWL_EXSTYLE, LWA_ALPHA,
+    WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+};
 
+use super::d3d::{item_for_monitor, item_for_window, Dda, Wgc};
+use super::util::{from_wide, hwnd, init_com};
 use crate::types::{Frozen, IRect, Monitor, WindowInfo};
+
+// ---------------------------------------------------------------- Standbilder
+
+/// Ein Monitor: Desktop Duplication, bei Fehlern Graphics Capture.
+fn freeze_one(m: &Monitor) -> Result<RgbaImage> {
+    init_com();
+    let dda_err = match Dda::open(m) {
+        Ok(mut dda) => {
+            // Der erste Aufruf liefert den aktuellen Desktop; ein, zwei Wiederholungen für Randfälle.
+            let mut res = Err(anyhow!("kein Bild"));
+            for _ in 0..3 {
+                match dda.grab(None, 250) {
+                    Ok(Some(img)) => {
+                        res = Ok(img);
+                        break;
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        res = Err(e);
+                        break;
+                    }
+                }
+            }
+            match res {
+                Ok(img) => return Ok(img),
+                Err(e) => e,
+            }
+        }
+        Err(e) => e,
+    };
+    log::debug!("Desktop Duplication für {} nicht möglich ({dda_err:#}), nehme Graphics Capture", m.name);
+    let item = item_for_monitor(m.id)?;
+    let mut wgc = Wgc::start(&item)?;
+    match wgc.grab(None, 1500, true)? {
+        Some((img, _)) => Ok(img),
+        None => bail!("Graphics Capture lieferte kein Bild für {}", m.name),
+    }
+}
 
 /// Standbild aller angegebenen Monitore; eigene Fenster (mit `exclude_from_capture`) fehlen darin.
 pub fn freeze(monitors: &[Monitor]) -> Result<Vec<Frozen>> {
-    Ok(monitors
-        .iter()
-        .map(|m| Frozen {
-            monitor: m.clone(),
-            image: crate::sample::sample_image(m.rect.width as u32, m.rect.height as u32, m.scale),
+    let results: Vec<Result<RgbaImage>> = if monitors.len() <= 1 {
+        monitors.iter().map(freeze_one).collect()
+    } else {
+        std::thread::scope(|s| {
+            let handles: Vec<_> = monitors.iter().map(|m| s.spawn(move || freeze_one(m))).collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap_or_else(|_| Err(anyhow!("Aufnahme-Thread abgestürzt"))))
+                .collect()
         })
-        .collect())
+    };
+    let mut out = Vec::new();
+    let mut last_err = None;
+    for (m, r) in monitors.iter().zip(results) {
+        match r {
+            Ok(image) => out.push(Frozen { monitor: m.clone(), image }),
+            Err(e) => {
+                log::warn!("Aufnahme von {} fehlgeschlagen: {e:#}", m.name);
+                last_err = Some(e);
+            }
+        }
+    }
+    if out.is_empty() {
+        return Err(last_err.unwrap_or_else(|| anyhow!("kein Bildschirm")));
+    }
+    Ok(out)
+}
+
+// ---------------------------------------------------------------- Fensterliste
+
+struct EnumState {
+    own_pid: u32,
+    out: Vec<WindowInfo>,
+    owners: HashMap<u32, String>,
+}
+
+fn rect_of(r: &RECT) -> IRect {
+    IRect::new(r.left, r.top, r.right - r.left, r.bottom - r.top)
+}
+
+fn exe_name(pid: u32) -> String {
+    // SAFETY: Handle wird geschlossen; Puffer und Länge passen zusammen.
+    unsafe {
+        let Ok(h) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return String::new() };
+        let mut buf = [0u16; 520];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(h, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
+        let _ = CloseHandle(h);
+        if !ok {
+            return String::new();
+        }
+        let path = from_wide(&buf[..(len as usize).min(buf.len())]);
+        path.rsplit(['\\', '/']).next().unwrap_or("").to_string()
+    }
+}
+
+/// Sichtbarer Rahmen ohne Schatten (global).
+fn frame_bounds(h: windows::Win32::Foundation::HWND) -> Option<IRect> {
+    let mut r = RECT::default();
+    // SAFETY: r ist ein gültiger RECT-Puffer der angegebenen Größe.
+    unsafe {
+        if DwmGetWindowAttribute(h, DWMWA_EXTENDED_FRAME_BOUNDS, &mut r as *mut RECT as *mut c_void, std::mem::size_of::<RECT>() as u32).is_ok() {
+            return Some(rect_of(&r));
+        }
+        GetWindowRect(h, &mut r).ok()?;
+    }
+    Some(rect_of(&r))
+}
+
+unsafe extern "system" fn enum_windows(h: windows::Win32::Foundation::HWND, data: LPARAM) -> BOOL {
+    // SAFETY: data zeigt auf den EnumState in `windows()`, der den synchronen Aufruf überlebt.
+    let st = &mut *(data.0 as *mut EnumState);
+    if !IsWindowVisible(h).as_bool() || IsIconic(h).as_bool() {
+        return BOOL(1);
+    }
+    let mut cloaked = 0u32;
+    if DwmGetWindowAttribute(h, DWMWA_CLOAKED, &mut cloaked as *mut u32 as *mut c_void, 4).is_ok() && cloaked != 0 {
+        return BOOL(1);
+    }
+    let mut pid = 0u32;
+    GetWindowThreadProcessId(h, Some(&mut pid));
+    if pid == st.own_pid {
+        return BOOL(1);
+    }
+    let mut cls = [0u16; 128];
+    let n = GetClassNameW(h, &mut cls).max(0) as usize;
+    let class = String::from_utf16_lossy(&cls[..n.min(cls.len())]);
+    if matches!(class.as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd") {
+        return BOOL(1);
+    }
+    let ex = GetWindowLongPtrW(h, GWL_EXSTYLE) as u32;
+    // Werkzeugfenster ohne App-Fenster-Flag sind fast immer Hilfs-/Schwebefenster.
+    if ex & WS_EX_TOOLWINDOW.0 != 0 && ex & WS_EX_APPWINDOW.0 == 0 {
+        return BOOL(1);
+    }
+    if ex & WS_EX_LAYERED.0 != 0 {
+        // Durchklickbare Überlagerungen und voll durchsichtige Fenster haben nichts zu fotografieren.
+        if ex & WS_EX_TRANSPARENT.0 != 0 {
+            return BOOL(1);
+        }
+        let (mut key, mut alpha, mut flags) = (Default::default(), 0u8, Default::default());
+        if GetLayeredWindowAttributes(h, Some(&mut key), Some(&mut alpha), Some(&mut flags)).is_ok()
+            && flags.0 & LWA_ALPHA.0 != 0
+            && alpha == 0
+        {
+            return BOOL(1);
+        }
+    }
+    let Some(rect) = frame_bounds(h) else { return BOOL(1) };
+    if rect.width < 40 || rect.height < 40 {
+        return BOOL(1);
+    }
+    let mut title = [0u16; 512];
+    let tn = GetWindowTextW(h, &mut title).max(0) as usize;
+    let owner = st.owners.entry(pid).or_insert_with(|| exe_name(pid)).clone();
+    st.out.push(WindowInfo {
+        hwnd: h.0 as isize,
+        rect,
+        title: String::from_utf16_lossy(&title[..tn.min(title.len())]),
+        owner,
+    });
+    BOOL(1)
 }
 
 /// Sichtbare Fenster anderer Programme, von vorn nach hinten.
 pub fn windows() -> Vec<WindowInfo> {
-    vec![WindowInfo {
-        hwnd: 42,
-        rect: IRect::new(840, 600, 1400, 840),
-        title: "Fenster".into(),
-        owner: "test.exe".into(),
-    }]
+    // SAFETY: GetCurrentProcessId hat keine Voraussetzungen.
+    let mut st = EnumState { own_pid: unsafe { GetCurrentProcessId() }, out: Vec::new(), owners: HashMap::new() };
+    // SAFETY: Callback läuft synchron; `st` lebt über den Aufruf.
+    unsafe {
+        let _ = EnumWindows(Some(enum_windows), LPARAM(&mut st as *mut EnumState as isize));
+    }
+    st.out
+}
+
+// ---------------------------------------------------------------- Fensterbild
+
+fn window_capture(handle: isize, expect: Option<IRect>) -> Result<RgbaImage> {
+    init_com();
+    let item = item_for_window(handle)?;
+    let mut wgc = Wgc::start(&item)?;
+    let (img, (cw, ch)) = wgc.grab(None, 1500, false)?.ok_or_else(|| anyhow!("Graphics Capture lieferte kein Bild"))?;
+    drop(wgc);
+    // Je nach Windows-Version enthält das Bild den unsichtbaren Resize-Rand (GetWindowRect) oder nur
+    // den sichtbaren Rahmen. Im ersten Fall auf den sichtbaren Rahmen zuschneiden.
+    let h = hwnd(handle);
+    let mut wr = RECT::default();
+    // SAFETY: wr ist gültig; ein totes Fenster liefert einen Fehler.
+    let have_wr = unsafe { GetWindowRect(h, &mut wr).is_ok() };
+    let fb = frame_bounds(h).or(expect);
+    if let (true, Some(fb)) = (have_wr, fb) {
+        let wr = rect_of(&wr);
+        if wr != fb && cw == wr.width && ch == wr.height {
+            let crop = IRect::new(fb.x - wr.x, fb.y - wr.y, fb.width, fb.height);
+            if let Some(c) = knips_core::imageops::crop(&img, crop) {
+                return Ok(c);
+            }
+        }
+    }
+    Ok(img)
 }
 
 /// Einzelnes Fenster freigestellt (auch verdeckte Teile), physische Pixel.
 pub fn window_image(w: &WindowInfo) -> Result<RgbaImage> {
-    Ok(crate::sample::sample_image(w.rect.width as u32, w.rect.height as u32, 2.0))
+    window_capture(w.hwnd, Some(w.rect))
+}
+
+/// Eigenes Fenster fotografieren (Selbsttests). Darf nicht ausgeschlossen sein.
+pub fn own_window_image(handle: isize) -> Result<RgbaImage> {
+    window_capture(handle, None)
+}
+
+// ---------------------------------------------------------------- Bereichsaufnahme
+
+enum Backend {
+    Dda(Dda),
+    Wgc(Wgc),
 }
 
 /// Wiederholte Aufnahme eines festen Bereichs (Scroll-Screenshot): eine Sitzung, viele Bilder.
 pub struct RegionCapturer {
     rect: IRect,
+    backend: Backend,
+    last: Option<RgbaImage>,
 }
 
 impl RegionCapturer {
     /// `rect`: monitor-lokal, physische Pixel.
     pub fn new(monitor: &Monitor, rect: IRect) -> Result<Self> {
-        let _ = monitor;
-        Ok(Self { rect })
+        init_com();
+        let bounds = IRect::new(0, 0, monitor.rect.width, monitor.rect.height);
+        let rect = rect.intersection(&bounds).ok_or_else(|| anyhow!("Bereich liegt außerhalb des Bildschirms"))?;
+        let backend = match Dda::open(monitor) {
+            Ok(d) => Backend::Dda(d),
+            Err(e) => {
+                log::debug!("Bereichsaufnahme: Desktop Duplication nicht möglich ({e:#}), nehme Graphics Capture");
+                Backend::Wgc(Wgc::start(&item_for_monitor(monitor.id)?)?)
+            }
+        };
+        let mut me = Self { rect, backend, last: None };
+        // Erstes Bild gleich holen, damit `grab` nie leer zurückkommt.
+        me.fetch(1500)?;
+        if me.last.is_none() {
+            bail!("Bereichsaufnahme lieferte kein erstes Bild");
+        }
+        Ok(me)
     }
-    /// Aktuelles Bild des Bereichs (eigene Fenster ausgeschlossen, ohne Mauszeiger).
+
+    fn fetch(&mut self, timeout_ms: u64) -> Result<()> {
+        let rect = Some(self.rect);
+        let img = match &mut self.backend {
+            Backend::Dda(d) => {
+                let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+                loop {
+                    let wait = (deadline.saturating_duration_since(Instant::now()).as_millis() as u32).clamp(1, 40);
+                    if let Some(i) = d.grab(rect, wait)? {
+                        break Some(i);
+                    }
+                    if Instant::now() >= deadline {
+                        break None;
+                    }
+                }
+            }
+            Backend::Wgc(w) => w.grab(rect, timeout_ms, true)?.map(|(i, _)| i),
+        };
+        if let Some(i) = img {
+            self.last = Some(i);
+        }
+        Ok(())
+    }
+
+    /// Aktuelles Bild des Bereichs (eigene Fenster ausgeschlossen, ohne Mauszeiger). Gab es seit dem
+    /// letzten Aufruf kein neues Bild (Bildschirm unverändert), kommt das zuletzt gelieferte.
     pub fn grab(&mut self) -> Result<RgbaImage> {
-        Ok(crate::sample::sample_image(self.rect.width as u32, self.rect.height as u32, 2.0))
+        init_com();
+        // Kurz warten: ein Bild pro ~150 ms wird ohnehin abgeholt, unveränderte Bildschirme melden
+        // nichts und liefern dann das gemerkte Bild.
+        self.fetch(30)?;
+        self.last.clone().ok_or_else(|| anyhow!("kein Bild"))
     }
 }
 
 /// Fenster aus allen Aufnahmen ausschließen (`WDA_EXCLUDEFROMCAPTURE`) bzw. wieder zulassen.
-pub fn exclude_from_capture(hwnd: isize, exclude: bool) {
-    let _ = (hwnd, exclude);
-}
-
-/// Eigenes Fenster fotografieren (Selbsttests). Darf nicht ausgeschlossen sein.
-pub fn own_window_image(hwnd: isize) -> Result<RgbaImage> {
-    let _ = hwnd;
-    anyhow::bail!("nur unter Windows")
+pub fn exclude_from_capture(handle: isize, exclude: bool) {
+    // SAFETY: ungültige Handles ergeben nur einen Fehler.
+    let r = unsafe { SetWindowDisplayAffinity(hwnd(handle), if exclude { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE }) };
+    if let Err(e) = r {
+        log::warn!("SetWindowDisplayAffinity fehlgeschlagen: {e}");
+    }
 }

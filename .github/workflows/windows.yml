@@ -1,0 +1,82 @@
+# Windows-Fassung bauen und auf einem echten Windows prüfen: Kern-Tests, Selbsttests (mit
+# Bildern der eigenen Fenster), Installer. Ergebnisse als Artefakt „knips-windows“.
+name: Windows
+
+on:
+  push:
+    branches: [main]
+    paths: ["windows/**", ".github/workflows/windows.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        working-directory: windows
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: windows/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: windows
+
+      - name: Abhängigkeiten
+        run: pnpm install --frozen-lockfile
+
+      - name: Oberfläche (Typprüfung + Build)
+        run: pnpm build
+
+      - name: Kern-Tests
+        run: cargo test -p knips-core --release
+
+      - name: Clippy
+        run: cargo clippy --workspace --features knips/dev
+
+      - name: Texterkennung (Sprachpakete) und Media Foundation
+        continue-on-error: true
+        run: |
+          foreach ($lang in "de-DE", "en-US") {
+            Add-WindowsCapability -Online -Name "Language.OCR~~~$lang~0.0.1.0" | Out-String | Write-Host
+          }
+          Get-WindowsFeature Server-Media-Foundation | Out-String | Write-Host
+          Install-WindowsFeature Server-Media-Foundation | Out-String | Write-Host
+
+      - name: Selbsttest-Build (mit Entwickler-Code)
+        run: cargo build --release -p knips --features dev
+
+      - name: Selbsttests
+        run: ./scripts/selftest.ps1 -Exe target/release/knips.exe -Out shots
+
+      - name: Installer (Weitergabe, ohne Entwickler-Code)
+        if: always()
+        run: pnpm tauri build
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: knips-windows
+          path: |
+            windows/shots
+            windows/target/release/bundle/nsis/*.exe
+          if-no-files-found: warn

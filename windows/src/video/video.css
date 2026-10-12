@@ -1,0 +1,187 @@
+/* Video-Editor: dunkle Oberfläche wie auf dem Mac (Canvas rgb(27,27,29), Leisten rgb(33,33,33)). */
+html[data-view="video"],
+html[data-view="video"] body {
+  background: rgb(27, 27, 29);
+  overflow: hidden;
+}
+.vid-root {
+  --vid-bg: rgb(27, 27, 29);
+  --vid-bar: rgb(33, 33, 33);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--vid-bg);
+  color: #fff;
+  position: relative;
+}
+.vid-center { align-items: center; justify-content: center; }
+.vid-spacer { flex: 1; min-width: 8px; }
+
+.vid-toolbar {
+  height: 52px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  background: var(--vid-bar);
+}
+.vid-dim-icon { color: rgba(255, 255, 255, 0.8); flex: none; }
+.vid-hint {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.vid-divider { height: 1px; background: rgba(255, 255, 255, 0.07); flex: none; }
+
+.vid-segment {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.06);
+  flex: none;
+}
+.vid-segment button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.75);
+}
+.vid-segment button.on { background: rgba(255, 255, 255, 0.18); color: #fff; }
+
+.vid-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex: none;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+.vid-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.16); }
+.vid-btn:active:not(:disabled) { background: rgba(255, 255, 255, 0.2); opacity: 0.85; }
+.vid-btn.prominent { background: var(--accent); }
+.vid-btn.prominent:hover:not(:disabled) { background: rgb(26, 135, 255); }
+.vid-btn:disabled { color: rgba(255, 255, 255, 0.4); }
+
+.vid-stage-wrap { flex: 1; min-height: 0; position: relative; }
+.vid-stage { position: absolute; inset: 0; overflow: hidden; background: var(--vid-bg); }
+.vid-stage video { position: absolute; background: var(--vid-bg); pointer-events: none; }
+.vid-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.vid-overlay-slot {
+  position: absolute;
+  left: 0; right: 0; bottom: 16px;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.vid-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.78);
+  font-size: 12.5px;
+  font-weight: 600;
+  pointer-events: auto;
+}
+.vid-pill.busy { background: rgba(0, 0, 0, 0.8); gap: 10px; padding: 9px 14px; }
+.vid-progress { width: 120px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.2); overflow: hidden; }
+.vid-progress div { height: 100%; background: var(--accent); transition: width 0.15s; }
+.vid-cancel {
+  margin-left: 4px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  font-size: 12px;
+  font-weight: 600;
+}
+.vid-cancel:hover { background: rgba(255, 255, 255, 0.22); }
+
+.vid-bottom {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--vid-bar);
+}
+.vid-row { display: flex; align-items: center; gap: 12px; }
+.vid-play {
+  width: 34px; height: 34px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  flex: none;
+}
+.vid-play:hover { background: rgba(255, 255, 255, 0.18); }
+.vid-time {
+  width: 128px; flex: none;
+  font: 500 12px var(--mono);
+  color: rgba(255, 255, 255, 0.75);
+  white-space: nowrap;
+}
+
+.vid-timeline { flex: 1; height: 60px; position: relative; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.vid-strip-row { position: relative; height: 48px; flex: none; }
+.vid-strip {
+  position: absolute; left: 0; right: 0; top: 0; height: 40px;
+  display: flex; overflow: hidden;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.vid-strip img { height: 40px; object-fit: cover; flex: none; display: block; pointer-events: none; }
+.vid-dim { position: absolute; top: 0; height: 40px; background: rgba(0, 0, 0, 0.6); pointer-events: none; }
+.vid-trim-frame {
+  position: absolute; top: 0; height: 40px;
+  border: 2px solid #ffd60a; border-radius: 6px;
+  pointer-events: none;
+}
+.vid-trim-handle {
+  position: absolute; top: -2px; width: 12px; height: 44px;
+  border-radius: 3px; background: #ffd60a;
+  display: flex; align-items: center; justify-content: center;
+  color: rgba(0, 0, 0, 0.7);
+  touch-action: none;
+}
+.vid-playhead {
+  position: absolute; top: 0; width: 2px; height: 48px;
+  background: #fff; box-shadow: 0 0 1px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+.vid-tracks { position: relative; height: 8px; background: rgba(255, 255, 255, 0.05); }
+.vid-track-bar { position: absolute; top: 0; height: 8px; border-radius: 3px; background: rgba(255, 59, 48, 0.75); }
+.vid-track-bar.selected { background: var(--accent); }
+
+.vid-selbar { display: flex; align-items: center; gap: 8px; height: 28px; font-size: 12px; }
+.vid-selbar strong { font-weight: 600; white-space: nowrap; }
+.vid-mono { font: 500 12px var(--mono); color: rgba(255, 255, 255, 0.7); white-space: nowrap; }
+.vid-note { font-weight: 500; color: rgba(255, 255, 255, 0.55); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vid-trimmed { font-weight: 500; color: rgba(255, 214, 10, 0.85); white-space: nowrap; }
+
+.vid-modal-back {
+  position: absolute; inset: 0; z-index: 10;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex; align-items: center; justify-content: center;
+}
+.vid-modal { width: 380px; padding: 20px; border-radius: 12px; background: rgb(44, 44, 46); box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); }
+.vid-modal h3 { margin: 0 0 6px; font-size: 14px; }
+.vid-modal p { margin: 0 0 16px; font-size: 12.5px; color: rgba(255, 255, 255, 0.7); }
+.vid-modal-actions { display: flex; gap: 8px; justify-content: flex-end; }

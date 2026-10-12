@@ -1,8 +1,40 @@
-//! TODO(Windows): Startfassung = Kopie der Attrappe. Durch die echte Implementierung ersetzen,
-//! Signaturen exakt beibehalten (Referenz: `mock/mod.rs`).
+//! Globale Kürzel. Ein eigener Thread mit Nachrichtenschleife:
+//!
+//! - `RegisterHotKey(NULL, …)` wo möglich (WM_HOTKEY in der Schleife),
+//! - ein `WH_KEYBOARD_LL`-Hook (derselbe Thread) für alles, was `RegisterHotKey` nicht kann:
+//!   Win-Kombinationen, belegte Kürzel und Druck, solange Windows 11 die Taste dem Snipping Tool gibt.
+//!   Der Hook verschluckt die Taste (Down und Up), damit weder Startmenü noch Snipping Tool reagieren.
+//!
+//! Hook-Regeln: im Hook nur Atomics, keine Locks,
+//! keine Allokation (sonst läuft er in `LowLevelHooksTimeout` und Windows entfernt ihn STILL);
+//! die eigentliche Arbeit macht ein Worker-Thread; alle 30 s wird vorsorglich neu eingehängt;
+//! Alt-/Win-Loslassen wird nur maskiert (Strg-Hülle), wenn die Taste an einem Kürzel beteiligt war.
 
-use anyhow::Result;
-use knips_core::settings::KeyCombo;
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering};
+use std::sync::mpsc::{channel, Sender};
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
+
+use anyhow::{bail, Result};
+use knips_core::settings::{KeyCombo, MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, VK_SNAPSHOT};
+use parking_lot::Mutex;
+use windows::core::w;
+use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
+use windows::Win32::System::Diagnostics::Debug::MessageBeep;
+use windows::Win32::System::Registry::{RegGetValueW, RegSetKeyValueW, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, REG_DWORD, RRF_RT_REG_DWORD, RRF_RT_REG_SZ};
+use windows::Win32::System::Threading::{GetCurrentThread, GetCurrentThreadId, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetAsyncKeyState, RegisterHotKey, SendInput, UnregisterHotKey, HOT_KEY_MODIFIERS, INPUT, INPUT_0, INPUT_KEYBOARD,
+    KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_BACK, VK_CONTROL,
+    VK_DELETE, VK_ESCAPE, VK_LMENU, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RWIN, VK_SHIFT,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    CallNextHookEx, DispatchMessageW, GetMessageW, PeekMessageW, PostThreadMessageW, SendMessageTimeoutW,
+    SetTimer, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, HC_ACTION, HHOOK, HWND_BROADCAST,
+    KBDLLHOOKSTRUCT, LLKHF_INJECTED, MB_OK, MSG, PM_NOREMOVE, SMTO_ABORTIFHUNG, WH_KEYBOARD_LL, WM_APP, WM_HOTKEY,
+    WM_KEYDOWN, WM_KEYUP, WM_SETTINGCHANGE, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER,
+};
 
 pub enum RecordResult {
     Combo(KeyCombo),
@@ -12,35 +44,613 @@ pub enum RecordResult {
     Cancel,
 }
 
-/// Startet den Kürzel-Thread. `on_fire(id)` kommt aus diesem Thread.
+// ---------------------------------------------------------------- Zustand für den Hook (nur Atomics)
+
+const SLOTS: usize = 24;
+#[allow(clippy::declare_interior_mutable_const)]
+const ZERO32: AtomicU32 = AtomicU32::new(0);
+#[allow(clippy::declare_interior_mutable_const)]
+const ZERO64: AtomicU64 = AtomicU64::new(0);
+
+/// Hook-Kürzel: Taste (0 = frei), Modifier-Bits (MOD_*), Kennung.
+static SLOT_VK: [AtomicU32; SLOTS] = [ZERO32; SLOTS];
+static SLOT_MODS: [AtomicU32; SLOTS] = [ZERO32; SLOTS];
+static SLOT_ID: [AtomicU32; SLOTS] = [ZERO32; SLOTS];
+/// Verschluckte Tasten (Down gesehen → Up und Wiederholungen ebenfalls schlucken), je Bit ein VK.
+static SWALLOWED: [AtomicU64; 4] = [ZERO64; 4];
+/// Alt-/Win-Tasten, die an einem ausgelösten Kürzel beteiligt waren: ihr Loslassen wird maskiert.
+/// Bit 0 LWin, 1 RWin, 2 LAlt, 3 RAlt.
+static CONSUMED: AtomicU32 = AtomicU32::new(0);
+static RECORDING: AtomicBool = AtomicBool::new(false);
+static HOOK: AtomicIsize = AtomicIsize::new(0);
+static THREAD_ID: AtomicU32 = AtomicU32::new(0);
+
+const WM_FIRE: u32 = WM_APP + 1;
+const WM_CMD: u32 = WM_APP + 2;
+const WM_RECORDED: u32 = WM_APP + 3;
+const WM_BEEP: u32 = WM_APP + 4;
+
+const MOD_NOREPEAT: u32 = 0x4000;
+const HEAL_INTERVAL_MS: u32 = 2_000;
+const REHOOK_EVERY_TICKS: u32 = 15; // = 30 s
+
+fn swallowed(vk: u32) -> bool {
+    let vk = (vk & 0xFF) as usize;
+    SWALLOWED[vk / 64].load(Ordering::Relaxed) & (1 << (vk % 64)) != 0
+}
+
+fn set_swallowed(vk: u32, on: bool) {
+    let vk = (vk & 0xFF) as usize;
+    let bit = 1u64 << (vk % 64);
+    if on {
+        SWALLOWED[vk / 64].fetch_or(bit, Ordering::Relaxed);
+    } else {
+        SWALLOWED[vk / 64].fetch_and(!bit, Ordering::Relaxed);
+    }
+}
+
+fn is_modifier_vk(vk: u32) -> bool {
+    matches!(vk, 0x10 | 0x11 | 0x12 | 0x5B | 0x5C | 0xA0..=0xA5)
+}
+
+/// Bit in `CONSUMED` für Alt-/Win-Tasten, sonst 0.
+fn consumed_bit(vk: u32) -> u32 {
+    match vk {
+        0x5B => 1,
+        0x5C => 2,
+        0xA4 => 4,
+        0xA5 => 8,
+        _ => 0,
+    }
+}
+
+fn key_down_now(vk: u16) -> bool {
+    // SAFETY: reine Abfrage.
+    unsafe { GetAsyncKeyState(vk as i32) as u16 & 0x8000 != 0 }
+}
+
+/// Aktuelle Modifier als MOD_*-Bits (Zustand vor dem gerade verarbeiteten Ereignis).
+fn current_mods() -> u32 {
+    let mut m = 0;
+    if key_down_now(VK_SHIFT.0) {
+        m |= MOD_SHIFT;
+    }
+    if key_down_now(VK_CONTROL.0) {
+        m |= MOD_CONTROL;
+    }
+    if key_down_now(VK_MENU.0) {
+        m |= MOD_ALT;
+    }
+    if key_down_now(VK_LWIN.0) || key_down_now(VK_RWIN.0) {
+        m |= MOD_WIN;
+    }
+    m
+}
+
+/// Alle gerade gehaltenen Alt-/Win-Tasten als verbraucht merken.
+fn mark_consumed() {
+    let mut bits = 0;
+    for (vk, bit) in [(VK_LWIN.0, 1), (VK_RWIN.0, 2), (VK_LMENU.0, 4), (VK_RMENU.0, 8)] {
+        if key_down_now(vk) {
+            bits |= bit;
+        }
+    }
+    CONSUMED.fetch_or(bits, Ordering::SeqCst);
+}
+
+fn extended(vk: u16) -> bool {
+    matches!(vk, v if v == VK_RMENU.0 || v == VK_RCONTROL.0 || v == VK_RWIN.0 || v == VK_LWIN.0)
+}
+
+fn key_input(vk: u16, up: bool) -> INPUT {
+    let mut flags = if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) };
+    if extended(vk) {
+        flags |= KEYEVENTF_EXTENDEDKEY;
+    }
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VIRTUAL_KEY(vk), wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 } },
+    }
+}
+
+/// Key-Up in eine Strg-Hülle packen (Strg↓, Taste↑, Strg↑): Windows sieht dann kein „sauberes“
+/// Win-/Alt-Loslassen und öffnet weder Startmenü noch Menüleiste. Hält der Nutzer Strg, entfällt das
+/// abschließende Strg↑. Der Hook ignoriert injizierte Ereignisse, also keine Rekursion.
+fn send_wrapped_key_up(vk: u32) {
+    let ctrl_held = key_down_now(VK_CONTROL.0);
+    let inputs = [key_input(VK_CONTROL.0, false), key_input(vk as u16, true), key_input(VK_CONTROL.0, true)];
+    let n = if ctrl_held { 2 } else { 3 };
+    // SAFETY: inputs ist ein gültiges Feld von n INPUT-Strukturen.
+    unsafe {
+        SendInput(&inputs[..n], std::mem::size_of::<INPUT>() as i32);
+    }
+}
+
+fn post(msg: u32, wp: usize, lp: isize) {
+    let tid = THREAD_ID.load(Ordering::Relaxed);
+    if tid != 0 {
+        // SAFETY: PostThreadMessageW allokiert nichts in unserem Code und blockiert nicht.
+        unsafe {
+            let _ = PostThreadMessageW(tid, msg, WPARAM(wp), LPARAM(lp));
+        }
+    }
+}
+
+/// Aufnahme-Modus im Hook: nächste normale Taste ist das Ergebnis. `true` = schlucken.
+fn record_key(vk: u32, down: bool) -> bool {
+    if !down {
+        if swallowed(vk) {
+            set_swallowed(vk, false);
+            return true;
+        }
+        return false;
+    }
+    if swallowed(vk) {
+        return true;
+    }
+    let mods = current_mods();
+    set_swallowed(vk, true);
+    mark_consumed();
+    if vk == VK_ESCAPE.0 as u32 {
+        RECORDING.store(false, Ordering::SeqCst);
+        post(WM_RECORDED, 2, 0);
+    } else if (vk == VK_BACK.0 as u32 || vk == VK_DELETE.0 as u32) && mods & (MOD_CONTROL | MOD_ALT | MOD_WIN) == 0 {
+        RECORDING.store(false, Ordering::SeqCst);
+        post(WM_RECORDED, 1, 0);
+    } else if KeyCombo::new(vk, mods).is_valid() {
+        RECORDING.store(false, Ordering::SeqCst);
+        post(WM_RECORDED, 0, (vk | (mods << 16)) as isize);
+    } else {
+        post(WM_BEEP, 0, 0); // ungültig: weiter warten
+    }
+    true
+}
+
+/// Kern des Hooks. `true` = Ereignis schlucken.
+fn on_key(vk: u32, down: bool) -> bool {
+    if is_modifier_vk(vk) {
+        if down {
+            return false;
+        }
+        let bit = consumed_bit(vk);
+        if bit != 0 {
+            let was = CONSUMED.fetch_and(!bit, Ordering::SeqCst) & bit != 0;
+            // Beim Aufnehmen immer maskieren: kein Startmenü / keine Menüleiste über den Einstellungen.
+            if was || RECORDING.load(Ordering::SeqCst) {
+                send_wrapped_key_up(vk);
+                return true;
+            }
+        }
+        return false;
+    }
+    if RECORDING.load(Ordering::SeqCst) {
+        return record_key(vk, down);
+    }
+    if !down {
+        if swallowed(vk) {
+            set_swallowed(vk, false);
+            return true;
+        }
+        return false;
+    }
+    if swallowed(vk) {
+        return true; // Wiederholung eines verschluckten Tastendrucks
+    }
+    let mut mods = None;
+    for i in 0..SLOTS {
+        if SLOT_VK[i].load(Ordering::Relaxed) == vk {
+            let m = *mods.get_or_insert_with(current_mods);
+            if SLOT_MODS[i].load(Ordering::Relaxed) == m {
+                set_swallowed(vk, true);
+                mark_consumed();
+                post(WM_FIRE, SLOT_ID[i].load(Ordering::Relaxed) as usize, 0);
+                return true;
+            }
+        }
+    }
+    false
+}
+
+unsafe extern "system" fn hook_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if code == HC_ACTION as i32 {
+        // SAFETY: Bei HC_ACTION zeigt lParam auf eine gültige KBDLLHOOKSTRUCT.
+        let kb = unsafe { &*(lp.0 as *const KBDLLHOOKSTRUCT) };
+        // Eigene (und fremde) injizierte Ereignisse zählen nicht und werden nie geschluckt.
+        if !kb.flags.contains(LLKHF_INJECTED) {
+            let msg = wp.0 as u32;
+            let down = matches!(msg, WM_KEYDOWN | WM_SYSKEYDOWN);
+            let up = matches!(msg, WM_KEYUP | WM_SYSKEYUP);
+            if (down || up) && on_key(kb.vkCode, down) {
+                return LRESULT(1);
+            }
+        }
+    }
+    // SAFETY: Weiterreichen mit unveränderten Parametern.
+    unsafe { CallNextHookEx(None, code, wp, lp) }
+}
+
+// ---------------------------------------------------------------- Thread-Zustand (nicht im Hook)
+
+type RecordCb = Box<dyn FnOnce(RecordResult) + Send>;
+
+enum Cmd {
+    Apply(Vec<(u32, KeyCombo)>, Sender<Vec<u32>>),
+    Record(RecordCb),
+    CancelRecord,
+}
+
+static CMDS: Mutex<VecDeque<Cmd>> = Mutex::new(VecDeque::new());
+static FIRE_TX: OnceLock<Sender<u32>> = OnceLock::new();
+
+struct State {
+    bindings: Vec<(u32, KeyCombo)>,
+    /// (Registrierungs-ID, Kennung)
+    registered: Vec<(i32, u32)>,
+    record_cb: Option<RecordCb>,
+}
+
+fn fire(id: u32) {
+    if let Some(tx) = FIRE_TX.get() {
+        let _ = tx.send(id);
+    }
+}
+
+fn install_hook() -> bool {
+    if HOOK.load(Ordering::SeqCst) != 0 {
+        return true;
+    }
+    // SAFETY: Hook-Prozedur ist eine `extern "system"`-Funktion dieses Moduls; Thread-ID 0 = global.
+    match unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), Some(HINSTANCE::default()), 0) } {
+        Ok(h) => {
+            HOOK.store(h.0 as isize, Ordering::SeqCst);
+            true
+        }
+        Err(e) => {
+            log::error!("Tastatur-Hook konnte nicht installiert werden: {e}");
+            false
+        }
+    }
+}
+
+fn remove_hook() {
+    let h = HOOK.swap(0, Ordering::SeqCst);
+    if h != 0 {
+        // SAFETY: h stammt aus SetWindowsHookExW dieses Threads.
+        unsafe {
+            let _ = UnhookWindowsHookEx(HHOOK(h as *mut std::ffi::c_void));
+        }
+    }
+}
+
+fn clear_slots() {
+    for v in &SLOT_VK {
+        v.store(0, Ordering::SeqCst);
+    }
+    for w in &SWALLOWED {
+        w.store(0, Ordering::SeqCst);
+    }
+}
+
+fn unregister_all(st: &mut State) {
+    for (reg, _) in st.registered.drain(..) {
+        // SAFETY: Registrierung stammt von diesem Thread.
+        unsafe {
+            let _ = UnregisterHotKey(None, reg);
+        }
+    }
+}
+
+/// Setzt `bindings` neu. Liefert die Kennungen, die gar nicht funktionieren.
+fn apply_bindings(st: &mut State, bindings: Vec<(u32, KeyCombo)>) -> Vec<u32> {
+    unregister_all(st);
+    clear_slots();
+    let snip = snipping_key_enabled();
+    let mut failed = Vec::new();
+    let mut hook_ids = Vec::new();
+    let mut next_reg = 1;
+    let mut slot = 0;
+    for (id, combo) in &bindings {
+        if combo.vk == 0 || combo.vk > 0xFF {
+            failed.push(*id);
+            continue;
+        }
+        let hook_only = combo.needs_hook() || (combo.vk == VK_SNAPSHOT && snip);
+        if !hook_only {
+            // SAFETY: Registrierung für diesen Thread (hwnd = NULL → WM_HOTKEY in unserer Schleife).
+            let ok = unsafe { RegisterHotKey(None, next_reg, HOT_KEY_MODIFIERS(combo.mods | MOD_NOREPEAT), combo.vk) }.is_ok();
+            if ok {
+                st.registered.push((next_reg, *id));
+                next_reg += 1;
+                continue;
+            }
+        }
+        // Hook-Kürzel (Win-Kombination, Druck, oder von einem anderen Programm belegt).
+        if slot < SLOTS {
+            SLOT_MODS[slot].store(combo.mods, Ordering::SeqCst);
+            SLOT_ID[slot].store(*id, Ordering::SeqCst);
+            SLOT_VK[slot].store(combo.vk, Ordering::SeqCst);
+            slot += 1;
+            hook_ids.push(*id);
+        } else {
+            failed.push(*id);
+        }
+    }
+    if !hook_ids.is_empty() {
+        if !install_hook() {
+            // Ohne Hook funktionieren genau diese nicht.
+            clear_slots();
+            failed.extend(hook_ids);
+        }
+    } else if !RECORDING.load(Ordering::SeqCst) {
+        remove_hook();
+    }
+    st.bindings = bindings;
+    failed
+}
+
+fn finish_record(st: &mut State, kind: usize, lp: isize) {
+    let Some(cb) = st.record_cb.take() else { return };
+    let result = match kind {
+        0 => RecordResult::Combo(KeyCombo::new((lp & 0xFFFF) as u32, ((lp >> 16) & 0xF) as u32)),
+        1 => RecordResult::Remove,
+        _ => RecordResult::Cancel,
+    };
+    let b = st.bindings.clone();
+    apply_bindings(st, b);
+    std::thread::spawn(move || cb(result));
+}
+
+fn stop_record(st: &mut State) {
+    RECORDING.store(false, Ordering::SeqCst);
+    st.record_cb = None;
+    let b = st.bindings.clone();
+    apply_bindings(st, b);
+}
+
+fn run_commands(st: &mut State) {
+    loop {
+        let Some(cmd) = CMDS.lock().pop_front() else { break };
+        match cmd {
+            Cmd::Apply(b, reply) => {
+                if RECORDING.load(Ordering::SeqCst) {
+                    // Während der Aufnahme ruhen die Kürzel; die neue Belegung gilt danach.
+                    st.bindings = b;
+                    let _ = reply.send(vec![]);
+                } else {
+                    let _ = reply.send(apply_bindings(st, b));
+                }
+            }
+            Cmd::Record(cb) => {
+                if st.record_cb.is_some() {
+                    // Eine laufende Aufnahme wird ohne Rückruf ersetzt (wie auf dem Mac).
+                    st.record_cb = None;
+                }
+                unregister_all(st);
+                clear_slots();
+                if install_hook() {
+                    st.record_cb = Some(cb);
+                    RECORDING.store(true, Ordering::SeqCst);
+                } else {
+                    let b = st.bindings.clone();
+                    apply_bindings(st, b);
+                    std::thread::spawn(move || cb(RecordResult::Cancel));
+                }
+            }
+            Cmd::CancelRecord => {
+                if st.record_cb.is_some() || RECORDING.load(Ordering::SeqCst) {
+                    stop_record(st);
+                }
+            }
+        }
+    }
+}
+
+/// UAC, Sperrbildschirm und Strg+Alt+Entf laufen auf dem sicheren Desktop; dort verlorene Key-Ups
+/// würden Markierungen hängen lassen. Abgleich mit dem echten Tastenzustand.
+fn heal() {
+    let c = CONSUMED.load(Ordering::SeqCst);
+    if c == 0 {
+        return;
+    }
+    let mut stale = 0;
+    for (vk, bit) in [(VK_LWIN.0, 1), (VK_RWIN.0, 2), (VK_LMENU.0, 4), (VK_RMENU.0, 8)] {
+        if c & bit != 0 && !key_down_now(vk) {
+            stale |= bit;
+        }
+    }
+    if stale != 0 {
+        CONSUMED.fetch_and(!stale, Ordering::SeqCst);
+    }
+}
+
+/// Windows entfernt Low-Level-Hooks nach einem Zeitüberschreitung still. Vorsorglich neu einhängen,
+/// aber nur, wenn gerade keine Modifier gehalten werden (kein Ereignis fällt in die Lücke).
+fn rehook() {
+    if HOOK.load(Ordering::SeqCst) == 0 || RECORDING.load(Ordering::SeqCst) {
+        return;
+    }
+    let held = [VK_SHIFT.0, VK_CONTROL.0, VK_MENU.0, VK_LWIN.0, VK_RWIN.0].into_iter().any(key_down_now);
+    if held || CONSUMED.load(Ordering::SeqCst) != 0 {
+        return;
+    }
+    remove_hook();
+    if !install_hook() {
+        log::error!("Tastatur-Hook nach Neu-Installation nicht aktiv — nächster Versuch in 30 s");
+    }
+}
+
+fn thread_main(ready: Sender<()>) {
+    // SAFETY: Thread-Einstellungen und Nachrichtenschleife gehören diesem Thread.
+    unsafe {
+        // Wie AutoHotkey: Der Hook-Thread darf nie hinter anderer Arbeit anstehen.
+        let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+        let mut msg = MSG::default();
+        // Nachrichtenwarteschlange anlegen, bevor andere Threads Nachrichten schicken.
+        let _ = PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE);
+        THREAD_ID.store(GetCurrentThreadId(), Ordering::SeqCst);
+        SetTimer(None, 0, HEAL_INTERVAL_MS, None);
+        let _ = ready.send(());
+        let mut st = State { bindings: Vec::new(), registered: Vec::new(), record_cb: None };
+        let mut ticks = 0u32;
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            match msg.message {
+                WM_HOTKEY => {
+                    let reg = msg.wParam.0 as i32;
+                    if let Some((_, id)) = st.registered.iter().find(|(r, _)| *r == reg) {
+                        fire(*id);
+                    }
+                }
+                WM_FIRE => fire(msg.wParam.0 as u32),
+                WM_CMD => run_commands(&mut st),
+                WM_RECORDED => finish_record(&mut st, msg.wParam.0, msg.lParam.0),
+                WM_BEEP => {
+                    let _ = MessageBeep(MB_OK);
+                }
+                WM_TIMER => {
+                    heal();
+                    ticks += 1;
+                    if ticks.is_multiple_of(REHOOK_EVERY_TICKS) {
+                        rehook();
+                    }
+                }
+                _ => {
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- Öffentliche Schnittstelle
+
+/// Startet den Kürzel-Thread. `on_fire(id)` kommt aus einem eigenen Worker-Thread (nie aus dem Hook).
 pub fn start(on_fire: Box<dyn Fn(u32) + Send + Sync>) {
-    let _ = on_fire;
+    static STARTED: OnceLock<()> = OnceLock::new();
+    if STARTED.set(()).is_err() {
+        return;
+    }
+    let on_fire: Arc<dyn Fn(u32) + Send + Sync> = Arc::from(on_fire);
+    let (tx, rx) = channel::<u32>();
+    let _ = FIRE_TX.set(tx);
+    let spawned = std::thread::Builder::new().name("hotkey-worker".into()).spawn(move || {
+        while let Ok(id) = rx.recv() {
+            // Ein Absturz im Rückruf darf den Worker nicht beenden.
+            let f = on_fire.clone();
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || f(id)));
+        }
+    });
+    if spawned.is_err() {
+        log::error!("Hotkey-Worker konnte nicht starten");
+        return;
+    }
+    let (ready_tx, ready_rx) = channel();
+    if std::thread::Builder::new().name("hotkey-hook".into()).spawn(move || thread_main(ready_tx)).is_err() {
+        log::error!("Hotkey-Thread konnte nicht starten");
+        return;
+    }
+    let _ = ready_rx.recv_timeout(Duration::from_secs(3));
+}
+
+fn send_cmd(cmd: Cmd) -> bool {
+    let tid = THREAD_ID.load(Ordering::SeqCst);
+    if tid == 0 {
+        return false;
+    }
+    CMDS.lock().push_back(cmd);
+    // SAFETY: Thread existiert und hat eine Warteschlange (siehe thread_main).
+    unsafe { PostThreadMessageW(tid, WM_CMD, WPARAM(0), LPARAM(0)) }.is_ok()
 }
 
 /// Ersetzt alle Kürzel. `RegisterHotKey`, wo möglich; Win-Kombinationen, belegte Kürzel und
 /// Druck (solange Windows sie dem Bildschirmausschnitt gibt) über den Tastatur-Hook, der die
 /// Taste dann verschluckt. Liefert die IDs, die gar nicht funktionieren.
 pub fn apply(bindings: &[(u32, KeyCombo)]) -> Vec<u32> {
-    let _ = bindings;
-    vec![]
+    let all: Vec<u32> = bindings.iter().map(|(id, _)| *id).collect();
+    let (tx, rx) = channel();
+    if !send_cmd(Cmd::Apply(bindings.to_vec(), tx)) {
+        return all;
+    }
+    rx.recv_timeout(Duration::from_secs(3)).unwrap_or_default()
 }
 
 /// Nächste Tastenkombination aufnehmen (Einstellungen). Solange ruhen alle Kürzel; die Tasten
 /// werden verschluckt (auch Druck und Win-Kombinationen). Ungültige Kombination → Signalton,
 /// weiter warten.
 pub fn record(on_result: Box<dyn FnOnce(RecordResult) + Send>) {
-    std::thread::spawn(move || on_result(RecordResult::Cancel));
+    // Ohne laufenden Thread kann nicht aufgenommen werden — dann sofort „abgebrochen“ melden.
+    let tid = THREAD_ID.load(Ordering::SeqCst);
+    if tid == 0 {
+        std::thread::spawn(move || on_result(RecordResult::Cancel));
+        return;
+    }
+    CMDS.lock().push_back(Cmd::Record(on_result));
+    // SAFETY: wie in send_cmd.
+    unsafe {
+        let _ = PostThreadMessageW(tid, WM_CMD, WPARAM(0), LPARAM(0));
+    }
 }
 
-pub fn cancel_record() {}
+/// Bricht die Aufnahme ab (ohne Rückruf) und stellt die Kürzel wieder her.
+pub fn cancel_record() {
+    send_cmd(Cmd::CancelRecord);
+}
+
+const KEYBOARD_KEY: windows::core::PCWSTR = w!("Control Panel\\Keyboard");
+const SNIP_VALUE: windows::core::PCWSTR = w!("PrintScreenKeyForSnippingEnabled");
+
+fn windows_build() -> u32 {
+    let mut buf = [0u16; 16];
+    let mut len = (buf.len() * 2) as u32;
+    // SAFETY: Puffer und Länge (in Bytes) passen zusammen.
+    let err = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            w!("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion"),
+            w!("CurrentBuildNumber"),
+            RRF_RT_REG_SZ,
+            None,
+            Some(buf.as_mut_ptr() as *mut _),
+            Some(&mut len),
+        )
+    };
+    if err.0 != 0 {
+        return 0;
+    }
+    super::util::from_wide(&buf).trim().parse().unwrap_or(0)
+}
 
 /// „Druck-Taste zum Öffnen der Bildschirmausschnitterstellung verwenden“ (Windows 11).
 pub fn snipping_key_enabled() -> bool {
-    false
+    let mut data = 0u32;
+    let mut len = 4u32;
+    // SAFETY: data/len gültig, DWORD-Wert.
+    let err = unsafe {
+        RegGetValueW(HKEY_CURRENT_USER, KEYBOARD_KEY, SNIP_VALUE, RRF_RT_REG_DWORD, None, Some(&mut data as *mut u32 as *mut _), Some(&mut len))
+    };
+    if err.0 == 0 {
+        data != 0
+    } else {
+        // Wert fehlt: Windows 11 (ab Build 22000) gibt Druck standardmäßig dem Snipping Tool.
+        windows_build() >= 22000
+    }
 }
 
 /// Schreibt `HKCU\Control Panel\Keyboard\PrintScreenKeyForSnippingEnabled`.
 pub fn set_snipping_key(enabled: bool) -> Result<()> {
-    let _ = enabled;
+    let data = enabled as u32;
+    // SAFETY: data ist ein gültiges DWORD; Unterschlüssel wird bei Bedarf angelegt.
+    let err = unsafe {
+        RegSetKeyValueW(HKEY_CURRENT_USER, KEYBOARD_KEY, SNIP_VALUE, REG_DWORD.0, Some(&data as *const u32 as *const _), 4)
+    };
+    if err.0 != 0 {
+        bail!("Registry-Schreiben fehlgeschlagen (Fehler {})", err.0);
+    }
+    // Der Explorer liest die Einstellung bei WM_SETTINGCHANGE neu.
+    let area = super::util::wide("Control Panel\\Keyboard");
+    // SAFETY: area lebt über den Aufruf; mit Zeitlimit, damit hängende Fenster nicht blockieren.
+    unsafe {
+        SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, WPARAM(0), LPARAM(area.as_ptr() as isize), SMTO_ABORTIFHUNG, 1000, None);
+    }
     Ok(())
 }

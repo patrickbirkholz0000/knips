@@ -101,9 +101,9 @@ export function Toolbar({ model, actions, showAutoRedact }: { model: EditorModel
           </span>
           <div className="ed-group">
             {REDACT_STYLES.map((s) => (
-              <button key={s} className={`ed-seg-btn wide${redactOn(s) ? " on" : ""}`} onClick={() => model.setRedactStyle(s)}>
+              <button key={s} className={`ed-seg-btn wide${redactOn(s) ? " on" : ""}`} title={REDACT_TITLE[s]} onClick={() => model.setRedactStyle(s)}>
                 {STYLE_ICON[s]}
-                {REDACT_TITLE[s]}
+                <span className="ed-label">{REDACT_TITLE[s]}</span>
               </button>
             ))}
           </div>
@@ -151,7 +151,7 @@ export function Toolbar({ model, actions, showAutoRedact }: { model: EditorModel
             onClick={() => void model.autoRedact()}
           >
             <WandSparkles size={14} strokeWidth={2} />
-            Auto-Zensur
+            <span className="ed-label">Auto-Zensur</span>
           </button>
         )}
         <div style={{ display: "flex" }}>
@@ -163,7 +163,7 @@ export function Toolbar({ model, actions, showAutoRedact }: { model: EditorModel
         <IconButton icon={<Pin {...ICON} />} title="Anpinnen (schwebt über allen Fenstern)" onClick={actions.pin} />
         <button className="ed-btn" title="Kopieren (Strg+C)" onClick={actions.copy}>
           <Copy size={14} strokeWidth={2} />
-          Kopieren
+          <span className="ed-label">Kopieren</span>
         </button>
         <button className="ed-btn prominent" title="Fertig (Strg+Enter)" onClick={actions.done}>
           Fertig

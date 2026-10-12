@@ -84,4 +84,26 @@ html[data-view="editor"] body {
 .ed-seg { display: flex; padding: 2px; border-radius: 8px; background: rgba(255, 255, 255, 0.08); }
 .ed-seg button { flex: 1; height: 24px; border-radius: 6px; font-size: 12px; color: rgba(255, 255, 255, 0.8); }
 .ed-seg button.on { background: rgba(255, 255, 255, 0.2); color: #fff; font-weight: 600; }
+/* Schmale Fenster: Windows begrenzt den Editor auf 90 % des Arbeitsbereichs (Mac: mindestens 1140 pt),
+   auf kleinen oder skalierten Bildschirmen wird er schmaler. Erst der Hinweis, dann die Beschriftungen
+   (Symbole mit Tooltip bleiben), zuletzt engere Werkzeuge — „Fertig“ bleibt immer sichtbar. */
 @media (max-width: 1180px) { .ed-hint { display: none; } }
+@media (max-width: 1060px) {
+  .ed-label { display: none; }
+  .ed-seg-btn.wide { padding: 0 8px; }
+  .ed-btn { padding: 0 9px; }
+  .ed-toolbar { gap: 8px; }
+  .ed-colors { gap: 2px; }
+  .ed-swatch { width: 21px; height: 21px; padding: 2px; }
+}
+@media (max-width: 960px) {
+  .ed-toolbar { gap: 6px; padding: 0 8px; }
+  .ed-tool, .ed-icon { width: 26px; }
+  .ed-seg-btn.size { width: 22px; }
+  .ed-swatch { width: 19px; height: 19px; padding: 1px; }
+  .ed-swatch span { width: 15px; height: 15px; }
+}
+@media (max-width: 860px) {
+  .ed-tool, .ed-icon { width: 24px; }
+  .ed-right { gap: 2px; }
+}

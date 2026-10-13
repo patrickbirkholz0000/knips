@@ -74,6 +74,19 @@ Originale + Bearbeitungsstand in `%LOCALAPPDATA%\Knips\items\<id>\` (30 Tage), E
 
 Gebaut 12.10.2026 (Kern, Windows-Schicht, App, alle Fenster). Auf dem Mac geprüft: Kern-Tests,
 Oberfläche im Browser gegen die Mac-Referenzbilder, Ablage-Selbsttest mit Attrappe, Windows-Cross-Check.
-Was nur auf echtem Windows geprüft werden kann, deckt die CI über die Selbsttests ab; was auch die CI
-nicht kann (Kürzel-Tastendrücke, interaktives Overlay, Mikrofon, Ziehen in andere Apps, Einfügen in
-fremde Apps), muss am Gerät getestet werden.
+**Auf echtem Windows (CI, 13.10.2026): alle 13 Selbsttests grün**, Installer baut — inkl. echter Kürzel
+über simulierte Tastendrücke (Druck, Win-Kombination), echter Zwischenablage und des interaktiven
+Auswahl-Overlays mit simulierter Maus. Fenster-Bilder aus der CI gegen die Mac-Referenzen durchgesehen.
+Noch am Gerät zu testen: Tastendrücke auf echter Tastatur (Hook neben anderen Tools), Mikrofon,
+Ziehen aus den Karten in andere Apps, Einfügen in fremde Apps, mehrere Monitore mit gemischter Skalierung.
+
+## Windows-Eigenheiten (gefunden in der CI)
+
+- Media-Foundation-H.264 schreibt sonst B-Bilder ohne Edit-Liste → alle Zeitstempel ein Bild zu spät.
+  Encoder deshalb mit `CODECAPI_AVEncMPVDefaultBPictureCount = 0`; der Leser zählt das erste Bild als 0.
+- Graphics Capture lehnt die rahmenlosen, nicht aktivierbaren Leisten (`WS_EX_NOACTIVATE`) mit
+  E_INVALIDARG ab — `capture::own_window_image` schneidet sie dann aus dem Bildschirmbild.
+- Windows-Texterkennung verliert bei „sk_live_51…“ den Anfang (erst 3× vergrößert vollständig);
+  „…-Key:“/„Schlüssel:“ zählen deshalb als Bezeichner, der Balken deckt den ganzen Schlüssel.
+- Editor ist auf 90 % des Arbeitsbereichs begrenzt (Mac: ≥ 1140 pt) → Werkzeugleiste wird unter
+  1180/1060/960/860 px schrittweise kompakter. Menü 360 statt 340 px breit (Kürzel sind Wörter).

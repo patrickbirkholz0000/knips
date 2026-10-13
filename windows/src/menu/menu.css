@@ -1,6 +1,7 @@
-/* Menü-Panel — Maße aus MenuPanel.swift */
+/* Menü-Panel — Maße aus MenuPanel.swift; 20 px breiter als auf dem Mac (340 pt), weil die Windows-Kürzel
+   Wörter sind („Strg+Druck“ statt ⌘⇧3) und „Bildschirm“ in Segoe UI sonst abgeschnitten wurde. */
 .menu {
-  width: 340px;
+  width: 360px;
   padding: 14px;
   display: flex;
   flex-direction: column;
@@ -26,18 +27,19 @@
 .menu-primary:hover { background: rgba(255, 255, 255, 0.11); }
 .menu-primary .grow { flex: 1; }
 
-.menu-tile .menu-shortcut { font-size: 10px; margin-left: auto; }
+/* In den Kacheln hat der Titel Vorrang: wird es eng, kürzt sich das Kürzel, nie der Titel. */
+.menu-tile .menu-shortcut { font-size: 9.5px; margin-left: auto; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .menu-shortcut { flex: none; font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.4); white-space: nowrap; }
 
 .menu-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; }
 .menu-tile {
-  display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 6px 0 9px; min-width: 0;
+  display: flex; align-items: center; gap: 7px; height: 38px; padding: 0 5px 0 9px; min-width: 0;
   border-radius: 9px; font-size: 12.5px; font-weight: 500; color: rgba(255, 255, 255, 0.92); text-align: left;
   transition: background 0.1s ease-out;
 }
 .menu-tile:hover { background: rgba(255, 255, 255, 0.1); }
 .menu-tile .ico { width: 16px; flex: none; display: flex; justify-content: center; color: rgba(255, 255, 255, 0.75); }
-.menu-tile .label { flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.menu-tile .label { flex: none; white-space: nowrap; }
 .menu-tile.red, .menu-tile.red .ico { color: var(--red); }
 
 .menu-recent { display: flex; flex-direction: column; gap: 8px; }

@@ -1,7 +1,7 @@
 // Screenshot einer Ansicht im Browser (Attrappe statt Tauri) — zum Prüfen der Oberfläche auf dem Mac.
 // Aufruf: pnpm dev (läuft auf :1430), dann
 //   node scripts/shot.mjs "<hash ohne #>" <ausgabe.png> [breite] [höhe] [--transparent] [--hover=<css-selektor>] [--wait=<ms>] [--scale=2]
-// Beispiel: node scripts/shot.mjs "/menu" shots/menu.png 340 520 --transparent
+// Beispiel: node scripts/shot.mjs "/menu" shots/menu.png 360 520 --transparent
 import { chromium } from "playwright";
 import { existsSync, readdirSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";

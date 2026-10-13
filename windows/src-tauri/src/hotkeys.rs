@@ -110,6 +110,10 @@ pub fn restore() {
 /// Bietet einmalig an, die Druck-Taste für Knips freizumachen (wie ⇧⌘3/4/5 auf dem Mac).
 pub fn offer_takeover(app: &AppHandle) {
     let k = knips();
+    // Test-Sandbox: keine Rückfrage, die Systemeinstellung bleibt unangetastet.
+    if crate::paths::test_root().is_some() {
+        return;
+    }
     if k.settings.get().asked_shortcut_takeover || !hotkeys::snipping_key_enabled() || !uses_print_screen() {
         return;
     }

@@ -10,7 +10,7 @@ use crate::app::knips;
 use crate::wm;
 
 pub const LABEL: &str = "menu";
-pub const WIDTH: f64 = 340.0;
+pub const WIDTH: f64 = 360.0;
 
 static HEIGHT_BITS: AtomicU64 = AtomicU64::new(0);
 /// Zeitpunkt (ms), zu dem das Panel durch Fokusverlust geschlossen wurde — ein Klick aufs

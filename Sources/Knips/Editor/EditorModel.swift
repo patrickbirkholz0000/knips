@@ -339,6 +339,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
 
     func autoRedact() {
         guard busy == nil else { return }
+        Telemetry.count(.censorAuto)
         busy = "Suche nach sensiblen Daten …"
         let image = base
         let style = redactStyle

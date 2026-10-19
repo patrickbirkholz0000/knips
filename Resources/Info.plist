@@ -42,10 +42,10 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
-	<string>© 2026 Patrick Birkholz</string>
+	<string>© 2026 Patrick Birkholz · GPL-3.0-or-later</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Knips nimmt bei Bildschirmaufnahmen auf Wunsch deinen Kommentar über das Mikrofon auf.</string>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>Knips braucht Zugriff auf den Bildschirm, um Screenshots und Bildschirmaufnahmen zu machen. Alles bleibt auf deinem Mac.</string>
+	<string>Knips braucht Zugriff auf den Bildschirm, um Screenshots und Bildschirmaufnahmen zu machen. Deine Aufnahmen bleiben auf deinem Mac.</string>
 </dict>
 </plist>

@@ -504,11 +504,13 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
                     // Klick auf Text: Balken über Zeile bzw. Wort.
                     model.update(id) { $0.start = target.origin; $0.end = CGPoint(x: target.maxX, y: target.maxY) }
                     model.selectedID = id
+                    Telemetry.count(.censorSmart)
                 } else if tooSmall {
                     model.remove(id)
                     model.dropCheckpoint()
                 } else {
                     model.selectedID = id
+                    if a.kind == .redact { Telemetry.count(.censorManual) }
                 }
             }
         case .move(_, _, let moved):

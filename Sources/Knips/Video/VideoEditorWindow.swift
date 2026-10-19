@@ -24,6 +24,7 @@ import SwiftUI
                 let model = try await VideoEditorModel.load(item)
                 let controller = VideoEditorWindowController(model: model)
                 open[item.id] = controller
+                Telemetry.count(.videoEditorOpen)
                 DockPresence.windowOpened()
                 controller.showWindow(nil)
                 controller.window?.makeKeyAndOrderFront(nil)
@@ -276,7 +277,10 @@ final class VideoCanvasView: NSView {
     override func mouseUp(with event: NSEvent) {
         switch drag {
         case .draw:
-            if let r = draft, r.width * factor >= 6, r.height * factor >= 6 { model.addRedaction(rect: r) }
+            if let r = draft, r.width * factor >= 6, r.height * factor >= 6 {
+                model.addRedaction(rect: r)
+                Telemetry.count(.censorManual)
+            }
             draft = nil
             overlayView.needsDisplay = true
         case .move(_, _, true), .resize:

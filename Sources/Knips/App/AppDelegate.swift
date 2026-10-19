@@ -16,10 +16,15 @@ import ScreenCaptureKit
             UserDefaults.standard.set(true, forKey: "didFirstLaunch")
             if Bundle.main.bundlePath.hasPrefix("/Applications") { AppSettings.shared.launchAtLogin = true }
         }
+        Telemetry.shared.start()
         if !ScreenCapture.hasPermission {
+            // Die Statistik-Frage kommt nach dem Neustart, den die Freigabe ohnehin verlangt.
             PermissionWindowController.show()
         } else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { ShortcutTakeover.offerIfNeeded() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                ShortcutTakeover.offerIfNeeded()   // modal — die Statistik-Frage folgt erst danach
+                ConsentWindowController.showIfNeeded()
+            }
         }
         // SwiftUI und das Einstellungsfenster vorwärmen — das erste Öffnen kostet sonst ~0,4 s.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { SettingsWindowController.prewarm() }
@@ -87,6 +92,8 @@ import ScreenCaptureKit
         let main = NSMenu()
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
+        appMenu.addItem(NSMenuItem(title: "Über Knips", action: #selector(AppDelegate.openAbout), keyEquivalent: ""))
+        appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Einstellungen …", action: #selector(AppDelegate.openSettings), keyEquivalent: ","))
         appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Knips ausblenden", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
@@ -118,6 +125,7 @@ import ScreenCaptureKit
     }
 
     @objc func openSettings() { SettingsWindowController.show() }
+    @objc func openAbout() { SettingsWindowController.show(.about) }
 
     #if KNIPS_DEV
     /// Nur in der Test-Sandbox: fotografiert die eigenen sichtbaren Fenster einzeln (nie den Bildschirm).

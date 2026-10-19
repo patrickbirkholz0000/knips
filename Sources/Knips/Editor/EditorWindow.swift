@@ -35,6 +35,7 @@ import SwiftUI
         guard open[item.id] == nil else { return }
         let controller = EditorWindowController(item: item, base: base, document: CaptureStore.shared.loadImageDocument(for: item), tool: tool)
         open[item.id] = controller
+        Telemetry.count(.editorOpen)
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
         controller.window?.makeFirstResponder(controller.canvas)
@@ -91,6 +92,7 @@ import SwiftUI
             item = CaptureStore.shared.saveImage(output: promise, document: model.document, for: item,
                                                  size: model.outputSize, outputScale: Double(model.scale * model.outputFactor))
             model.dirty = false
+            Telemetry.count(promise.format == .png ? .exportPNG : .exportJPEG)
         }
         return promise
     }
@@ -110,11 +112,13 @@ import SwiftUI
         canvas.commitPendingEdits()
         let output = persist()
         Clipboard.copy(output, fileURL: item.fileURL)
+        Telemetry.count(.copyImage)
         model.showToast("In die Zwischenablage kopiert")
     }
 
     func copyText() {
         canvas.commitPendingEdits()
+        Telemetry.count(.copyText)
         Task {
             await model.waitForText()
             let text = model.visibleText()

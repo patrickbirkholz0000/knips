@@ -74,6 +74,7 @@ import ScreenCaptureKit
                 let content = try await ScreenCapture.content()
                 guard let frozen = try await ScreenCapture.freeze([screen], content: content).first else { return }
                 Sounds.playShutter()
+                Telemetry.count(.captureFullscreen)
                 finish(image: frozen.image, scale: frozen.scale, screen: screen)
             } catch {
                 report(error)
@@ -93,13 +94,16 @@ import ScreenCaptureKit
                 return
             case .fullScreen(let screen):
                 guard let f = still(for: screen) else { return }
+                Telemetry.count(.captureFullscreen)
                 finish(image: f.image, scale: f.scale, screen: screen)
             case .area(let screen, let rect):
                 guard let f = still(for: screen), let image = ScreenCapture.crop(f, localRect: rect) else { return }
                 lastArea = (screen.displayID, rect)
+                Telemetry.count(.captureArea)
                 finish(image: image, scale: f.scale, screen: screen)
             case .window(let w, let screen):
                 guard let f = still(for: screen) else { return }
+                Telemetry.count(.captureWindow)
                 if let image = try? await ScreenCapture.captureWindow(w, content: frozen.content, scale: f.scale) {
                     finish(image: image, scale: f.scale, screen: screen)
                 } else {
@@ -134,6 +138,7 @@ import ScreenCaptureKit
                 guard let frozen = try await ScreenCapture.freeze([screen], content: content).first,
                       let image = ScreenCapture.crop(frozen, localRect: last.rect) else { return }
                 Sounds.playShutter()
+                Telemetry.count(.captureLastArea)
                 finish(image: image, scale: frozen.scale, screen: screen)
             } catch {
                 report(error)
@@ -180,6 +185,7 @@ import ScreenCaptureKit
                     image = frozen.screens.first { $0.screen == s }.flatMap { ScreenCapture.crop($0, localRect: local) }
                 }
                 guard let image else { return }
+                Telemetry.count(.captureText)
                 let text = await Task.detached(priority: .userInitiated) { TextLayout.plainText(TextLayout.lines(in: image)) }.value
                 if text.isEmpty {
                     HUD.show("Kein Text gefunden", symbol: "text.magnifyingglass")

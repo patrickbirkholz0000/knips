@@ -226,6 +226,7 @@ import Combine
 
     func autoRedact() {
         guard busy == nil else { return }
+        Telemetry.count(.censorAuto)
         busy = "Suche sensible Daten im Video …"
         progress = 0
         let asset = asset, range = trimRange, style = style
@@ -265,6 +266,7 @@ import Combine
                 exported = tmp
             }
             item = try await CaptureStore.shared.saveVideo(exported: exported, document: document, for: item)
+            if exported != nil { Telemetry.count(.exportMP4) }
             dirty = false
             showToast("Gespeichert")
             return true
@@ -297,6 +299,7 @@ import Combine
                 busy = nil
                 progress = nil
                 let gif = CaptureStore.shared.addGIF(at: target, size: size, duration: range.duration.seconds)
+                Telemetry.count(.exportGIF)
                 QuickAccessController.shared.show(gif, on: NSScreen.withMouse)
                 showToast("GIF gespeichert")
             } catch {

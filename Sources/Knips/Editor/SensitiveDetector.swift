@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 import Vision
 
-/// Lokale Texterkennung (Vision) + Muster für typische Geheimnisse. Nichts verlässt den Mac.
+/// Lokale Texterkennung (Vision) + Muster für typische Geheimnisse. Bilder und erkannter Text verlassen den Mac nie.
 enum SensitiveDetector {
     enum Kind: String, CaseIterable {
         case email, iban, phone, card, secret, ip

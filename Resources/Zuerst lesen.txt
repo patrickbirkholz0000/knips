@@ -21,4 +21,12 @@ Voraussetzung: macOS 14 (Sonoma) oder neuer.
    Knips fragt beim Start, ob es diese Kürzel von macOS übernehmen darf.
 
 Alles Weitere über das Knips-Symbol in der Menüleiste.
-Alle Aufnahmen bleiben auf dem Mac – Knips hat kein Konto und sendet nichts ins Internet.
+
+Datenschutz: Alle Aufnahmen bleiben auf dem Mac, Knips hat kein Konto. Nur wenn du
+beim ersten Start zustimmst, sendet Knips anonyme Nutzungszähler (z. B. „3 Screenshots“,
+dazu Version und Betriebssystem) – nie Bilder, Texte oder Dateinamen. Abschalten:
+Einstellungen → Datenschutz.
+
+Lizenz: © 2026 Patrick Birkholz. Knips ist freie Software unter der GNU GPL v3
+oder neuer und wird ohne jede Gewährleistung geliefert.
+Quellcode: https://github.com/patrickbirkholz0000/knips

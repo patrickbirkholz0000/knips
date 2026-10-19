@@ -71,6 +71,7 @@ import UniformTypeIdentifiers
 
     /// Texterkennung auf der gespeicherten (bereits zensierten) Datei — Zensiertes kann so nie mitkommen.
     static func copyText(of item: CaptureItem) {
+        Telemetry.count(.copyText)
         Task {
             await CaptureStore.shared.waitUntilWritten(item.id)
             let url = item.fileURL
@@ -131,6 +132,7 @@ import UniformTypeIdentifiers
 
     private func copy(_ item: CaptureItem) {
         model.flash(item.id)
+        if item.kind == .image { Telemetry.count(.copyImage) }
         Task {
             await CaptureStore.shared.waitUntilWritten(item.id)
             switch item.kind {
@@ -506,6 +508,7 @@ struct Thumbnail: View {
 /// Datei zum Herausziehen — wartet notfalls, bis sie fertig geschrieben ist.
 @MainActor enum DragProvider {
     static func make(for item: CaptureItem) -> NSItemProvider {
+        Telemetry.count(.dragOut)
         let url = item.fileURL
         // Fertige Datei: normaler Datei-Drag (funktioniert überall, auch im Finder).
         if !CaptureStore.shared.isWriting(item.id), let ready = NSItemProvider(contentsOf: url) { return ready }

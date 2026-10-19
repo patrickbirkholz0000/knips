@@ -10,7 +10,7 @@ import Vision
 @MainActor enum SelfTest {
     static func run(_ args: [String]) -> Int32 {
         guard args.count >= 2 else {
-            print("Aufruf: --selftest render|detect|ui|selection|video|capture|record <ordner>")
+            print("Aufruf: --selftest render|detect|ui|selection|settings|telemetry|video|capture|record <ordner>")
             return 2
         }
         let out = URL(fileURLWithPath: args[1], isDirectory: true)
@@ -37,6 +37,7 @@ import Vision
             case "settings":
                 NSApp.setActivationPolicy(.accessory)
                 try runAsync { try await settings(out, panes: args.count > 2 ? args[2].split(separator: ",").compactMap { SettingsPane(rawValue: String($0)) } : SettingsPane.allCases) }
+            case "telemetry": try runAsync { try await telemetry(out, live: args.count > 2 && args[2] == "live") }
             case "video": try runAsync { try await video(out) }
             case "capture": try runAsync { try await capture() }
             case "output":
@@ -652,8 +653,22 @@ import Vision
                 for (key, value) in saved { defaults.set(value, forKey: key) }
                 if !wrong.isEmpty { throw CheckFailed(message: "Anzeigedauer falsch übernommen: \(wrong.joined(separator: ", "))") }
             }
+            if pane == .privacy {
+                // Nutzungsstatistik an und aus — in der Sandbox-Domäne, die echte Zustimmung bleibt unberührt.
+                let telemetry = Telemetry.shared
+                guard telemetry.defaults != .standard else { throw CheckFailed(message: "Telemetrie nicht in der Sandbox-Domäne") }
+                telemetry.setConsent(true)
+                try await windowShot(window, out.appendingPathComponent("einstellungen-privacy-statistik-an.png"))
+                telemetry.setConsent(false)
+                UserDefaults.standard.removePersistentDomain(forName: Telemetry.sandboxSuite)
+            }
         }
         window.orderOut(nil)
+
+        // Frage beim ersten Start (eigenes Fenster, nicht über anderen Dialogen)
+        let consent = ConsentWindowController(telemetry: Telemetry.shared)
+        try await windowShot(consent.window!, out.appendingPathComponent("zustimmung.png"))
+        consent.window?.orderOut(nil)
     }
 
     static func live(_ out: URL) async throws {

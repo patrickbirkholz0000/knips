@@ -180,6 +180,7 @@ struct RowProfile {
             let image = await Task.detached(priority: .userInitiated) { stitcher.assemble() }.value
             guard let image else { return }
             Sounds.playShutter()
+            Telemetry.count(.captureScroll)
             CaptureCoordinator.shared.finish(image: image, scale: scale, screen: screen)
         }
     }

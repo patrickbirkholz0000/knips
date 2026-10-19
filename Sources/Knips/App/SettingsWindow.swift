@@ -17,6 +17,7 @@ import SwiftUI
     }
 
     static func show(_ pane: SettingsPane? = nil) {
+        Telemetry.count(.settingsOpen)
         if instance == nil { instance = SettingsWindowController() }
         if let pane { SettingsNavigation.shared.pane = pane }
         DockPresence.windowOpened()
@@ -111,7 +112,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .redaction: "Wie sensible Stellen in Bildern und Videos unkenntlich werden."
         case .export: "Größe und Format von Screenshots, GIFs und Videos."
         case .storage: "Wo deine Aufnahmen liegen und wie lange Originale bleiben."
-        case .privacy: "Freigaben von macOS. Alles bleibt auf deinem Mac."
+        case .privacy: "Freigaben von macOS und anonyme Nutzungsstatistik. Aufnahmen bleiben auf deinem Mac."
         case .about: "Screenshots und kurze Bildschirmaufnahmen — mit Zensur für Bilder und Videos."
         }
     }
@@ -358,7 +359,7 @@ private struct SecondsField: View {
 }
 
 /// Schwarze Schaltfläche als Hauptaktion, hellgrau als Nebenaktion.
-private struct PillButtonStyle: ButtonStyle {
+struct PillButtonStyle: ButtonStyle {
     var primary = false
     var destructive = false
     func makeBody(configuration: Configuration) -> some View {
@@ -803,6 +804,7 @@ private struct StoragePane: View {
 }
 
 private struct PrivacyPane: View {
+    @ObservedObject private var telemetry = Telemetry.shared
     @State private var screen = ScreenCapture.hasPermission
     @State private var mic = AVCaptureDevice.authorizationStatus(for: .audio)
     private let timer = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
@@ -822,10 +824,34 @@ private struct PrivacyPane: View {
                     }
                 }
             }
+            Card(title: "Nutzungsstatistik",
+                 footer: telemetry.config.enabled ? nil : "Entwickler-Build: Hier wird nichts gesendet. KNIPS_TELEMETRY=1 schaltet das Senden ein.") {
+                HStack(spacing: 14) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Anonyme Nutzungsstatistik").font(.system(size: 14)).foregroundStyle(Theme.ink)
+                        Text("Zählt nur, welche Funktionen wie oft genutzt werden — nie Bilder, Texte oder Dateinamen.")
+                            .font(.system(size: 12)).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+                        Link(destination: Telemetry.infoURL) {
+                            HStack(spacing: 3) {
+                                Text("Was wird gesendet?")
+                                Image(systemName: "arrow.up.right").font(.system(size: 9.5, weight: .semibold))
+                            }
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.ink)
+                        }
+                        .padding(.top, 2)
+                    }
+                    Spacer(minLength: 8)
+                    Switch(isOn: Binding(get: { telemetry.consent == true }, set: { telemetry.setConsent($0) }))
+                }
+                .padding(.vertical, 13)
+            }
             Card(title: "So arbeitet Knips") {
                 InfoLine(symbol: "cpu", text: "Texterkennung läuft auf diesem Mac")
                 RowDivider()
-                InfoLine(symbol: "network.slash", text: "Kein Konto, nichts geht ins Internet")
+                InfoLine(symbol: "network.slash", text: telemetry.consent == true
+                         ? "Kein Konto — ins Internet gehen nur die anonymen Zähler"
+                         : "Kein Konto, nichts geht ins Internet")
                 RowDivider()
                 InfoLine(symbol: "checkmark.shield", text: "Geteilte Dateien sind immer die zensierte Fassung")
                 RowDivider()
@@ -869,12 +895,28 @@ private struct AboutPane: View {
         VStack(alignment: .leading, spacing: 22) {
             Card {
                 VStack(spacing: 10) {
-                    Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 92, height: 92)
+                    Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 84, height: 84)
                     Text("Knips").font(.system(size: 26, weight: .bold)).tracking(-0.5).foregroundStyle(Theme.ink)
                     Text(version).font(.system(size: 12.5)).foregroundStyle(Theme.muted)
+                    VStack(spacing: 3) {
+                        Text("© 2026 Patrick Birkholz").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink)
+                        Text("Freie Software unter der GNU GPL v3 oder neuer — ohne jede Gewährleistung.")
+                            .font(.system(size: 12)).foregroundStyle(Theme.muted)
+                    }
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 8)
+                    Button { NSWorkspace.shared.open(AboutPane.sourceURL) } label: {
+                        HStack(spacing: 5) {
+                            Text("Quellcode")
+                            Image(systemName: "arrow.up.right").font(.system(size: 10, weight: .semibold))
+                        }
+                    }
+                    .buttonStyle(PillButtonStyle())
+                    .help(AboutPane.sourceURL.absoluteString)
+                    .padding(.top, 4)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 26)
+                .padding(.vertical, 24)
             }
             Card(title: "Funktionen") {
                 InfoLine(symbol: "", text: "Bereich, Fenster oder Bildschirm — Auswahl auf eingefrorenem Bild")
@@ -891,7 +933,8 @@ private struct AboutPane: View {
                         .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.muted)
                 }
             }
-            Text("© 2026 Patrick Birkholz").font(.system(size: 11.5)).foregroundStyle(Theme.muted).padding(.horizontal, 6)
         }
     }
+
+    static let sourceURL = URL(string: "https://github.com/patrickbirkholz0000/knips")!
 }

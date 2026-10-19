@@ -74,6 +74,7 @@ import SwiftUI
             do {
                 try await recorder.start(options)
                 self.phase = .recording
+                Telemetry.count(.recordingStart)
                 self.startDate = Date()
                 self.elapsed = 0
                 self.ticker = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
@@ -121,6 +122,7 @@ import SwiftUI
             do {
                 _ = try await recorder.stop()
                 let item = try await CaptureStore.shared.addVideo(from: recorder.url, scale: scale)
+                Telemetry.count(.recordingSaved)
                 teardown()
                 let settings = AppSettings.shared
                 if settings.copyToClipboard { Clipboard.copy(fileURL: item.fileURL) }

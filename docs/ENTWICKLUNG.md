@@ -38,7 +38,8 @@ nach jedem Build neu erteilt werden.
 | `ui` / `selection` | Karten, Einstellungen, Auswahl-Overlay offscreen |
 | `cards` | Klicks auf eine Karte als echte Mausereignisse: Fläche öffnet, jeder Knopf nur seine Aktion; Raster mit mehreren Spalten trifft die richtige Karte |
 | `live` | Bild- und Video-Editor als echtes Fenster, 1 pt in der Bildschirmecke, per SCK fotografiert |
-| `settings [bereich,…]` | Einstellungsfenster (Stil Systemeinstellungen) je Bereich, inkl. Kürzel-Eingabe und Eintippen der Anzeigedauer |
+| `settings [bereich,…]` | Einstellungsfenster (Stil Systemeinstellungen) je Bereich, inkl. Kürzel-Eingabe und Eintippen der Anzeigedauer, Datenschutz mit Statistik an/aus, Zustimmungsdialog (`zustimmung.png`) |
+| `telemetry [live]` | Nutzungsstatistik: Sperren (Selbsttest/Sandbox/CI/Entwickler-Build), Payload (genau die Vertragsfelder, Allowlist, Deckel), Zustimmung → Zählen → Senden an lokalen Server (127.0.0.1) → Abmelden; Zähler bleiben nach Fehlern. `live` schickt zusätzlich einen echten Ping (nur mit `KNIPS_TELEMETRY=1`, Kanal `dev`) |
 | `output` | Ausgabe 1× + PNG/JPEG, Rahmen, Speichern aus dem Editor, „Text kopieren“ ohne Zensiertes |
 | `track` | Mitlaufender Zensurbalken in scrollendem Video (Texterkennung prüft jeden Zeitpunkt) |
 | `stitch` | Scroll-Screenshot: Ausschnitte → exakt das Originalbild (Pixelvergleich) |
@@ -67,6 +68,18 @@ und schreibt beim Speichern wieder die verkleinerte Fassung (`AppSettings.output
   also bereits zensiert. Herausziehen/Kopieren gibt nie das Original weiter.
 - Originale + Bearbeitungsstand (JSON): `~/Library/Application Support/Knips/items/<uuid>/`.
   Nur damit lässt sich eine Zensur wieder aufheben. Wird nach 30 Tagen aufgeräumt.
+
+## Nutzungsstatistik (Opt-in)
+
+Vertrag v1 (gleich für Windows und den Worker `knips.velno.ai`): `Support/Telemetry.swift`. Beim ersten Start fragt
+`ConsentWindowController` — erst nach Freigabe-Fenster und Kürzel-Rückfrage, nie gleichzeitig; Schließen ohne Wahl = Nein,
+beim nächsten Start erneut. Umschalten in Einstellungen → Datenschutz. Gezählt wird nur über `Telemetry.count(.ereignis)`
+an den Aufrufstellen (24 erlaubte Namen in `TelemetryEvent`; `export_png/jpeg` = Speichern im Bild-Editor,
+`export_mp4` = Video mit Zensur/Kürzung gespeichert, `copy_image` nur bei Bildern, `drag_out` = Ziehen beginnt), gesendet höchstens alle 24 h (Prüfung 30 s nach Start, dann
+alle 6 h), 10 s Zeitlimit; Fehler → Zähler bleiben. Zustand in den UserDefaults: `telemetryConsent`, `telemetryInstallID`,
+`telemetryCounts`, `telemetryLastSent` — in der Test-Sandbox in der Domäne `de.birkgroup.knips.sandbox`. Nie gefragt,
+gezählt oder gesendet in Selbsttests, Sandbox (`KNIPS_TEST_DIR`) und CI. Eigene Builds (`KNIPS_DEV`) senden nur mit
+`KNIPS_TELEMETRY=1` (Kanal `dev`); `KNIPS_TELEMETRY_URL` ersetzt den Endpunkt.
 
 ## Bedienung
 

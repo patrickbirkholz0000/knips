@@ -40,7 +40,7 @@ private struct PermissionView: View {
                 Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 52, height: 52)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Bildschirmaufnahme erlauben").font(.system(size: 17, weight: .semibold))
-                    Text("Knips braucht die macOS-Freigabe, um Screenshots und Videos zu machen. Alles bleibt auf deinem Mac.")
+                    Text("Knips braucht die macOS-Freigabe, um Screenshots und Videos zu machen. Deine Aufnahmen bleiben auf deinem Mac.")
                         .font(.system(size: 12.5)).foregroundStyle(.secondary)
                 }
             }

@@ -7,6 +7,7 @@ import AppKit
     private let image: CGImage
 
     static func pin(_ image: CGImage, scale: CGFloat) {
+        Telemetry.count(.pin)
         let controller = PinWindowController(image: image, scale: scale)
         pins.append(controller)
         controller.window?.orderFrontRegardless()
@@ -123,6 +124,7 @@ private final class PinView: NSView {
         if event.keyCode == 53 { onClose?(); return }
         if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "c" {
             Clipboard.copy(image: image, fileURL: nil)
+            Telemetry.count(.copyImage)
             HUD.show("Kopiert")
             return
         }

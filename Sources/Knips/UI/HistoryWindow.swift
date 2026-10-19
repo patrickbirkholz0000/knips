@@ -6,6 +6,7 @@ import SwiftUI
     private static var instance: HistoryWindowController?
 
     static func show() {
+        Telemetry.count(.historyOpen)
         if instance == nil { instance = HistoryWindowController() }
         DockPresence.windowOpened()
         instance?.showWindow(nil)
@@ -188,6 +189,7 @@ private struct HistoryCard: View {
     }
 
     private func copy() {
+        if item.kind == .image { Telemetry.count(.copyImage) }
         Task {
             await CaptureStore.shared.waitUntilWritten(item.id)
             if item.kind == .image { Clipboard.copy(imageFile: item.fileURL) } else { Clipboard.copy(fileURL: item.fileURL) }

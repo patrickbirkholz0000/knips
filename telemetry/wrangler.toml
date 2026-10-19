@@ -1,0 +1,27 @@
+# Knips-Telemetrie. Eingerichtet über die Cloudflare-API; diese Datei hält dieselbe Konfiguration fest,
+# damit `npx wrangler deploy` (aus diesem Ordner) dasselbe Ergebnis liefert.
+name = "knips-telemetry"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+# Nur über die eigene Domain erreichbar, nicht über workers.dev.
+workers_dev = false
+preview_urls = false
+routes = [{ pattern = "knips.velno.ai", custom_domain = true }]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "knips-telemetry"
+database_id = "22927ad7-c409-446a-ae93-89b45d02f7d7"
+
+# Täglich 03:30 UTC: Daten älter als 400 Tage löschen.
+[triggers]
+crons = ["30 3 * * *"]
+
+# Keine Workers Logs: sie würden IP-Adressen mitschreiben.
+[observability]
+enabled = false
+
+# Secrets (nicht im Repo): SALT und STATS_PASSWORD
+#   npx wrangler secret put SALT
+#   npx wrangler secret put STATS_PASSWORD

@@ -58,7 +58,7 @@ Alle zusammen: `scripts/selftest.ps1` (macht die CI).
 | `clipboard` | echte Zwischenablage: Bild verzögert anbieten (PNG/JPEG) und zurücklesen — nur für die CI |
 | `telemetry` | Nutzungsstatistik gegen einen lokalen Server (127.0.0.1): in Sandbox/CI aus, ohne Zustimmung nichts, Zustimmung → Ereignisse → Senden (Nutzlast, Erlaubt-Liste, Deckel 10000) → Zähler zurückgesetzt, Fehler behält Zähler, Widerruf löscht Kennung + Zähler; Nutzlast als `telemetry-payload.json` |
 | `render` | Renderer der Oberfläche — gleiche Dokumente wie `SelfTest.render` auf dem Mac (Vergleich: `tests/reference/mac-render-*.png`) |
-| `ui` | alle Fenster mit Beispieldaten, je ein Bild (Vergleich: `tests/reference/mac-ui/`), auch `einwilligung.png` und Datenschutz/Über Knips in voller Höhe |
+| `ui` | alle Fenster mit Beispieldaten, je ein Bild (Vergleich: `tests/reference/mac-ui/`), auch `einwilligung.png` und Datenschutz/Über Knips nach unten gescrollt (`…-unten.png`) |
 
 ## Nutzungsstatistik und Lizenz
 

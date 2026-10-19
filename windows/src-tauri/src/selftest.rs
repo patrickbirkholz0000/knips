@@ -967,15 +967,16 @@ fn ui(app: &AppHandle, out: &Path) -> Result<()> {
         std::thread::sleep(Duration::from_millis(900));
         check(&format!("einstellungen-{pane}"), shoot(app, "settings", out, &format!("einstellungen-{pane}.png")));
     }
-    // Datenschutz und Über Knips zusätzlich in voller Höhe (Statistik-Schalter, Lizenz).
-    if let Some(w) = app.get_webview_window("settings") {
-        let _ = w.set_size(tauri::LogicalSize::new(900.0, 1000.0));
-        for pane in ["privacy", "about"] {
-            crate::commands::show_settings(app, Some(pane.into()));
-            std::thread::sleep(Duration::from_millis(900));
-            check(&format!("einstellungen-{pane}-ganz"), shoot(app, "settings", out, &format!("einstellungen-{pane}-ganz.png")));
+    // Datenschutz und Über Knips zusätzlich nach unten gescrollt (Lizenz, „So arbeitet Knips“) —
+    // der CI-Bildschirm ist nur 1024×768, ein höheres Fenster ginge nicht.
+    for pane in ["privacy", "about"] {
+        crate::commands::show_settings(app, Some(pane.into()));
+        std::thread::sleep(Duration::from_millis(900));
+        if let Some(w) = app.get_webview_window("settings") {
+            let _ = w.eval("document.querySelector('.st-page')?.scrollTo(0, 100000)");
         }
-        let _ = w.set_size(tauri::LogicalSize::new(900.0, 640.0));
+        std::thread::sleep(Duration::from_millis(500));
+        check(&format!("einstellungen-{pane}-unten"), shoot(app, "settings", out, &format!("einstellungen-{pane}-unten.png")));
     }
     // Frage zur Nutzungsstatistik (erscheint sonst nur beim ersten Start, nie in der Sandbox).
     crate::telemetry::show_consent(app);

@@ -1,0 +1,188 @@
+# Windows-Installer für ein Release: baut bei jedem Tag vX.Y.Z den NSIS-Installer (Weitergabe-Build, ohne
+# Entwickler-Code) und hängt ihn samt SHA-256 an das GitHub-Release dieses Tags. Gibt es noch keins, wird ein
+# Entwurf angelegt; das macOS-DMG kommt über scripts/release.sh dazu. Veröffentlicht wird nie automatisch.
+#
+# Signatur (optional): Sind die Secrets AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID,
+# AZURE_SIGNING_ENDPOINT, AZURE_SIGNING_ACCOUNT und AZURE_SIGNING_PROFILE gesetzt, signiert Tauri App und
+# Installer über Azure Artifact Signing (trusted-signing-cli). Sonst bleibt der Installer unsigniert.
+# Einrichtung: RELEASING.md.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Vorhandenes Tag, z. B. v1.0.0"
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  # Gleicher Job-Name wie in windows.yml: der Rust-Cache von main wird wiederverwendet.
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    defaults:
+      run:
+        working-directory: windows
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+
+      - name: Version aus dem Tag
+        id: version
+        run: |
+          if ($env:TAG -match '^v(\d+\.\d+\.\d+)$') { $version = $Matches[1] }
+          else { throw "Tag '$env:TAG' hat nicht die Form vX.Y.Z." }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Knips $version"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: windows/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Nur lesen: Tags sollen keinen eigenen Cache anlegen (gespeichert wird von windows.yml auf main).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: windows
+          save-if: false
+
+      # Nur für diesen Build, wird nicht eingecheckt: im Repo bleibt 0.1.0 stehen.
+      - name: Version in package.json, tauri.conf.json und Cargo.toml setzen
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          node - <<'EOF'
+          const fs = require("fs");
+          const v = process.env.VERSION;
+          for (const f of ["package.json", "src-tauri/tauri.conf.json"]) {
+            const j = JSON.parse(fs.readFileSync(f, "utf8"));
+            j.version = v;
+            fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n");
+          }
+          const cargo = fs.readFileSync("Cargo.toml", "utf8");
+          const re = /(\[workspace\.package\][^[]*?\nversion\s*=\s*")[^"]*(")/;
+          if (!re.test(cargo)) throw new Error("Cargo.toml: version in [workspace.package] nicht gefunden");
+          fs.writeFileSync("Cargo.toml", cargo.replace(re, (_, head, tail) => head + v + tail));
+          EOF
+          grep -H '"version"' package.json src-tauri/tauri.conf.json
+          grep -H -A3 '^\[workspace.package\]' Cargo.toml | grep version
+
+      - name: Abhängigkeiten
+        run: pnpm install --frozen-lockfile
+
+      - name: Signatur verfügbar?
+        id: signing
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ secrets.AZURE_SIGNING_PROFILE }}
+        run: |
+          if [[ -n "$AZURE_CLIENT_ID" && -n "$AZURE_CLIENT_SECRET" && -n "$AZURE_TENANT_ID" &&
+                -n "$AZURE_SIGNING_ENDPOINT" && -n "$AZURE_SIGNING_ACCOUNT" && -n "$AZURE_SIGNING_PROFILE" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Signatur über Azure Artifact Signing ist eingerichtet."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Installer unsigniert::Keine AZURE_*-Secrets gesetzt — der Windows-Installer wird nicht signiert (SmartScreen warnt beim Benutzer). Einrichtung: RELEASING.md."
+          fi
+
+      - name: Signatur-Werkzeug (trusted-signing-cli)
+        if: steps.signing.outputs.enabled == 'true'
+        run: cargo install trusted-signing-cli --locked
+
+      - name: Signatur-Konfiguration für Tauri
+        if: steps.signing.outputs.enabled == 'true'
+        shell: bash
+        env:
+          AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ secrets.AZURE_SIGNING_PROFILE }}
+        run: |
+          node - <<'EOF'
+          const fs = require("fs");
+          const e = process.env;
+          const cmd = `trusted-signing-cli -e ${e.AZURE_SIGNING_ENDPOINT} -a ${e.AZURE_SIGNING_ACCOUNT} -c ${e.AZURE_SIGNING_PROFILE} -d Knips %1`;
+          fs.writeFileSync("tauri.signing.json", JSON.stringify({ bundle: { windows: { signCommand: cmd } } }, null, 2));
+          EOF
+
+      - name: Installer bauen (Weitergabe, ohne Entwickler-Code)
+        id: build
+        env:
+          SIGNING: ${{ steps.signing.outputs.enabled }}
+          VERSION: ${{ steps.version.outputs.version }}
+          AZURE_CLIENT_ID: ${{ steps.signing.outputs.enabled == 'true' && secrets.AZURE_CLIENT_ID || '' }}
+          AZURE_CLIENT_SECRET: ${{ steps.signing.outputs.enabled == 'true' && secrets.AZURE_CLIENT_SECRET || '' }}
+          AZURE_TENANT_ID: ${{ steps.signing.outputs.enabled == 'true' && secrets.AZURE_TENANT_ID || '' }}
+        run: |
+          $extra = @()
+          if ($env:SIGNING -eq 'true') { $extra = @('--config', (Resolve-Path tauri.signing.json).Path) }
+          pnpm tauri build @extra
+          if ($LASTEXITCODE -ne 0) { throw "tauri build fehlgeschlagen ($LASTEXITCODE)" }
+
+          $exe = @(Get-ChildItem target/release/bundle/nsis -Filter "*_$($env:VERSION)_*-setup.exe")
+          if ($exe.Count -ne 1) { throw "Erwartet genau einen Installer für $($env:VERSION), gefunden: $($exe.Name -join ', ')" }
+          $exe = $exe[0]
+          $hash = (Get-FileHash -Algorithm SHA256 $exe.FullName).Hash.ToLowerInvariant()
+          # Format wie `shasum -a 256`, damit `shasum -c` und Get-FileHash beide passen.
+          [IO.File]::WriteAllText("$($exe.FullName).sha256", "$hash  $($exe.Name)`n")
+          $rel = [IO.Path]::GetRelativePath((Get-Location).Path, $exe.FullName) -replace '\\', '/'
+          "exe=$rel" >> $env:GITHUB_OUTPUT
+          Write-Host "$($exe.Name)  $hash"
+
+      - name: Signatur prüfen
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          EXE: ${{ steps.build.outputs.exe }}
+        run: |
+          $sig = Get-AuthenticodeSignature $env:EXE
+          $sig | Format-List Status, StatusMessage, SignerCertificate | Out-String | Write-Host
+          if ($sig.Status -ne 'Valid') { throw "Installer-Signatur ungültig: $($sig.Status)" }
+
+      - name: An das Release hängen
+        shell: bash
+        env:
+          EXE: ${{ steps.build.outputs.exe }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Kein Release für $TAG — lege einen Entwurf an."
+            gh release create "$TAG" --draft --verify-tag --title "Knips $VERSION" \
+              --notes "Entwurf. Das macOS-DMG und der Release-Text kommen über scripts/release.sh dazu."
+          fi
+          gh release upload "$TAG" "$EXE" "$EXE.sha256" --clobber
+          gh release view "$TAG" --json isDraft,assets --jq '"Entwurf: \(.isDraft)", (.assets[].name)'
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: knips-windows-${{ steps.version.outputs.version }}
+          path: windows/target/release/bundle/nsis/*-setup.exe*
+          if-no-files-found: warn

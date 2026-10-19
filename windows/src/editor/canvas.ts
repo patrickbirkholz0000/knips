@@ -1,6 +1,7 @@
 // Port von Editor/CanvasView.swift: Zeichenfläche des Bild-Editors als Controller um ein <canvas>.
 // Bildkoordinaten = Pixel des Originals, Ursprung oben links; Ansichtskoordinaten = CSS-Pixel im Canvas.
 import type { Annotation, Point, Rect } from "../shared/types";
+import { api } from "../shared/ipc";
 import { contains, insetBy, intersection, maxX, maxY, midX, midY, rectFromPoints } from "./geometry";
 import { EditorModel, TOOLS, TOOL_KEY, TOOL_KIND } from "./model";
 import {
@@ -543,10 +544,14 @@ export class CanvasController {
           // Klick auf Text: Balken über Zeile bzw. Wort.
           m.update(d.id, (x) => { x.start = { x: target.x, y: target.y }; x.end = { x: maxX(target), y: maxY(target) }; });
           m.select(d.id);
+          void api.telemetryCount("censor_smart");
         } else if (tooSmall) {
           m.remove(d.id);
           m.dropCheckpoint();
-        } else m.select(d.id);
+        } else {
+          m.select(d.id);
+          if (a.kind === "redact") void api.telemetryCount("censor_manual");
+        }
       }
     }
     this.drag = { t: "none" };

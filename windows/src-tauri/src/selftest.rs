@@ -3,7 +3,8 @@
 //! fasst die echte Zwischenablage nie an.
 //!
 //! Ohne Fenster: detect, output, selection, capture, record [s], track, video, perf, hotkeys
-//! (simulierte Tastendrücke), clipboard (echte Zwischenablage, nur für die CI).
+//! (simulierte Tastendrücke), clipboard (echte Zwischenablage, nur für die CI), telemetry
+//! (Nutzungsstatistik gegen einen lokalen Server auf 127.0.0.1).
 //! Mit Fenstern (startet die App unsichtbar für den Nutzer, fotografiert nur eigene Fenster): ui, render.
 
 use std::collections::BTreeSet;
@@ -56,6 +57,7 @@ pub fn run(args: &[String]) -> Option<i32> {
         "hotkeys" => hotkeys_test(),
         "overlay" => overlay_test(),
         "clipboard" => clipboard_test(),
+        "telemetry" => telemetry_test(&out),
         other => {
             eprintln!("Unbekannter Test: {other}");
             return Some(2);
@@ -514,6 +516,224 @@ fn clipboard_test() -> Result<()> {
     Ok(())
 }
 
+// ------------------------------------------------------------------ telemetry
+
+/// Lokaler HTTP-Server für den Telemetrie-Test: nimmt Anfragen an, merkt sie sich und antwortet
+/// mit dem eingestellten Status.
+struct PingServer {
+    port: u16,
+    status: Arc<std::sync::atomic::AtomicU16>,
+    requests: Arc<parking_lot::Mutex<Vec<PingRequest>>>,
+}
+
+#[derive(Clone)]
+struct PingRequest {
+    line: String,
+    content_type: String,
+    body: Vec<u8>,
+}
+
+impl PingServer {
+    fn start() -> Result<Self> {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let port = listener.local_addr()?.port();
+        let status = Arc::new(std::sync::atomic::AtomicU16::new(204));
+        let requests = Arc::new(parking_lot::Mutex::new(vec![]));
+        let (st, reqs) = (status.clone(), requests.clone());
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                let mut reader = BufReader::new(&stream);
+                let mut line = String::new();
+                if reader.read_line(&mut line).is_err() {
+                    continue;
+                }
+                let (mut length, mut content_type) = (0usize, String::new());
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0 || header.trim().is_empty() {
+                        break;
+                    }
+                    if let Some((name, value)) = header.split_once(':') {
+                        match name.trim().to_ascii_lowercase().as_str() {
+                            "content-length" => length = value.trim().parse().unwrap_or(0),
+                            "content-type" => content_type = value.trim().to_string(),
+                            _ => {}
+                        }
+                    }
+                }
+                let mut body = vec![0u8; length.min(1 << 20)];
+                let _ = reader.read_exact(&mut body);
+                reqs.lock().push(PingRequest { line: line.trim().to_string(), content_type, body });
+                let code = st.load(std::sync::atomic::Ordering::SeqCst);
+                let reason = if code < 300 { "No Content" } else { "Error" };
+                let mut w = &stream;
+                let _ = write!(w, "HTTP/1.1 {code} {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                let _ = w.flush();
+            }
+        });
+        Ok(Self { port, status, requests })
+    }
+
+    fn set_status(&self, code: u16) {
+        self.status.store(code, std::sync::atomic::Ordering::SeqCst);
+    }
+    fn count(&self) -> usize {
+        self.requests.lock().len()
+    }
+    fn last(&self) -> Option<PingRequest> {
+        self.requests.lock().last().cloned()
+    }
+}
+
+/// Nutzungsstatistik: nie in Sandbox/CI, ohne Zustimmung nichts, Zustimmung → Ereignisse → Senden an
+/// einen lokalen Server (Nutzlast und Erlaubt-Liste prüfen) → Zähler zurückgesetzt → Fehler behält
+/// Zähler → Widerruf löscht Kennung und Zähler.
+fn telemetry_test(out: &Path) -> Result<()> {
+    use crate::telemetry::{client_info, Config, Outcome, Telemetry};
+    use knips_core::telemetry::{self as tm, Channel};
+    let mut failures: Vec<String> = vec![];
+    let mut expect = |ok: bool, what: &str| {
+        if ok {
+            println!("   ✓ {what}");
+        } else {
+            println!("   FALSCH {what}");
+            failures.push(what.to_string());
+        }
+    };
+    let settings = Arc::new(SettingsStore::load());
+
+    // 1. Diese Sitzung (Selbsttest, Sandbox, ggf. CI) zählt, fragt und sendet nie.
+    let real = Telemetry::from_env(settings.clone(), "0.1.0");
+    expect(!real.enabled(), "Selbsttest/Sandbox: Statistik aus");
+    expect(!real.should_ask(), "Selbsttest/Sandbox: keine Frage nach Zustimmung");
+    expect(real.check() == Outcome::Off, "Selbsttest/Sandbox: kein Senden");
+    let env = |pairs: &'static [(&'static str, &'static str)]| move |k: &str| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string());
+    expect(tm::gate(false, false, env(&[("CI", "true")])).is_none(), "CI: kein Senden");
+    expect(tm::gate(false, false, env(&[("GITHUB_ACTIONS", "true")])).is_none(), "GitHub Actions: kein Senden");
+    expect(tm::gate(false, true, env(&[])).is_none(), "Entwickler-Build ohne KNIPS_TELEMETRY: kein Senden");
+    expect(tm::gate(false, true, env(&[("KNIPS_TELEMETRY", "1")])) == Some(Channel::Dev), "Entwickler-Build mit KNIPS_TELEMETRY=1: Kanal dev");
+    expect(tm::gate(false, false, env(&[])) == Some(Channel::Release), "Weitergabe-Build: Kanal release");
+
+    // 2. Lokaler Server, Statistik mit festem Ziel (Kanal dev).
+    let server = PingServer::start()?;
+    let info = client_info(Channel::Dev, "0.1.0");
+    println!("System: {} · {} · Sprache „{}“", info.os_version, info.arch, info.lang);
+    let config = Config { endpoint: format!("http://127.0.0.1:{}/v1/ping", server.port), info: info.clone() };
+    let t = Telemetry::new(settings.clone(), Some(config));
+    let now = chrono::Utc::now().timestamp();
+
+    // 3. Ohne Zustimmung: nichts zählen, nichts senden; einmal pro Start fragen.
+    t.count("capture_area");
+    expect(settings.telemetry().telemetry_counts.is_empty(), "ohne Zustimmung wird nicht gezählt");
+    expect(t.check_at(now) == Outcome::NoConsent && server.count() == 0, "ohne Zustimmung wird nichts gesendet");
+    expect(t.should_ask() && !t.should_ask(), "fragt beim Start genau einmal");
+
+    // 4. Zustimmung → Kennung, Ereignisse zählen (unbekannte verwerfen, Obergrenze).
+    t.set_consent(true);
+    let id = settings.telemetry().telemetry_install_id.unwrap_or_default();
+    expect(tm::is_uuid_v4(&id), "Zustimmung legt eine zufällige UUID v4 an");
+    for _ in 0..3 {
+        t.count("capture_area");
+    }
+    t.count("editor_open");
+    t.count("editor_open");
+    t.count("app_launch");
+    t.count("window_title");
+    t.count("C:\\Users\\geheim.png");
+    for _ in 0..(tm::MAX_COUNT + 5) {
+        t.count("export_gif");
+    }
+    let counts = settings.telemetry().telemetry_counts;
+    expect(counts.keys().all(|k| tm::is_allowed(k)), "nur Ereignisse aus der Erlaubt-Liste");
+    expect(counts.get("export_gif") == Some(&tm::MAX_COUNT), "Zähler bei 10000 gedeckelt");
+
+    // 5. Senden.
+    let result = t.check_at(now);
+    expect(result == Outcome::Sent(204), &format!("Senden an den lokalen Server ({result:?})"));
+    let req = server.last().context("keine Anfrage angekommen")?;
+    std::fs::write(out.join("telemetry-payload.json"), &req.body)?;
+    println!("   Nutzlast ({} Bytes): {}", req.body.len(), String::from_utf8_lossy(&req.body));
+    expect(req.line == "POST /v1/ping HTTP/1.1", &format!("POST /v1/ping ({})", req.line));
+    expect(req.content_type == "application/json", "Content-Type application/json");
+    expect(req.body.len() <= tm::MAX_BODY, "Körper ≤ 4 KB");
+    let v: serde_json::Value = serde_json::from_slice(&req.body).context("Nutzlast ist kein JSON")?;
+    let mut keys: Vec<&str> = v.as_object().map(|o| o.keys().map(String::as_str).collect()).unwrap_or_default();
+    keys.sort();
+    let mut want = vec!["v", "app", "platform", "channel", "app_version", "build", "os_version", "arch", "lang", "install_id", "events"];
+    want.sort();
+    expect(keys == want, &format!("genau die Felder des Vertrags ({keys:?})"));
+    expect(v["v"] == 1 && v["app"] == "knips" && v["platform"] == "windows" && v["channel"] == "dev", "v/app/platform/channel");
+    expect(v["install_id"] == id.as_str(), "install_id = Kennung aus der Zustimmung");
+    expect(v["arch"] == "x86_64" || v["arch"] == "arm64", "arch");
+    let os_ok = v["os_version"].as_str().map(|s| s.split('.').count() == 3 && s.split('.').all(|p| p.parse::<u32>().is_ok())).unwrap_or(false);
+    expect(os_ok, "os_version wie 10.0.26100");
+    expect(v["lang"].as_str().map(|l| l.is_empty() || l.len() == 2).unwrap_or(false), "lang mit 2 Buchstaben");
+    let events = serde_json::json!({ "app_launch": 1, "capture_area": 3, "editor_open": 2, "export_gif": tm::MAX_COUNT });
+    expect(v["events"] == events, &format!("Ereignisse {}", v["events"]));
+    let state = settings.telemetry();
+    expect(state.telemetry_counts.is_empty() && state.telemetry_last_sent == Some(now), "nach Erfolg: Zähler zurückgesetzt, Zeitpunkt gemerkt");
+
+    // 6. Höchstens einmal in 24 h.
+    t.count("pin");
+    expect(t.check_at(now + 3600) == Outcome::NotDue && server.count() == 1, "höchstens einmal in 24 Stunden");
+
+    // 7. Fehler (HTTP 500, Server weg): Zähler bleiben, kein neuer Zeitpunkt.
+    server.set_status(500);
+    let r = t.check_at(now + 25 * 3600);
+    let state = settings.telemetry();
+    expect(
+        matches!(r, Outcome::Failed(_)) && server.count() == 2 && state.telemetry_counts.get("pin") == Some(&1) && state.telemetry_last_sent == Some(now),
+        &format!("HTTP 500: Zähler bleiben ({r:?})"),
+    );
+    let dead_port = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
+    let dead = Telemetry::new(settings.clone(), Some(Config { endpoint: format!("http://127.0.0.1:{dead_port}/v1/ping"), info: info.clone() }));
+    let started = Instant::now();
+    let r = dead.check_at(now + 25 * 3600);
+    expect(
+        matches!(r, Outcome::Failed(_)) && settings.telemetry().telemetry_counts.get("pin") == Some(&1),
+        &format!("Server nicht erreichbar: Zähler bleiben ({r:?}, {} ms)", started.elapsed().as_millis()),
+    );
+    server.set_status(204);
+    let r = t.check_at(now + 26 * 3600);
+    let sent: serde_json::Value = server.last().and_then(|q| serde_json::from_slice(&q.body).ok()).unwrap_or_default();
+    expect(r == Outcome::Sent(204) && sent["events"] == serde_json::json!({ "pin": 1 }), "nächster Versuch sendet die behaltenen Zähler");
+
+    // 8. Gespeichert in settings.json (Felder „telemetry…“); die Oberfläche kann sie nicht überschreiben.
+    let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(settings.path())?)?;
+    let stored: Vec<&str> = raw.as_object().map(|o| o.keys().filter(|k| k.starts_with("telemetry")).map(String::as_str).collect()).unwrap_or_default();
+    expect(raw["telemetryConsent"] == true && raw["telemetryInstallId"] == id.as_str(), &format!("in settings.json: {stored:?}"));
+    expect(SettingsStore::load().telemetry() == settings.telemetry(), "nach Neustart derselbe Zustand");
+    let _ = settings.patch(&serde_json::json!({ "telemetryConsent": false, "telemetryInstallId": "x", "playSound": true }));
+    expect(settings.telemetry().telemetry_install_id.as_deref() == Some(id.as_str()), "Einstellungen der Oberfläche ändern die Statistik nicht");
+
+    // 9. Widerruf: Kennung und offene Zähler sofort weg, danach nichts mehr.
+    t.count("copy_text");
+    t.set_consent(false);
+    let state = settings.telemetry();
+    expect(state.telemetry_consent == Some(false) && state.telemetry_install_id.is_none() && state.telemetry_counts.is_empty(), "Widerruf löscht Kennung und Zähler");
+    t.count("capture_area");
+    let before = server.count();
+    expect(
+        settings.telemetry().telemetry_counts.is_empty() && t.check_at(now + 60 * 3600) == Outcome::NoConsent && server.count() == before,
+        "nach Widerruf wird nichts gezählt oder gesendet",
+    );
+    let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(settings.path())?)?;
+    expect(raw["telemetryConsent"] == false && raw.get("telemetryInstallId").map(|v| v.is_null()).unwrap_or(true), "Widerruf in settings.json");
+    expect(!t.should_ask(), "nach einer Antwort keine Frage mehr");
+
+    // 10. TLS über das System (nur Diagnose, sendet nichts): GET /v1/health.
+    match crate::telemetry::probe("https://knips.velno.ai/v1/health") {
+        Ok(status) => println!("   (Diagnose) HTTPS zu knips.velno.ai: HTTP {status}"),
+        Err(err) => println!("   (Diagnose) HTTPS zu knips.velno.ai nicht erreichbar: {err:#}"),
+    }
+    if !failures.is_empty() {
+        bail!(failures.join("; "));
+    }
+    Ok(())
+}
+
 // ------------------------------------------------------------------ track / video
 
 /// Pseudo-zufälliges, textähnliches Muster (deterministisch).
@@ -747,6 +967,30 @@ fn ui(app: &AppHandle, out: &Path) -> Result<()> {
         std::thread::sleep(Duration::from_millis(900));
         check(&format!("einstellungen-{pane}"), shoot(app, "settings", out, &format!("einstellungen-{pane}.png")));
     }
+    // Datenschutz und Über Knips zusätzlich in voller Höhe (Statistik-Schalter, Lizenz).
+    if let Some(w) = app.get_webview_window("settings") {
+        let _ = w.set_size(tauri::LogicalSize::new(900.0, 1000.0));
+        for pane in ["privacy", "about"] {
+            crate::commands::show_settings(app, Some(pane.into()));
+            std::thread::sleep(Duration::from_millis(900));
+            check(&format!("einstellungen-{pane}-ganz"), shoot(app, "settings", out, &format!("einstellungen-{pane}-ganz.png")));
+        }
+        let _ = w.set_size(tauri::LogicalSize::new(900.0, 640.0));
+    }
+    // Frage zur Nutzungsstatistik (erscheint sonst nur beim ersten Start, nie in der Sandbox).
+    crate::telemetry::show_consent(app);
+    std::thread::sleep(Duration::from_millis(1200));
+    check("einwilligung", shoot(app, crate::telemetry::CONSENT_LABEL, out, "einwilligung.png"));
+    if let Some(w) = app.get_webview_window(crate::telemetry::CONSENT_LABEL) {
+        let _ = w.destroy();
+    }
+    let sandbox_off = if k.telemetry.consent().is_some() || k.telemetry.enabled() {
+        Err(anyhow::anyhow!("Sandbox: Statistik aktiv oder Zustimmung gesetzt"))
+    } else {
+        Ok(())
+    };
+    check("statistik-sandbox", sandbox_off);
+
     // Verlauf
     crate::commands::show_history(app);
     std::thread::sleep(Duration::from_millis(1500));

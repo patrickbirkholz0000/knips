@@ -17,6 +17,7 @@ use crate::recording::Recording;
 use crate::scroll::Scroll;
 use crate::settings::SettingsStore;
 use crate::store::Store;
+use crate::telemetry::Telemetry;
 use crate::video::VideoJobs;
 use crate::{hotkeys, paths, tray, wm};
 
@@ -32,6 +33,7 @@ pub struct Knips {
     pub hud: Hud,
     pub editors: Editors,
     pub video: VideoJobs,
+    pub telemetry: Arc<Telemetry>,
     /// Kürzel, die nicht registriert werden konnten.
     pub hotkey_failures: Mutex<Vec<HotkeyAction>>,
     ocr_available: OnceLock<bool>,
@@ -42,6 +44,11 @@ static KNIPS: OnceLock<Arc<Knips>> = OnceLock::new();
 
 pub fn knips() -> &'static Arc<Knips> {
     KNIPS.get().expect("Knips nicht gestartet")
+}
+
+/// Wie `knips()`, aber ohne Absturz, solange die App nicht gestartet ist (Selbsttests ohne Fenster).
+pub fn try_knips() -> Option<&'static Arc<Knips>> {
+    KNIPS.get()
 }
 
 /// Alles, was ein Fenster beim Start braucht (siehe `Bootstrap` in src/shared/types.ts).
@@ -57,6 +64,8 @@ pub struct Bootstrap {
     pub version: String,
     pub ocr_available: bool,
     pub hevc_available: bool,
+    /// Nutzungsstatistik: `null` = noch nicht beantwortet.
+    pub telemetry_consent: Option<bool>,
 }
 
 #[derive(Serialize, Clone)]
@@ -84,6 +93,7 @@ impl Knips {
             version: self.app.package_info().version.to_string(),
             ocr_available: self.ocr_available.get().copied().unwrap_or(false),
             hevc_available: self.hevc_available.get().copied().unwrap_or(false),
+            telemetry_consent: self.telemetry.consent(),
             settings,
         }
     }
@@ -131,6 +141,7 @@ pub fn setup(app: &AppHandle) -> anyhow::Result<()> {
     }
     let settings = Arc::new(SettingsStore::load());
     let store = Arc::new(Store::new(settings.clone()));
+    let telemetry = Arc::new(Telemetry::from_env(settings.clone(), &app.package_info().version.to_string()));
     let state = Arc::new(Knips {
         app: app.clone(),
         settings: settings.clone(),
@@ -143,6 +154,7 @@ pub fn setup(app: &AppHandle) -> anyhow::Result<()> {
         hud: Hud::default(),
         editors: Editors::default(),
         video: VideoJobs::default(),
+        telemetry: telemetry.clone(),
         hotkey_failures: Mutex::new(vec![]),
         ocr_available: OnceLock::new(),
         hevc_available: OnceLock::new(),
@@ -188,11 +200,15 @@ pub fn setup(app: &AppHandle) -> anyhow::Result<()> {
     crate::commands::sync_autostart(app);
 
     // Wie macOS-Kürzel-Übernahme: einmal nachfragen, ob Knips die Druck-Taste bekommen darf.
+    // Danach (nie gleichzeitig) die Frage zur Nutzungsstatistik.
     let app2 = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(800));
         hotkeys::offer_takeover(&app2);
+        crate::telemetry::maybe_ask(&app2);
     });
+    telemetry.count("app_launch");
+    telemetry.start();
     log::info!("Knips gestartet ({})", if knips_platform::IS_REAL { "Windows" } else { "Attrappe" });
     Ok(())
 }

@@ -44,6 +44,7 @@ if (!inTauri) {
     return true;
   });
   registerMock("snipping_restore", () => void push({ snippingKeyEnabled: true }, { tookSnippingKey: false }));
+  registerMock("telemetry_set_consent", ({ consent }) => void push({ telemetryConsent: consent }));
   registerMock("choose_save_folder", () => "D:\\Aufnahmen\\Knips");
   registerMock("purge_originals", () => {});
   registerMock("open_url", () => {});

@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
 default-run = "knips"
 
 [[bin]]
@@ -33,6 +34,10 @@ log.workspace = true
 parking_lot.workspace = true
 chrono.workspace = true
 dirs = "6"
+# Nutzungsstatistik: kleiner blockierender HTTP-Client; TLS über das System (Windows: SChannel),
+# kein C-Code — der Windows-Check auf dem Mac bleibt möglich.
+ureq = { version = "2.12", default-features = false, features = ["native-tls"] }
+native-tls = "0.2"
 
 [features]
 default = []

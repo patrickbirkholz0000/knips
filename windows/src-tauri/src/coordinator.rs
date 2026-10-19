@@ -15,6 +15,7 @@ use parking_lot::Mutex;
 
 use crate::app::knips;
 use crate::promise::output_promise;
+use crate::telemetry::count;
 
 #[derive(Default)]
 pub struct Coordinator {
@@ -82,6 +83,7 @@ impl Coordinator {
             Ok(mut frozen) if !frozen.is_empty() => {
                 knips().shutter();
                 let f = frozen.remove(0);
+                count("capture_fullscreen");
                 self.finish(f.image, f.monitor.scale, &f.monitor);
             }
             Ok(_) => {}
@@ -95,6 +97,11 @@ impl Coordinator {
         }
         // Auslöser sofort beim Loslassen — die Arbeit danach läuft im Hintergrund weiter.
         knips().shutter();
+        count(match &selection {
+            Selection::Window { .. } => "capture_window",
+            Selection::FullScreen { .. } => "capture_fullscreen",
+            _ => "capture_area",
+        });
         let still = |m: &Monitor| frozen.iter().find(|f| f.monitor.id == m.id);
         match selection {
             Selection::Cancelled => {}
@@ -147,6 +154,7 @@ impl Coordinator {
             Ok(frozen) => {
                 if let Some(image) = frozen.first().and_then(|f| imageops::crop(&f.image, rect)) {
                     knips().shutter();
+                    count("capture_last_area");
                     self.finish(image, monitor.scale, &monitor);
                 }
             }
@@ -178,6 +186,7 @@ impl Coordinator {
                     .and_then(|r| frozen.iter().find(|f| f.monitor.id == monitor.id).and_then(|f| imageops::crop(&f.image, r))),
             };
             if let Some(image) = image {
+                count("capture_text");
                 copy_text_of(&image);
             }
         });
@@ -231,8 +240,9 @@ impl Coordinator {
         match clipboard::get_image() {
             Some(image) => {
                 let scale = monitors::at_cursor().scale;
-                if let Err(err) = knips().pins.pin(Arc::new(image), scale) {
-                    report(&err);
+                match knips().pins.pin(Arc::new(image), scale) {
+                    Ok(()) => count("pin"),
+                    Err(err) => report(&err),
                 }
             }
             None => knips().hud.show("Kein Bild in der Zwischenablage", "error"),

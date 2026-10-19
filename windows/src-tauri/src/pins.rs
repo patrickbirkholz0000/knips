@@ -70,15 +70,18 @@ impl Pins {
         self.pins.lock().get(&n).cloned()
     }
 
-    pub fn copy(&self, n: u32) {
-        let Some(info) = self.info(n) else { return };
+    /// Liefert, ob kopiert wurde.
+    pub fn copy(&self, n: u32) -> bool {
+        let Some(info) = self.info(n) else { return false };
         if let Ok(data) = std::fs::read(&info.path) {
             if let Ok(image) = imageops::decode(&data) {
                 let promise = ImagePromise::encoded(image, data, ImageFormat::Png);
                 let _ = knips_platform::clipboard::set_image(Arc::new(promise));
                 knips().hud.show("Kopiert", "check");
+                return true;
             }
         }
+        false
     }
 
     pub fn remove(&self, n: u32) {

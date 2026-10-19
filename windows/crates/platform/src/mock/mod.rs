@@ -515,3 +515,20 @@ pub mod testinput {
         let _ = (vk, mods);
     }
 }
+
+pub mod system {
+    //! Angaben für die Nutzungsstatistik.
+
+    /// Windows-Version wie „10.0.26100“ (Haupt.Neben.Build).
+    pub fn os_version() -> String {
+        "0.0.0".into()
+    }
+
+    /// Anzeigesprache des Benutzers, z. B. „de-DE“.
+    pub fn ui_language() -> String {
+        ["LC_ALL", "LC_MESSAGES", "LANG"]
+            .iter()
+            .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))
+            .unwrap_or_else(|| "de-DE".into())
+    }
+}

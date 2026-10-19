@@ -14,6 +14,7 @@ use serde::Serialize;
 
 use crate::app::knips;
 use crate::promise::output_promise;
+use crate::telemetry::count;
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -98,6 +99,7 @@ impl Editors {
         let scale = item.scale.max(1.0);
         if action == "pin" {
             k.pins.pin(Arc::new(image), scale)?;
+            count("pin");
             return Ok(item);
         }
         let document = self.entries.lock().get(&id).and_then(|e| e.staged.clone()).unwrap_or_else(|| k.store.load_image_document(id));
@@ -112,8 +114,14 @@ impl Editors {
         let size = (((image.width() as f64) * factor).round() as u32, ((image.height() as f64) * factor).round() as u32);
         let promise = output_promise(factor, format, move || Some(image));
         let updated = k.store.save_image(promise.clone(), &document, &item, size, scale * factor);
+        // Speichern aus dem Editor = Export im gewählten Format.
+        count(match format {
+            ImageFormat::Png => "export_png",
+            ImageFormat::Jpeg => "export_jpeg",
+        });
         if action == "copy" {
             let _ = knips_platform::clipboard::set_image(Arc::new(promise));
+            count("copy_image");
         }
         Ok(updated)
     }

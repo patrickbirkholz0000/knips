@@ -23,6 +23,7 @@ use crate::promise::ImagePromise;
 use crate::recording::RecordingState;
 use crate::scroll::ScrollState;
 use crate::video::VideoSession;
+use crate::telemetry::count;
 use crate::{hotkeys, wm};
 
 type Res<T> = Result<T, String>;
@@ -166,6 +167,7 @@ pub async fn item_copy(id: String) -> Res<()> {
                 let format = path.extension().and_then(|e| e.to_str()).and_then(ImageFormat::from_extension).unwrap_or(ImageFormat::Png);
                 let image = imageops::decode(&data)?;
                 knips_platform::clipboard::set_image(Arc::new(ImagePromise::encoded(image, data, format)))?;
+                count("copy_image");
             }
             CaptureKind::Video | CaptureKind::Gif => knips_platform::clipboard::set_files(&[path])?,
         }
@@ -178,6 +180,7 @@ pub async fn item_copy(id: String) -> Res<()> {
 #[tauri::command]
 pub async fn item_copy_text(id: String) -> Res<()> {
     let item = item(&id)?;
+    count("copy_text");
     blocking(move || {
         knips().store.wait_until_written(item.id);
         let image = imageops::load(std::path::Path::new(&item.file_path))?;
@@ -194,7 +197,9 @@ pub async fn item_pin(id: String) -> Res<()> {
         let k = knips();
         k.store.wait_until_written(item.id);
         let image = imageops::load(std::path::Path::new(&item.file_path))?;
-        k.pins.pin(Arc::new(image), item.display_scale())
+        k.pins.pin(Arc::new(image), item.display_scale())?;
+        count("pin");
+        Ok(())
     })
     .await
 }
@@ -249,6 +254,7 @@ pub fn open_item(app: &AppHandle, id: Id, tool: Option<String>) {
                 Ok(w) => {
                     wm::center_on_cursor_monitor(&w, size);
                     wm::present(&w);
+                    count("editor_open");
                 }
                 Err(e) => k.alert("Editor konnte nicht geöffnet werden", &format!("{e:#}")),
             }
@@ -276,6 +282,7 @@ pub fn open_item(app: &AppHandle, id: Id, tool: Option<String>) {
                 Ok(w) => {
                     wm::center_on_cursor_monitor(&w, size);
                     wm::present(&w);
+                    count("video_editor_open");
                 }
                 Err(e) => k.alert("Video konnte nicht geöffnet werden", &format!("{e:#}")),
             }
@@ -288,6 +295,7 @@ pub fn open_item(app: &AppHandle, id: Id, tool: Option<String>) {
 pub fn item_start_drag(window: WebviewWindow, id: String) -> Res<()> {
     let item = item(&id)?;
     let app = window.app_handle().clone();
+    count("drag_out");
     std::thread::spawn(move || {
         let k = knips();
         k.store.wait_until_written(item.id);
@@ -337,6 +345,7 @@ pub fn open_settings(app: AppHandle, pane: Option<String>) {
 }
 
 pub fn show_settings(app: &AppHandle, pane: Option<String>) {
+    count("settings_open");
     let route = match &pane {
         Some(p) => format!("settings/{p}"),
         None => "settings".into(),
@@ -365,6 +374,7 @@ pub fn open_history(app: AppHandle) {
 }
 
 pub fn show_history(app: &AppHandle) {
+    count("history_open");
     if let Some(w) = wm::get(app, "history") {
         wm::present(&w);
         return;
@@ -426,7 +436,10 @@ pub fn purge_originals() {
 
 #[tauri::command]
 pub fn clipboard_text(text: String) -> Res<()> {
-    knips_platform::clipboard::set_text(&text).map_err(err)
+    // Nur der Editor („Text kopieren“) ruft das auf.
+    knips_platform::clipboard::set_text(&text).map_err(err)?;
+    count("copy_text");
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -487,7 +500,11 @@ pub fn pin_info(n: u32) -> Res<PinInfo> {
 
 #[tauri::command]
 pub fn pin_copy(n: u32) {
-    std::thread::spawn(move || knips().pins.copy(n));
+    std::thread::spawn(move || {
+        if knips().pins.copy(n) {
+            count("copy_image");
+        }
+    });
 }
 
 // ------------------------------------------------------------------ Aufnahme- und Scroll-Leisten
@@ -529,7 +546,9 @@ pub async fn editor_text_lines(id: String) -> Res<Vec<TextLine>> {
 #[tauri::command]
 pub async fn editor_detect(id: String, kinds: BTreeSet<SensitiveKind>) -> Res<Vec<Finding>> {
     let id = parse_id(&id)?;
-    blocking(move || knips().editors.detect(id, &kinds)).await
+    let found = blocking(move || knips().editors.detect(id, &kinds)).await?;
+    count("censor_auto");
+    Ok(found)
 }
 
 #[tauri::command]
@@ -578,7 +597,9 @@ pub async fn video_thumbnails(id: String, count: usize) -> Res<Vec<String>> {
 #[tauri::command]
 pub async fn video_detect(id: String, start: f64, end: f64, style: RedactStyle, kinds: BTreeSet<SensitiveKind>) -> Res<Vec<VideoRedaction>> {
     let id = parse_id(&id)?;
-    blocking(move || knips().video.detect(id, start, end, style, kinds)).await
+    let found = blocking(move || knips().video.detect(id, start, end, style, kinds)).await?;
+    count("censor_auto");
+    Ok(found)
 }
 
 #[tauri::command]
@@ -602,4 +623,26 @@ pub async fn video_export_gif(id: String, document: VideoDocument) -> Res<Captur
 #[tauri::command]
 pub fn video_cancel(id: String) {
     knips().video.cancel(&id);
+}
+
+// ------------------------------------------------------------------ Nutzungsstatistik
+
+/// Antwort aus dem Fenster „Knips verbessern?“ oder dem Schalter in den Einstellungen.
+#[tauri::command]
+pub fn telemetry_set_consent(app: AppHandle, consent: bool) {
+    let k = knips();
+    k.telemetry.set_consent(consent);
+    k.broadcast_bootstrap();
+    // Fenster erst schließen, wenn der Befehl beantwortet ist.
+    std::thread::spawn(move || {
+        if let Some(w) = wm::get(&app, crate::telemetry::CONSENT_LABEL) {
+            let _ = w.destroy();
+        }
+    });
+}
+
+/// Ereignis aus der Oberfläche (Balken gezogen, Klick auf Text). Unbekannte Namen verwirft Rust.
+#[tauri::command]
+pub fn telemetry_count(event: String) {
+    count(&event);
 }

@@ -123,6 +123,7 @@ impl Scroll {
         }
         self.publish();
         let (Some(stitcher), Some(monitor), true) = (stitcher, monitor, save) else { return };
+        crate::telemetry::count("capture_scroll");
         std::thread::spawn(move || {
             let image = stitcher.assemble();
             let k = knips();

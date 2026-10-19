@@ -5,8 +5,9 @@ members = ["crates/core", "crates/platform", "src-tauri"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = ["Patrick Birkholz"]
-license = "UNLICENSED"
+authors = ["Patrick Birkholz <kontakt@birkgroup.de>"]
+license = "GPL-3.0-or-later"
+repository = "https://github.com/patrickbirkholz0000/knips"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

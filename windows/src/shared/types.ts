@@ -209,6 +209,8 @@ export interface Bootstrap {
   version: string;
   ocrAvailable: boolean;
   hevcAvailable: boolean;
+  /** Anonyme Nutzungsstatistik: null = noch nicht beantwortet (beim nächsten Start wird wieder gefragt). */
+  telemetryConsent: boolean | null;
 }
 
 export type RecordingPhase = "idle" | "countdown" | "recording" | "finishing";

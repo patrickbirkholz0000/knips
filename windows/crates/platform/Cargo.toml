@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 knips-core = { path = "../core" }
@@ -27,6 +28,7 @@ windows = { version = "0.62", features = [
     "Media_Ocr",
     "Storage_Streams",
     "Win32_Foundation",
+    "Win32_Globalization",
     "Win32_Graphics_Direct2D",
     "Win32_Graphics_Direct2D_Common",
     "Win32_Graphics_Direct3D",

@@ -1,10 +1,14 @@
 //! Einstellungen laden, ändern, speichern (`AppSettings` in Settings.swift). Datei: `settings.json`.
+//! In derselben Datei, aber getrennt von den Einstellungen der Oberfläche: der Zustand der
+//! Nutzungsstatistik (Felder `telemetry…`, siehe `knips_core::telemetry::TelemetryState`).
 
 use std::path::PathBuf;
 
 use anyhow::Result;
 use knips_core::settings::Settings;
-use parking_lot::RwLock;
+use knips_core::telemetry::TelemetryState;
+use parking_lot::{Mutex, RwLock};
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::paths;
@@ -12,6 +16,18 @@ use crate::paths;
 pub struct SettingsStore {
     path: PathBuf,
     value: RwLock<Settings>,
+    telemetry: RwLock<TelemetryState>,
+    /// Hält Schreibvorgänge in Reihe (gleiche Zwischendatei).
+    save_lock: Mutex<()>,
+}
+
+/// So liegt beides in `settings.json`.
+#[derive(Serialize)]
+struct File<'a> {
+    #[serde(flatten)]
+    settings: &'a Settings,
+    #[serde(flatten)]
+    telemetry: &'a TelemetryState,
 }
 
 impl SettingsStore {
@@ -19,12 +35,12 @@ impl SettingsStore {
         let dir = paths::config_dir();
         paths::ensure(&dir);
         let path = dir.join("settings.json");
-        let mut value = std::fs::read(&path)
-            .ok()
-            .and_then(|data| serde_json::from_slice::<Settings>(&data).ok())
-            .unwrap_or_default();
+        let raw = std::fs::read(&path).ok().and_then(|data| serde_json::from_slice::<Value>(&data).ok());
+        let mut value = raw.clone().and_then(|v| serde_json::from_value::<Settings>(v).ok()).unwrap_or_default();
         value.sanitize();
-        Self { path, value: RwLock::new(value) }
+        let mut telemetry = raw.and_then(|v| serde_json::from_value::<TelemetryState>(v).ok()).unwrap_or_default();
+        telemetry.sanitize();
+        Self { path, value: RwLock::new(value), telemetry: RwLock::new(telemetry), save_lock: Mutex::new(()) }
     }
 
     pub fn get(&self) -> Settings {
@@ -38,18 +54,17 @@ impl SettingsStore {
         guard.sanitize();
         let snapshot = guard.clone();
         drop(guard);
-        if let Err(err) = self.save(&snapshot) {
-            log::error!("Einstellungen speichern fehlgeschlagen: {err:#}");
-        }
+        self.persist();
         snapshot
     }
 
     /// Teiländerung aus der Oberfläche (JSON-Objekt mit beliebigen Feldern von `Settings`).
+    /// Felder der Nutzungsstatistik lassen sich so nicht ändern (nur über `telemetry_set_consent`).
     pub fn patch(&self, patch: &Value) -> Result<Settings> {
         let current = serde_json::to_value(self.get())?;
         let mut merged = current;
         if let (Some(target), Some(source)) = (merged.as_object_mut(), patch.as_object()) {
-            for (k, v) in source {
+            for (k, v) in source.iter().filter(|(k, _)| !k.starts_with("telemetry")) {
                 target.insert(k.clone(), v.clone());
             }
         }
@@ -57,12 +72,48 @@ impl SettingsStore {
         Ok(self.update(|s| *s = next))
     }
 
-    fn save(&self, s: &Settings) -> Result<()> {
-        let data = serde_json::to_vec_pretty(s)?;
+    pub fn telemetry(&self) -> TelemetryState {
+        self.telemetry.read().clone()
+    }
+
+    /// Zustand der Nutzungsstatistik ändern; gespeichert wird nur, wenn `change` `true` liefert.
+    pub fn update_telemetry(&self, change: impl FnOnce(&mut TelemetryState) -> bool) -> bool {
+        let mut guard = self.telemetry.write();
+        let changed = change(&mut guard);
+        drop(guard);
+        if changed {
+            self.persist();
+        }
+        changed
+    }
+
+    /// Wie `update_telemetry`, aber ohne zu speichern (der Aufrufer speichert gebündelt mit `persist`).
+    pub fn update_telemetry_in_memory(&self, change: impl FnOnce(&mut TelemetryState) -> bool) -> bool {
+        change(&mut self.telemetry.write())
+    }
+
+    pub fn persist(&self) {
+        if let Err(err) = self.save() {
+            log::error!("Einstellungen speichern fehlgeschlagen: {err:#}");
+        }
+    }
+
+    fn save(&self) -> Result<()> {
+        let _lock = self.save_lock.lock();
+        // Stand erst unter der Sperre lesen — so schreibt der letzte Aufruf immer den neuesten.
+        let settings = self.value.read().clone();
+        let telemetry = self.telemetry.read().clone();
+        let data = serde_json::to_vec_pretty(&File { settings: &settings, telemetry: &telemetry })?;
         let tmp = self.path.with_extension("json.tmp");
         std::fs::write(&tmp, data)?;
         std::fs::rename(&tmp, &self.path)?;
         Ok(())
+    }
+
+    /// Pfad von `settings.json` (Selbsttest).
+    #[allow(dead_code)]
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
     }
 
     /// Aufgelöster Ablageordner (leer = Standard).

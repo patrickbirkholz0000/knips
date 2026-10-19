@@ -185,6 +185,7 @@ impl Recording {
                     rec.publish();
                     rec.show_controls(&monitor, global, full);
                     rec.tick();
+                    crate::telemetry::count("recording_start");
                 }
                 Err(err) => {
                     rec.teardown();
@@ -242,6 +243,7 @@ impl Recording {
             rec.teardown();
             match result {
                 Ok(item) => {
+                    crate::telemetry::count("recording_saved");
                     let settings = k.settings.get();
                     if settings.copy_to_clipboard {
                         let _ = clipboard::set_files(&[std::path::PathBuf::from(&item.file_path)]);

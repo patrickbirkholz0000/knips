@@ -61,6 +61,7 @@ export const mockBootstrap: Bootstrap = {
   version: "0.1.0",
   ocrAvailable: true,
   hevcAvailable: true,
+  telemetryConsent: null,
 };
 
 const now = Date.UTC(2026, 9, 12, 14, 3, 27);
@@ -85,7 +86,13 @@ export const mockItems: CaptureItem[] = [item(1), item(2, "video"), item(3), ite
 
 if (!inTauri) {
   let settings = { ...mockSettings };
-  registerMock("get_bootstrap", () => ({ ...mockBootstrap, settings }));
+  let telemetryConsent: boolean | null = mockBootstrap.telemetryConsent;
+  registerMock("get_bootstrap", () => ({ ...mockBootstrap, settings, telemetryConsent }));
+  registerMock("telemetry_set_consent", ({ consent }) => {
+    telemetryConsent = consent;
+    mockEmit("bootstrap-changed", { ...mockBootstrap, settings, telemetryConsent });
+  });
+  registerMock("telemetry_count", () => {});
   registerMock("set_settings", ({ patch }) => {
     settings = { ...settings, ...patch };
     mockEmit("bootstrap-changed", { ...mockBootstrap, settings });

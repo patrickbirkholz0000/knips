@@ -200,6 +200,12 @@ export const api = {
   /** GIF neben der Datei im Ablageordner; erscheint als Karte. */
   videoExportGif: (id: string, document: VideoDocument) => call<CaptureItem>("video_export_gif", { id, document }),
   videoCancel: (id: string) => call<void>("video_cancel", { id }),
+
+  // Anonyme Nutzungsstatistik
+  /** Zustimmung (neue Kennung, ab jetzt zählen) oder Ablehnung (Kennung und Zähler löschen). Schließt `#/consent`. */
+  telemetrySetConsent: (consent: boolean) => call<void>("telemetry_set_consent", { consent }),
+  /** Ereignis zählen, das nur die Oberfläche sieht. Rust nimmt nur Namen aus der Erlaubt-Liste an. */
+  telemetryCount: (event: "censor_manual" | "censor_smart") => call<void>("telemetry_count", { event }),
 };
 
 // ---------------------------------------------------------------- Ereignisse

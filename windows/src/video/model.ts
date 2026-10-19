@@ -186,6 +186,7 @@ export class VideoModel {
       track: null,
     };
     this.set({ redactions: [...this.s.redactions, r], selectedId: r.id });
+    void api.telemetryCount("censor_manual");
   }
 
   updateRedaction(id: string, change: (r: VideoRedaction) => VideoRedaction) {

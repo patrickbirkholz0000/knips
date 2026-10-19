@@ -20,7 +20,7 @@ mod mock;
 #[cfg(not(windows))]
 use mock as imp;
 
-pub use imp::{capture, clipboard, hotkeys, media, monitors, ocr, overlay, sample, shell, sound, testinput};
+pub use imp::{capture, clipboard, hotkeys, media, monitors, ocr, overlay, sample, shell, sound, system, testinput};
 pub use types::*;
 
 /// `true` unter Windows, `false` in der Attrappe.

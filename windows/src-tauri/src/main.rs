@@ -18,6 +18,7 @@ mod scroll;
 mod selftest;
 mod settings;
 mod store;
+mod telemetry;
 mod tray;
 mod video;
 mod wm;
@@ -132,6 +133,8 @@ fn run(args: Vec<String>) {
             commands::video_save,
             commands::video_export_gif,
             commands::video_cancel,
+            commands::telemetry_set_consent,
+            commands::telemetry_count,
             #[cfg(feature = "dev")]
             selftest::selftest_report,
         ])

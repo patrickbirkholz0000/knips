@@ -12,6 +12,7 @@ pub mod sensitive;
 pub mod settings;
 pub mod signature;
 pub mod stitch;
+pub mod telemetry;
 pub mod textlayout;
 pub mod tracker;
 pub mod videodetect;

@@ -183,7 +183,9 @@ impl VideoJobs {
             let _ = std::fs::remove_file(&tmp);
             return Err(err);
         }
-        k.store.save_video(Some(&tmp), &document, &item)
+        let saved = k.store.save_video(Some(&tmp), &document, &item)?;
+        crate::telemetry::count("export_mp4");
+        Ok(saved)
     }
 
     /// GIF neben der Datei im Ablageordner; erscheint als Karte.
@@ -213,6 +215,7 @@ impl VideoJobs {
         let start = document.trim_start.unwrap_or(0.0);
         let end = document.trim_end.unwrap_or(info.duration);
         let gif = k.store.add_gif(&target, size, (end - start).max(0.0));
+        crate::telemetry::count("export_gif");
         k.cards.show(gif.clone(), knips_platform::monitors::at_cursor());
         Ok(gif)
     }

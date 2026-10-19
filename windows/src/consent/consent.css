@@ -1,0 +1,45 @@
+/* Frage zur Nutzungsstatistik — heller Stil der Einstellungen (weiße Fläche, schwarzer Hauptknopf). */
+html[data-view="consent"] body {
+  background: #fff;
+  overflow: hidden;
+}
+.cs {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 24px 26px 22px;
+  background: #fff;
+  color: var(--ink);
+}
+.cs-head { display: flex; align-items: center; gap: 14px; }
+.cs-head img { width: 48px; height: 48px; flex: none; }
+.cs-head h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+  line-height: 1.2;
+}
+.cs p {
+  margin: 16px 0 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: rgb(70, 70, 76);
+}
+.cs-btns { display: flex; justify-content: flex-end; gap: 10px; margin-top: auto; padding-top: 18px; }
+.cs-btn {
+  height: 32px;
+  padding: 0 16px;
+  border-radius: 9px;
+  background: rgb(237, 237, 237);
+  color: rgb(23, 23, 23);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.cs-btn.primary { background: rgb(23, 23, 23); color: #fff; }
+.cs-btn:hover { filter: brightness(0.96); }
+.cs-btn.primary:hover { filter: brightness(1.25); }
+.cs-btn:active { opacity: 0.8; }
+.cs-btn:disabled { opacity: 0.5; }

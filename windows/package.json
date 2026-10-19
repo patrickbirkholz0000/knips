@@ -2,6 +2,14 @@
   "name": "knips-windows",
   "private": true,
   "version": "0.1.0",
+  "description": "Knips — Screenshots und Bildschirmaufnahmen mit Zensur (Windows)",
+  "license": "GPL-3.0-or-later",
+  "author": "Patrick Birkholz <kontakt@birkgroup.de>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/patrickbirkholz0000/knips.git",
+    "directory": "windows"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

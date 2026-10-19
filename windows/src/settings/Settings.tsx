@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, ArrowRight, CheckCircle2, Check, EyeOff, Folder, Info, Keyboard, Lock, Mic, ScanLine, Settings as Cog, Share, CircleDot } from "lucide-react";
+import { AlertTriangle, ArrowRight, CheckCircle2, Check, ExternalLink, EyeOff, Folder, Info, Keyboard, Lock, Mic, ScanLine, Settings as Cog, Share, CircleDot } from "lucide-react";
 import { api, events } from "../shared/ipc";
 import { useBootstrap, useItems } from "../shared/hooks";
 import { bytes } from "../shared/format";
@@ -19,7 +19,7 @@ const PANES: { id: Pane; title: string; icon: ReactNode; summary: string }[] = [
   { id: "redaction", title: "Zensur", icon: <EyeOff size={16} />, summary: "Wie sensible Stellen in Bildern und Videos unkenntlich werden." },
   { id: "export", title: "Export", icon: <Share size={16} />, summary: "Größe und Format von Screenshots, GIFs und Videos." },
   { id: "storage", title: "Ablage", icon: <Folder size={16} />, summary: "Wo deine Aufnahmen liegen und wie lange Originale bleiben." },
-  { id: "privacy", title: "Datenschutz", icon: <Lock size={16} />, summary: "Freigaben von Windows. Alles bleibt auf deinem PC." },
+  { id: "privacy", title: "Datenschutz", icon: <Lock size={16} />, summary: "Windows-Freigaben und Nutzungsstatistik. Aufnahmen bleiben auf deinem PC." },
   { id: "about", title: "Über Knips", icon: <Info size={16} />, summary: "Screenshots und kurze Bildschirmaufnahmen — mit Zensur für Bilder und Videos." },
 ];
 
@@ -86,7 +86,7 @@ function renderPane(pane: Pane, boot: Bootstrap) {
     case "redaction": return <Redaction boot={boot} />;
     case "export": return <Export boot={boot} />;
     case "storage": return <Storage boot={boot} />;
-    case "privacy": return <Privacy />;
+    case "privacy": return <Privacy boot={boot} />;
     case "about": return <About boot={boot} />;
   }
 }
@@ -379,9 +379,21 @@ const Info1 = ({ text }: { text: string }) => (
   <div className="st-info"><Check size={14} strokeWidth={3} /><span>{text}</span></div>
 );
 
-function Privacy() {
+const TELEMETRY_INFO_URL = "https://github.com/patrickbirkholz0000/knips#datenschutz";
+const SOURCE_URL = "https://github.com/patrickbirkholz0000/knips";
+
+function Privacy({ boot }: { boot: Bootstrap }) {
   return (
     <>
+      <Card title="Nutzungsstatistik">
+        <Row title="Anonyme Nutzungsstatistik" subtitle="Zählt nur, wie oft Funktionen genutzt werden – nie Bilder, Texte oder Dateinamen.">
+          <Switch on={boot.telemetryConsent === true} onChange={(v) => void api.telemetrySetConsent(v)} />
+        </Row>
+        <Div />
+        <button className="st-link" onClick={() => api.openUrl(TELEMETRY_INFO_URL)}>
+          Was wird gesendet?<ExternalLink size={13} strokeWidth={2.2} />
+        </button>
+      </Card>
       <Card title="Freigaben">
         <Perm icon={<ScanLine size={16} />} title="Bildschirmaufnahme" detail="Windows verlangt für Bildschirmaufnahmen keine Freigabe.">
           <span className="st-ok"><CheckCircle2 size={15} />Erlaubt</span>
@@ -393,7 +405,7 @@ function Privacy() {
       </Card>
       <Card title="So arbeitet Knips">
         <Info1 text="Texterkennung läuft auf diesem PC" /><Div />
-        <Info1 text="Kein Konto, nichts geht ins Internet" /><Div />
+        <Info1 text="Kein Konto. Nur wenn du zustimmst, sendet Knips anonyme Nutzungszähler" /><Div />
         <Info1 text="Geteilte Dateien sind immer die zensierte Fassung" /><Div />
         <Info1 text="„Text kopieren“ lässt zensierte Wörter weg" />
       </Card>
@@ -420,7 +432,13 @@ function About({ boot }: { boot: Bootstrap }) {
       <Card title="Für Raycast & Co.">
         <Row title="Befehle"><span className="st-mono">knips://area · window · fullscreen · record · text · last · menu</span></Row>
       </Card>
-      <p className="st-note">© 2026 Patrick Birkholz</p>
+      <Card title="Lizenz">
+        <Row title="© 2026 Patrick Birkholz" subtitle="Freie Software unter der GNU GPL v3 oder neuer — ohne jede Gewährleistung.">
+          <Pill onClick={() => api.openUrl(SOURCE_URL)}>
+            <span className="st-pill-ic">Quellcode<ExternalLink size={12} strokeWidth={2.4} /></span>
+          </Pill>
+        </Row>
+      </Card>
     </>
   );
 }

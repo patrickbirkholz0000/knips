@@ -34,7 +34,9 @@ cargo check -p knips --features dev --target x86_64-pc-windows-msvc       # Wind
 Der Windows-Check braucht ein Windows-Ziel (`rustup target add x86_64-pc-windows-msvc`) und für
 `tauri-build` einen Ressourcen-Compiler (`llvm-rc`; zum reinen Prüfen genügt eine Attrappe, die eine leere
 Datei schreibt). Homebrew-Rust hat kein rustup — eine eigene Toolchain mit `CARGO_HOME`/`RUSTUP_HOME`
-anlegen.
+anlegen. Liegt seit 20.10.2026 in `~/.knips-rust` (`RUSTUP_HOME=~/.knips-rust/rustup`, Cargo aus
+`~/.knips-rust/cargo/bin`, Ziel installiert; `llvm-rc` aus `/opt/homebrew/opt/llvm@22/bin` in den PATH,
+eigenes `CARGO_TARGET_DIR`, damit sich Homebrew- und rustup-Compiler nicht gegenseitig neu bauen).
 
 ## Selbsttests
 
@@ -54,8 +56,26 @@ Alle zusammen: `scripts/selftest.ps1` (macht die CI).
 | `hotkeys` | Kürzel über RegisterHotKey und Tastatur-Hook mit simulierten Tastendrücken (auch Druck, Win-Kombination) |
 | `overlay` | das echte Auswahl-Overlay mit simulierter Maus/Tastatur: Ziehen, Umschalt-Quadrat, Esc, Eingabe, Leertaste + Fensterklick — nur auf Rechnern ohne Nutzer (CI) |
 | `clipboard` | echte Zwischenablage: Bild verzögert anbieten (PNG/JPEG) und zurücklesen — nur für die CI |
+| `telemetry` | Nutzungsstatistik gegen einen lokalen Server (127.0.0.1): in Sandbox/CI aus, ohne Zustimmung nichts, Zustimmung → Ereignisse → Senden (Nutzlast, Erlaubt-Liste, Deckel 10000) → Zähler zurückgesetzt, Fehler behält Zähler, Widerruf löscht Kennung + Zähler; Nutzlast als `telemetry-payload.json` |
 | `render` | Renderer der Oberfläche — gleiche Dokumente wie `SelfTest.render` auf dem Mac (Vergleich: `tests/reference/mac-render-*.png`) |
-| `ui` | alle Fenster mit Beispieldaten, je ein Bild (Vergleich: `tests/reference/mac-ui/`) |
+| `ui` | alle Fenster mit Beispieldaten, je ein Bild (Vergleich: `tests/reference/mac-ui/`), auch `einwilligung.png` und Datenschutz/Über Knips in voller Höhe |
+
+## Nutzungsstatistik und Lizenz
+
+Freie Software unter GPL-3.0-or-later (`LICENSE` = Text von gnu.org, zeigt der NSIS-Installer als
+Lizenzseite; Über Knips nennt © und Quellcode-Link). Anonyme Nutzungsstatistik nach Vertrag v1 (gleich
+auf dem Mac, Server `https://knips.velno.ai/v1/ping`): Regeln, Erlaubt-Liste (24 Ereignisse), Nutzlast in
+`crates/core/src/telemetry.rs` (Kern-Tests), Senden/Fragen in `src-tauri/src/telemetry.rs` (ureq +
+native-tls = SChannel, eigener Thread, 30 s nach Start und alle 6 h, höchstens 1× in 24 h, 10 s Zeitlimit).
+Zustand in `settings.json` (`telemetryConsent`, `…InstallId`, `…Counts`, `…LastSent`; die Oberfläche
+kann ihn über `set_settings` nicht ändern). Frage `#/consent` beim Start nach der Druck-Tasten-Frage,
+Schalter unter Einstellungen → Datenschutz. Nie in Selbsttests, Sandbox oder CI (`CI`/`GITHUB_ACTIONS`);
+Feature `dev` nur mit `KNIPS_TELEMETRY=1` (Kanal „dev“); `KNIPS_TELEMETRY_URL` ersetzt das Ziel.
+Gezählt wird, wo die Aktion fertig ist: `capture_*` (coordinator.rs, scroll.rs), `recording_start/saved`,
+`editor_open`/`video_editor_open` (neues Fenster), `censor_auto` (Erkennung), `censor_manual`/`censor_smart`
+(Editor über `telemetry_count`), `export_png/jpeg` (Speichern im Editor), `export_mp4` (Video-Export mit
+Änderungen), `export_gif`, `copy_image`/`copy_text`/`pin`/`drag_out` (Karten, Editor, Pins),
+`history_open`, `settings_open`, `app_launch`.
 
 ## Kürzel (Windows-Standard)
 

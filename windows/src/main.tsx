@@ -15,6 +15,7 @@ const views: Record<string, React.LazyExoticComponent<React.ComponentType<{ para
   "scroll-controls": lazy(() => import("./recording/ScrollControls")),
   history: lazy(() => import("./history/History")),
   settings: lazy(() => import("./settings/Settings")),
+  consent: lazy(() => import("./consent/Consent")),
   editor: lazy(() => import("./editor/Editor")),
   video: lazy(() => import("./video/VideoEditor")),
   "selftest-render": lazy(() => import("./editor/SelftestRender")),

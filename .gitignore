@@ -3,3 +3,21 @@ build/
 *.xcodeproj/
 .swiftpm/
 .DS_Store
+
+# Pakete und Signatur-Material nie einchecken
+*.dmg
+*.p12
+*.p8
+*.cer
+*.mobileprovision
+
+# Geheimnisse, Logs
+.env
+.env.*
+*.log
+
+# Editoren und Systemdateien
+Thumbs.db
+.vscode/
+.idea/
+

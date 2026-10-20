@@ -58,6 +58,7 @@ enum SelectionResult {
             window.becomesKeyOnlyIfNeeded = false
             window.acceptsMouseMovedEvents = true
             window.animationBehavior = .none
+            window.appearance = Brand.Dark.appearance
             window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
             let view = SelectionView(screen: screen, overlay: self)
             view.frame = NSRect(origin: .zero, size: screen.frame.size)
@@ -153,12 +154,15 @@ final class SelectionView: NSView {
     private let dimLayer = CAShapeLayer()
     private let highlightLayer = CAShapeLayer()
     private let borderLayer = CAShapeLayer()
+    /// Eckgriffe der Auswahl: vier kräftige L-Ecken wie im Zeichen.
+    private let handleLayer = CAShapeLayer()
     private let crossH = CALayer()
     private let crossV = CALayer()
     private let sizeBG = CALayer()
     private let sizeText = CATextLayer()
+    /// Hinweiszeile unten: fertig gezeichnete dunkle Pille mit Tastenkappen (`HintPill`).
     private let hintBG = CALayer()
-    private let hintText = CATextLayer()
+    private var hintKey: String?
     private let loupe = CALayer()
     private let loupeImage = CALayer()
     private let loupeCenter = CALayer()
@@ -199,26 +203,40 @@ final class SelectionView: NSView {
         imageLayer.contentsGravity = .resize
         root.addSublayer(imageLayer)
 
+        // Darstellung nach docs/design.md („Auswahl-Overlay“): abgedunkelt, Auswahl in Königsblau hell mit Eckgriffen,
+        // Größe und Hinweise als dunkle Pillen, Zahlen in Mono.
         dimLayer.fillRule = .evenOdd
-        dimLayer.fillColor = NSColor.black.withAlphaComponent(0.38).cgColor
+        dimLayer.fillColor = Brand.Dark.fill.withAlphaComponent(0.4).cgColor
         root.addSublayer(dimLayer)
 
-        highlightLayer.fillColor = NSColor.controlAccentColor.withAlphaComponent(0.16).cgColor
-        highlightLayer.strokeColor = NSColor.controlAccentColor.cgColor
-        highlightLayer.lineWidth = 3
+        // Fenstermodus: Königsblau-Fläche 12 % und Rand in Königsblau hell.
+        highlightLayer.fillColor = Brand.Dark.royal.withAlphaComponent(0.12).cgColor
+        highlightLayer.strokeColor = Brand.Dark.accent.cgColor
+        highlightLayer.lineWidth = 2
+        highlightLayer.shadowColor = NSColor.black.cgColor
+        highlightLayer.shadowOpacity = 0.35
+        highlightLayer.shadowRadius = 1.5
+        highlightLayer.shadowOffset = .zero
         root.addSublayer(highlightLayer)
 
         borderLayer.fillColor = nil
-        borderLayer.strokeColor = NSColor.white.cgColor
-        borderLayer.lineWidth = 1
-        borderLayer.shadowColor = NSColor.black.cgColor
-        borderLayer.shadowOpacity = 0.6
-        borderLayer.shadowRadius = 1
-        borderLayer.shadowOffset = .zero
-        root.addSublayer(borderLayer)
+        borderLayer.strokeColor = Brand.Dark.accent.cgColor
+        borderLayer.lineWidth = 1.5
+        handleLayer.fillColor = nil
+        handleLayer.strokeColor = Brand.Dark.accent.cgColor
+        handleLayer.lineWidth = 4
+        handleLayer.lineCap = .round
+        handleLayer.lineJoin = .round
+        for l in [borderLayer, handleLayer] {
+            l.shadowColor = NSColor.black.cgColor
+            l.shadowOpacity = 0.45
+            l.shadowRadius = 1.5
+            l.shadowOffset = .zero
+            root.addSublayer(l)
+        }
 
         for l in [crossH, crossV] {
-            l.backgroundColor = NSColor.white.withAlphaComponent(0.55).cgColor
+            l.backgroundColor = Brand.Dark.ink.withAlphaComponent(0.55).cgColor
             l.shadowColor = NSColor.black.cgColor
             l.shadowOpacity = 0.5
             l.shadowRadius = 0.5
@@ -226,43 +244,58 @@ final class SelectionView: NSView {
             root.addSublayer(l)
         }
 
-        for (bg, text) in [(sizeBG, sizeText), (hintBG, hintText)] {
-            bg.backgroundColor = NSColor(white: 0.08, alpha: 0.82).cgColor
-            bg.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
-            bg.borderWidth = 1
-            text.contentsScale = scale
-            text.foregroundColor = NSColor.white.cgColor
-            text.alignmentMode = .center
-            bg.addSublayer(text)
-            root.addSublayer(bg)
-        }
-        sizeText.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        sizeBG.backgroundColor = Brand.Dark.fill.cgColor
+        sizeBG.borderColor = Brand.Dark.line.cgColor
+        sizeBG.borderWidth = 1
+        sizeBG.shadowColor = NSColor.black.cgColor
+        sizeBG.shadowOpacity = 0.3
+        sizeBG.shadowRadius = 6
+        sizeBG.shadowOffset = CGSize(width: 0, height: -2)
+        sizeText.contentsScale = scale
+        sizeText.foregroundColor = Brand.Dark.ink.cgColor
+        sizeText.alignmentMode = .center
+        sizeText.font = Brand.nsMono(12, .medium)
         sizeText.fontSize = 12
-        hintText.font = NSFont.systemFont(ofSize: 12.5, weight: .medium)
-        hintText.fontSize = 12.5
+        sizeBG.addSublayer(sizeText)
+        root.addSublayer(sizeBG)
+
+        hintBG.contentsScale = scale
+        hintBG.contentsGravity = .resize
+        hintBG.shadowColor = NSColor.black.cgColor
+        hintBG.shadowOpacity = 0.35
+        hintBG.shadowRadius = 10
+        hintBG.shadowOffset = CGSize(width: 0, height: -4)
+        root.addSublayer(hintBG)
 
         loupe.frame = CGRect(x: 0, y: 0, width: Self.loupeSize, height: Self.loupeSize)
         loupe.cornerRadius = Self.loupeSize / 2
         loupe.masksToBounds = true
-        loupe.borderColor = NSColor.white.cgColor
-        loupe.borderWidth = 2
-        loupe.backgroundColor = NSColor.black.cgColor
+        // Dunkler Ring außen, feine helle Linie innen: auf hellem wie dunklem Inhalt sichtbar.
+        loupe.borderColor = Brand.Dark.fill.cgColor
+        loupe.borderWidth = 3
+        loupe.backgroundColor = Brand.Dark.fill.cgColor
         loupeImage.frame = loupe.bounds
         loupeImage.magnificationFilter = .nearest
         loupeImage.contentsGravity = .resize
         loupe.addSublayer(loupeImage)
+        let ring = CAShapeLayer()
+        ring.path = CGPath(ellipseIn: loupe.bounds.insetBy(dx: 3.5, dy: 3.5), transform: nil)
+        ring.fillColor = nil
+        ring.strokeColor = Brand.Dark.ink.withAlphaComponent(0.55).cgColor
+        ring.lineWidth = 1
+        loupe.addSublayer(ring)
         let cell = Self.loupeSize / CGFloat(Self.loupePixels)
         loupeCenter.frame = CGRect(x: (Self.loupeSize - cell) / 2, y: (Self.loupeSize - cell) / 2, width: cell, height: cell)
-        loupeCenter.borderColor = NSColor.white.cgColor
+        loupeCenter.borderColor = Brand.Dark.accent.cgColor
         loupeCenter.borderWidth = 1.5
         loupe.addSublayer(loupeCenter)
         root.addSublayer(loupe)
         loupeText.contentsScale = scale
-        loupeText.font = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .semibold)
+        loupeText.font = Brand.nsMono(10.5, .medium)
         loupeText.fontSize = 10.5
-        loupeText.foregroundColor = NSColor.white.cgColor
-        loupeText.backgroundColor = NSColor(white: 0.08, alpha: 0.82).cgColor
-        loupeText.cornerRadius = 5
+        loupeText.foregroundColor = Brand.Dark.ink.cgColor
+        loupeText.backgroundColor = Brand.Dark.fill.cgColor
+        loupeText.cornerRadius = 8
         loupeText.alignmentMode = .center
         root.addSublayer(loupeText)
     }
@@ -373,17 +406,21 @@ final class SelectionView: NSView {
         }
 
         if let selection {
-            borderLayer.path = CGPath(rect: selection.insetBy(dx: -0.5, dy: -0.5), transform: nil)
+            let outline = selection.insetBy(dx: -0.75, dy: -0.75)
+            borderLayer.path = CGPath(rect: outline, transform: nil)
             borderLayer.isHidden = false
+            handleLayer.path = AreaFrame.cornerPath(in: outline, arm: min(16, outline.width / 2.5, outline.height / 2.5))
+            handleLayer.isHidden = false
             let s = scale
             setLabel(sizeText, bg: sizeBG, text: "\(Int((selection.width * s).rounded())) × \(Int((selection.height * s).rounded()))")
-            var origin = CGPoint(x: selection.maxX - sizeBG.bounds.width, y: selection.minY - sizeBG.bounds.height - 8)
-            if origin.y < 4 { origin.y = selection.minY + 8 }
+            var origin = CGPoint(x: selection.maxX - sizeBG.bounds.width, y: selection.minY - sizeBG.bounds.height - 10)
+            if origin.y < 4 { origin.y = selection.minY + 10 }
             origin.x = max(4, min(origin.x, bounds.width - sizeBG.bounds.width - 4))
             sizeBG.frame.origin = origin
             sizeBG.isHidden = false
         } else {
             borderLayer.isHidden = true
+            handleLayer.isHidden = true
             sizeBG.isHidden = true
         }
 
@@ -424,21 +461,21 @@ final class SelectionView: NSView {
         loupeText.frame = CGRect(x: o.x + size / 2 - 42, y: o.y - 20, width: 84, height: 16)
     }
 
+    /// Hinweiszeile unten als dunkle Pille: was die Maus tut, dann die Tasten als Mono-Tastenkappen.
     private func updateHint(visible: Bool) {
         hintBG.isHidden = !visible
         guard visible else { return }
-        let prefix = switch overlay.purpose {
-        case .recording: "Aufnahme  ·  "
-        case .text: "Text erfassen  ·  "
-        case .scroll: "Scroll-Screenshot: sichtbaren Bereich wählen  ·  "
-        case .screenshot: ""
+        let parts = HintPill.parts(purpose: overlay.purpose, windowMode: overlay.windowMode)
+        let scale = screen.backingScaleFactor
+        let key = "\(parts)|\(scale)"
+        if key != hintKey, let pill = HintPill.render(parts, scale: scale) {
+            hintKey = key
+            hintBG.contents = pill.image
+            hintBG.bounds = CGRect(origin: .zero, size: pill.size)
         }
-        let text = overlay.windowMode
-            ? prefix + "Fenster anklicken  ·  Leertaste: Bereich  ·  ⏎ ganzer Bildschirm  ·  Esc: Abbrechen"
-            : prefix + "Bereich ziehen  ·  Leertaste: Fenster  ·  ⏎ ganzer Bildschirm  ·  Esc: Abbrechen"
-        setLabel(hintText, bg: hintBG, text: text, padX: 14, height: 30)
-        let menuBar = screen.frame.maxY - screen.visibleFrame.maxY
-        hintBG.frame.origin = CGPoint(x: (bounds.width - hintBG.bounds.width) / 2, y: bounds.height - menuBar - hintBG.bounds.height - 18)
+        // Über dem Dock bzw. dem unteren Bildschirmrand.
+        let bottomInset = screen.visibleFrame.minY - screen.frame.minY
+        hintBG.frame.origin = CGPoint(x: ((bounds.width - hintBG.bounds.width) / 2).rounded(), y: bottomInset + 28)
     }
 
     private func setLabel(_ text: CATextLayer, bg: CALayer, text string: String, padX: CGFloat = 9, height: CGFloat = 24) {
@@ -447,7 +484,125 @@ final class SelectionView: NSView {
         text.string = string
         bg.bounds = CGRect(x: 0, y: 0, width: ceil(width) + 2 * padX, height: height)
         bg.cornerRadius = height / 2
-        let lineHeight = text.fontSize * 1.25
-        text.frame = CGRect(x: 0, y: (height - lineHeight) / 2, width: bg.bounds.width, height: lineHeight)
+        let lineHeight = ceil(font.ascender - font.descender + font.leading)
+        text.frame = CGRect(x: 0, y: ((height - lineHeight) / 2).rounded(), width: bg.bounds.width, height: lineHeight)
+    }
+}
+
+/// Hinweiszeile des Auswahl-Overlays als fertiges Bild (eine Ebene, kein Layout pro Mausbewegung).
+enum HintPill {
+    enum Part: CustomStringConvertible {
+        /// Art der Aufnahme als Mono-Versalien (`VIDEO`).
+        case overline(String)
+        /// Was die Maus tut.
+        case lead(String)
+        /// Taste und was sie tut.
+        case key(String, String)
+
+        var description: String {
+            switch self {
+            case .overline(let s): "o:\(s)"
+            case .lead(let s): "l:\(s)"
+            case .key(let k, let s): "k:\(k)=\(s)"
+            }
+        }
+    }
+
+    static func parts(purpose: SelectionPurpose, windowMode: Bool) -> [Part] {
+        var parts: [Part] = []
+        switch purpose {
+        case .recording: parts.append(.overline("Video"))
+        case .text: parts.append(.overline("Text erfassen"))
+        case .scroll: parts.append(.overline("Scroll-Screenshot"))
+        case .screenshot: break
+        }
+        if windowMode {
+            parts += [.lead("Fenster anklicken"), .key("Leertaste", "Bereich")]
+        } else {
+            parts += [.lead(purpose == .scroll ? "Sichtbaren Bereich ziehen" : "Bereich ziehen"), .key("Leertaste", "Fenster"),
+                      .key("⇧", "Quadrat")]
+        }
+        parts += [.key("⏎", "Bildschirm"), .key("Esc", "Abbrechen")]
+        return parts
+    }
+
+    static let height: CGFloat = 38
+
+    /// Zeichnet die Pille in Punkten × `scale`.
+    static func render(_ parts: [Part], scale: CGFloat) -> (image: CGImage, size: CGSize)? {
+        let lead: [NSAttributedString.Key: Any] = [.font: Brand.nsFont(13, .medium), .foregroundColor: Brand.Dark.ink]
+        let soft: [NSAttributedString.Key: Any] = [.font: Brand.nsFont(13), .foregroundColor: Brand.Dark.muted]
+        let over: [NSAttributedString.Key: Any] = [.font: Brand.nsMono(10.5, .medium), .foregroundColor: Brand.Dark.accent,
+                                                    .kern: Brand.overlineTracking]
+        let cap: [NSAttributedString.Key: Any] = [.font: Brand.nsMono(11, .medium),
+                                                   .foregroundColor: Brand.Dark.ink.withAlphaComponent(0.88)]
+        let capHeight: CGFloat = 21, capPad: CGFloat = 6, keyGap: CGFloat = 6, groupGap: CGFloat = 16, pad: CGFloat = 16
+
+        // Erst messen: Elemente mit Breite und Zeichenbefehl.
+        typealias Item = (width: CGFloat, draw: (CGFloat) -> Void)
+        var items: [Item] = []
+        func text(_ s: String, _ attrs: [NSAttributedString.Key: Any]) -> Item {
+            let a = NSAttributedString(string: s, attributes: attrs)
+            let size = a.size()
+            return (ceil(size.width), { x in a.draw(at: NSPoint(x: x, y: ((height - size.height) / 2).rounded())) })
+        }
+        func divider() -> Item {
+            (1, { x in
+                Brand.Dark.line.setFill()
+                NSRect(x: x, y: (height - 16) / 2, width: 1, height: 16).fill()
+            })
+        }
+        for (i, part) in parts.enumerated() {
+            if i > 0 { items.append((groupGap, { _ in })) }
+            switch part {
+            case .overline(let s):
+                items.append(text(s.uppercased(), over))
+                items.append((groupGap, { _ in }))
+                items.append(divider())
+            case .lead(let s):
+                items.append(text(s, lead))
+            case .key(let k, let s):
+                var attrs = cap
+                if KeySymbols.isSymbol(k) { attrs[.font] = NSFont.systemFont(ofSize: 12, weight: .medium) }
+                let label = NSAttributedString(string: k, attributes: attrs)
+                let ls = label.size()
+                let w = max(capHeight, ceil(ls.width) + 2 * capPad)
+                items.append((w, { x in
+                    let r = NSRect(x: x + 0.5, y: (height - capHeight) / 2 + 0.5, width: w - 1, height: capHeight - 1)
+                    let path = NSBezierPath(roundedRect: r, xRadius: 5, yRadius: 5)
+                    Brand.Dark.raised.setFill()
+                    path.fill()
+                    Brand.Dark.line.setStroke()
+                    path.lineWidth = 1
+                    path.stroke()
+                    label.draw(at: NSPoint(x: x + (w - ls.width) / 2, y: ((height - ls.height) / 2).rounded()))
+                }))
+                items.append((keyGap, { _ in }))
+                items.append(text(s, soft))
+            }
+        }
+        let width = ceil(items.reduce(2 * pad) { $0 + $1.width })
+        let size = CGSize(width: width, height: height)
+        guard let ctx = CGContext(data: nil, width: Int(width * scale), height: Int(height * scale), bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else { return nil }
+        ctx.scaleBy(x: scale, y: scale)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+        let pill = NSBezierPath(roundedRect: NSRect(origin: .zero, size: size).insetBy(dx: 0.5, dy: 0.5),
+                                xRadius: height / 2 - 0.5, yRadius: height / 2 - 0.5)
+        Brand.Dark.fill.setFill()
+        pill.fill()
+        Brand.Dark.line.setStroke()
+        pill.lineWidth = 1
+        pill.stroke()
+        var x = pad
+        for item in items {
+            item.draw(x)
+            x += item.width
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        guard let image = ctx.makeImage() else { return nil }
+        return (image, size)
     }
 }

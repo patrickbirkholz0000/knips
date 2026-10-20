@@ -353,59 +353,6 @@ extension Comparable {
     func clamped(to range: ClosedRange<Self>) -> Self { min(max(self, range.lowerBound), range.upperBound) }
 }
 
-/// Kurze Einblendung („Kopiert“, „Gespeichert“) unten mittig.
-@MainActor enum HUD {
-    private static var panel: NSPanel?
-    private static var hideWork: DispatchWorkItem?
-
-    static func show(_ text: String, symbol: String = "checkmark.circle.fill", on screen: NSScreen? = nil) {
-        let screen = screen ?? NSScreen.withMouse
-        let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 13, weight: .semibold)
-        label.textColor = .white
-        let icon = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage())
-        icon.contentTintColor = .white
-        icon.symbolConfiguration = .init(pointSize: 14, weight: .semibold)
-        let stack = NSStackView(views: [icon, label])
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 9, left: 14, bottom: 9, right: 16)
-        let size = stack.fittingSize
-        let p = panel ?? makePanel()
-        panel = p
-        let bg = NSView(frame: NSRect(origin: .zero, size: size))
-        bg.wantsLayer = true
-        bg.layer?.backgroundColor = NSColor(white: 0.1, alpha: 0.88).cgColor
-        bg.layer?.cornerRadius = size.height / 2
-        stack.frame = bg.bounds
-        bg.addSubview(stack)
-        p.contentView = bg
-        let vf = screen.visibleFrame
-        p.setFrame(NSRect(x: vf.midX - size.width / 2, y: vf.minY + 64, width: size.width, height: size.height), display: true)
-        p.alphaValue = 1
-        p.orderFrontRegardless()
-        hideWork?.cancel()
-        let work = DispatchWorkItem {
-            NSAnimationContext.runAnimationGroup({ ctx in
-                ctx.duration = 0.25
-                p.animator().alphaValue = 0
-            }, completionHandler: { p.orderOut(nil) })
-        }
-        hideWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4, execute: work)
-    }
-
-    private static func makePanel() -> NSPanel {
-        let p = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        p.isOpaque = false
-        p.backgroundColor = .clear
-        p.hasShadow = true
-        p.level = .statusBar
-        p.ignoresMouseEvents = true
-        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        return p
-    }
-}
-
 @MainActor enum Alerts {
     static func error(_ title: String, _ error: Error? = nil, info: String? = nil) {
         let a = NSAlert()

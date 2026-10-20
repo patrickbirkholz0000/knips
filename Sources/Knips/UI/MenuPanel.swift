@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// Menüleisten-Panel: dunkel, abgerundet, Hauptaktion oben, Raster aus zwei Spalten, letzte Aufnahmen,
-/// schlichte Fußzeile.
+/// Menüleisten-Panel: immer dunkel (Radius 16), Hauptaktion oben, Raster aus zwei Spalten, letzte Aufnahmen,
+/// leise Fußzeile.
 @MainActor final class MenuPanelController {
     static let shared = MenuPanelController()
 
@@ -63,6 +63,7 @@ import SwiftUI
         p.level = .popUpMenu
         p.hidesOnDeactivate = false
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        p.appearance = Brand.Dark.appearance
         let view = MenuHostingView(rootView: MenuPanelView(model: model, actions: actions))
         view.model = model
         p.contentView = view
@@ -184,31 +185,38 @@ private extension View {
 
 // MARK: - Inhalt
 
+/// Panel-Inhalt (docs/design.md, „Menü-Panel“): Kopf mit Zeichen, Wortmarke und Status; Hauptaktion als große
+/// gehobene Zeile mit Tastenkappen; Raster der weiteren Aktionen; `ZULETZT` mit Vorschaubildern; leiser Fuß.
 struct MenuPanelView: View {
     @ObservedObject var model: MenuPanelModel
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var recorder = RecordingController.shared
     let actions: MenuActions
 
-    private static let panelColor = Color(red: 0.11, green: 0.11, blue: 0.12)
+    static let width: CGFloat = 344
+    private static let inset: CGFloat = 14
+    private static var contentWidth: CGFloat { width - 2 * inset }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let shape = RoundedRectangle(cornerRadius: Brand.Radius.panel, style: .continuous)
+        VStack(alignment: .leading, spacing: 0) {
             header
+                .padding(.bottom, 14)
             primary
+                .padding(.bottom, 8)
             grid
             if !model.recent.isEmpty {
-                divider
+                divider.padding(.vertical, 14)
                 recentRow
             }
-            divider
+            divider.padding(.top, 14).padding(.bottom, 6)
             footer
         }
-        .padding(14)
-        .frame(width: 340)
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Self.panelColor))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.white.opacity(0.09)))
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(Self.inset)
+        .frame(width: Self.width)
+        // Schatten kommt vom Fenster (folgt der runden Form), deshalb hier keiner.
+        .darkSurface(shape, shadow: false)
+        .clipShape(shape)
         .coordinateSpace(name: "menu")
         .onPreferenceChange(HoverFrames.self) { frames in
             onMainActor { model.frames = frames }
@@ -218,50 +226,89 @@ struct MenuPanelView: View {
     }
 
     private var divider: some View {
-        Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+        Rectangle().fill(Color.brand(Brand.Dark.line)).frame(height: 1)
     }
+
+    // MARK: Kopf
 
     private var header: some View {
-        HStack(spacing: 9) {
-            Image(systemName: "viewfinder")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.85))
-            Text("Knips")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white)
-            Spacer()
-            if recorder.isRecording {
-                Text("Aufnahme läuft")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.red)
-            }
+        let recording = recorder.isRecording
+        return HStack(spacing: 8) {
+            BrandMark(size: 22, recording: recording)
+            Wordmark(size: 19, recording: recording)
+            Spacer(minLength: 8)
+            status
         }
-        .padding(.horizontal, 4)
+        .padding(.leading, 2)
+        .padding(.trailing, 4)
+        .frame(height: 26)
     }
 
-    /// Hauptaktion als großes, ruhiges Feld mit Kürzel rechts.
+    @ViewBuilder private var status: some View {
+        switch recorder.phase {
+        case .recording:
+            HStack(spacing: 6) {
+                RecordDot(size: 7)
+                Text(Format.duration(recorder.elapsed))
+                    .font(Brand.mono(12, .medium))
+                    .foregroundStyle(Color.brand(Brand.Dark.record))
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Aufnahme läuft, \(Format.duration(recorder.elapsed))")
+        case .starting, .countdown, .finishing:
+            statusLabel(Brand.Dark.muted, "Einen Moment")
+        case .idle:
+            if ScreenCapture.hasPermission {
+                statusLabel(Brand.Dark.success, "Bereit")
+            } else {
+                statusLabel(Brand.Dark.record, "Freigabe fehlt")
+            }
+        }
+    }
+
+    private func statusLabel(_ color: NSColor, _ text: String) -> some View {
+        HStack(spacing: 5) {
+            StatusDot(color: color, size: 6)
+            Text(text)
+                .font(Brand.font(12, .medium))
+                .foregroundStyle(Color.brand(Brand.Dark.muted))
+                .lineLimit(1)
+                .fixedSize()
+        }
+    }
+
+    // MARK: Hauptaktion
+
     private var primary: some View {
         let id = "primary"
         let hovered = model.hovered == id
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
         return Button { actions.capture(.captureArea) } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 Image(systemName: "rectangle.dashed")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.brand(Brand.Dark.accent))
+                    .frame(width: 32, height: 32)
+                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.brand(Brand.Dark.accentSoft)))
                 Text("Bereich aufnehmen")
-                    .font(.system(size: 13.5, weight: .medium))
-                Spacer()
-                shortcut(.captureArea)
+                    .font(Brand.font(15, .medium))
+                    .foregroundStyle(Color.brand(Brand.Dark.ink))
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                if let combo = settings.activeHotkeys[.captureArea] { KeyCaps(combo: combo, size: 11.5) }
             }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 12)
-            .frame(height: 44)
-            .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Color.white.opacity(hovered ? 0.11 : 0.06)))
-            .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(Color.white.opacity(0.1)))
-            .contentShape(Rectangle())
+            .padding(.leading, 10)
+            .padding(.trailing, 12)
+            .frame(height: 54)
+            .background(shape.fill(Color.brand(hovered ? Brand.Dark.hover : Brand.Dark.raised)))
+            .overlay(shape.strokeBorder(Color.brand(hovered ? Brand.Dark.accent.withAlphaComponent(0.45) : Brand.Dark.line)))
+            .contentShape(shape)
         }
         .buttonStyle(.plain)
         .hoverID(id)
     }
+
+    // MARK: Raster
 
     private var grid: some View {
         let recording = recorder.isRecording
@@ -269,124 +316,127 @@ struct MenuPanelView: View {
             tile("window", "Fenster", "macwindow", .captureWindow) { actions.capture(.captureWindow) }
             tile("full", "Bildschirm", "display", .captureFullscreen) { actions.capture(.captureFullscreen) }
             tile("record", recording ? "Stoppen" : "Video", recording ? "stop.circle.fill" : "record.circle",
-                 .toggleRecording, tint: recording ? .red : nil) { actions.capture(.toggleRecording) }
+                 .toggleRecording, tint: recording ? Brand.Dark.record : nil) { actions.capture(.toggleRecording) }
             tile("last", "Letzter Bereich", "arrow.counterclockwise", .captureLastArea) { actions.capture(.captureLastArea) }
             tile("scroll", "Scrollen", "arrow.down.doc", .captureScrolling) { actions.capture(.captureScrolling) }
             tile("text", "Text erfassen", "text.viewfinder", .captureText) { actions.capture(.captureText) }
             tile("pin", "Anpinnen", "pin", .pinClipboard) { actions.capture(.pinClipboard) }
             tile("open", "Bild öffnen", "photo.on.rectangle", nil, action: actions.openImage)
-
         }
     }
 
-    private func tile(_ id: String, _ title: String, _ symbol: String, _ hotkey: HotkeyAction?, tint: Color? = nil,
+    private func tile(_ id: String, _ title: String, _ symbol: String, _ hotkey: HotkeyAction?, tint: NSColor? = nil,
                       action: @escaping () -> Void) -> some View {
         let hovered = model.hovered == id
+        let shape = RoundedRectangle(cornerRadius: Brand.Radius.button, style: .continuous)
         return Button(action: action) {
             HStack(spacing: 9) {
                 Image(systemName: symbol)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(tint ?? .white.opacity(0.75))
+                    .foregroundStyle(Color.brand(tint ?? (hovered ? Brand.Dark.ink : Brand.Dark.muted)))
                     .frame(width: 18)
                 Text(title)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(tint ?? .white.opacity(0.92))
+                    .font(Brand.font(13, .medium))
+                    .foregroundStyle(Color.brand(tint ?? Brand.Dark.ink))
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
                 Spacer(minLength: 2)
-                if let hotkey { shortcut(hotkey) }
+                if let hotkey, let combo = settings.activeHotkeys[hotkey] {
+                    KeySymbols.text(combo, size: 10.5)
+                        .foregroundStyle(Color.brand(Brand.Dark.muted).opacity(0.85))
+                        .accessibilityLabel(combo.display)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
             }
-            .padding(.horizontal, 10)
-            .frame(height: 38)
-            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.white.opacity(hovered ? 0.1 : 0)))
-            .contentShape(Rectangle())
+            .padding(.leading, 10)
+            .padding(.trailing, 9)
+            .frame(height: 40)
+            .background(shape.fill(Color.brand(hovered ? Brand.Dark.hover : Brand.Dark.raised.withAlphaComponent(0.55))))
+            .contentShape(shape)
         }
         .buttonStyle(.plain)
         .hoverID(id)
     }
 
-    @ViewBuilder private func shortcut(_ action: HotkeyAction) -> some View {
-        if let combo = settings.activeHotkeys[action] {
-            Text(combo.display)
-                .font(.system(size: 11, weight: .medium).monospacedDigit())
-                .foregroundStyle(.white.opacity(0.4))
-        }
-    }
+    // MARK: Zuletzt
 
     private var recentRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let spacing: CGFloat = 8
+        let thumbWidth = ((Self.contentWidth - 3 * spacing) / 4).rounded(.down)
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Zuletzt")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.45))
+                Overline(text: "Zuletzt")
                 Spacer()
                 Button { actions.history() } label: {
-                    HStack(spacing: 4) {
-                        Text("Alle anzeigen")
-                        Image(systemName: "arrow.right")
-                    }
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(model.hovered == "history" ? 0.95 : 0.6))
-                    .contentShape(Rectangle())
+                    Text("Alle anzeigen →")
+                        .font(Brand.font(12, .medium))
+                        .foregroundStyle(Color.brand(model.hovered == "history" ? Brand.Dark.ink : Brand.Dark.muted))
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .hoverID("history")
             }
-            .padding(.horizontal, 4)
-            HStack(spacing: 8) {
+            .padding(.horizontal, 2)
+            HStack(spacing: spacing) {
                 ForEach(model.recent) { item in
-                    let id = "recent-\(item.id)"
-                    Button { actions.openRecent(item) } label: {
-                        ZStack(alignment: .bottomLeading) {
-                            Thumbnail(item: item)
-                                .frame(width: 70, height: 46)
-                                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                            if item.kind != .image {
-                                Image(systemName: item.kind == .gif ? "photo.stack" : "play.fill")
-                                    .font(.system(size: 8, weight: .bold))
-                                    .padding(3)
-                                    .background(Circle().fill(Color.black.opacity(0.6)))
-                                    .foregroundStyle(.white)
-                                    .padding(4)
-                            }
-                        }
-                        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .strokeBorder(Color.white.opacity(model.hovered == id ? 0.5 : 0.12), lineWidth: model.hovered == id ? 1.5 : 1))
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .hoverID(id)
-                    .onDrag { DragProvider.make(for: item) }
-                    .help(item.title)
+                    recentThumb(item, width: thumbWidth)
                 }
                 Spacer(minLength: 0)
             }
         }
     }
 
+    private func recentThumb(_ item: CaptureItem, width: CGFloat) -> some View {
+        let id = "recent-\(item.id)"
+        let hovered = model.hovered == id
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        return Button { actions.openRecent(item) } label: {
+            Thumbnail(item: item, background: .brand(Brand.Dark.raised))
+                .frame(width: width, height: (width * 0.66).rounded())
+                .background(Color.brand(Brand.Dark.raised))
+                .clipShape(shape)
+                .overlay(alignment: .bottomLeading) {
+                    if item.kind != .image {
+                        MediaBadge(item: item, compact: true).padding(4)
+                    }
+                }
+                .overlay(shape.strokeBorder(Color.brand(hovered ? Brand.Dark.accent : Brand.Dark.line), lineWidth: hovered ? 1.5 : 1))
+                .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .hoverID(id)
+        .onDrag { DragProvider.make(for: item) }
+        .help(item.title)
+    }
+
+    // MARK: Fuß
+
     private var footer: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             footerButton("settings", "Einstellungen", "gearshape", action: actions.settings)
             footerButton("folder", "Ordner", "folder", action: actions.openFolder)
             Spacer()
             footerButton("quit", "Beenden", "power", action: actions.quit)
         }
+        .padding(.horizontal, -6)
     }
 
     private func footerButton(_ id: String, _ title: String, _ symbol: String, action: @escaping () -> Void) -> some View {
         let hovered = model.hovered == id
         return Button(action: action) {
-            HStack(spacing: 7) {
+            HStack(spacing: 6) {
                 Image(systemName: symbol).font(.system(size: 11.5, weight: .medium))
-                Text(title).font(.system(size: 12, weight: .medium))
+                Text(title).font(Brand.font(12.5, .medium))
             }
-            .foregroundStyle(.white.opacity(hovered ? 0.95 : 0.6))
+            .foregroundStyle(Color.brand(hovered ? Brand.Dark.ink : Brand.Dark.muted))
             .padding(.horizontal, 8)
-            .frame(height: 28)
-            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.white.opacity(hovered ? 0.08 : 0)))
+            .frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovered ? Color.brand(Brand.Dark.hover) : .clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .hoverID(id)
     }
 }
+

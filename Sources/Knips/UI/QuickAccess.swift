@@ -202,6 +202,7 @@ import UniformTypeIdentifiers
         p.hidesOnDeactivate = false
         p.becomesKeyOnlyIfNeeded = true
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        p.appearance = Brand.Dark.appearance
         let host = QuickAccessHostingView(rootView: QuickAccessRoot(model: model, actions: actions))
         host.model = model
         p.contentView = host
@@ -360,13 +361,15 @@ struct QuickAccessRoot: View {
                 HStack {
                     Spacer()
                     Button { actions.closeAll() } label: {
-                        Label("Alle schließen", systemImage: "xmark")
-                            .font(.system(size: 11, weight: .semibold))
-                            .padding(.horizontal, 10)
-                            .frame(height: 22)
-                            .background(Capsule().fill(Color.black.opacity(0.72)))
-                            .overlay(Capsule().strokeBorder(Color.white.opacity(0.14)))
-                            .foregroundStyle(.white)
+                        HStack(spacing: 5) {
+                            Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
+                            Text("Alle schließen").font(Brand.font(11.5, .medium))
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 22)
+                        .foregroundStyle(Color.brand(Brand.Dark.ink))
+                        .darkSurface(Capsule())
+                        .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
                     .opacity(model.headerHovered || model.hovered != nil ? 1 : 0.0)
@@ -383,45 +386,39 @@ struct QuickAccessRoot: View {
     }
 }
 
+/// Karte nach der Aufnahme (docs/design.md, „Karten“): Vorschau mit Radius 12 und dunklem Rand; beim Darüberfahren
+/// dunkler Schleier, „Kopieren“ als Papier-Pille (primär), „Bearbeiten“/„Öffnen“ dunkel gehoben, kleine runde dunkle
+/// Knöpfe in den Ecken. Lage der Knöpfe ist fest (Selbsttest `cards` klickt genau dorthin).
 struct QuickAccessCard: View {
     let item: CaptureItem
     let hovered: Bool
     let flashed: Bool
     let actions: QuickAccessActions
 
+    static let radius: CGFloat = 12
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: Self.radius, style: .continuous) }
+
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(white: 0.1))
-            Thumbnail(item: item)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            shape.fill(Color.brand(Brand.Dark.fill))
+            Thumbnail(item: item, background: .brand(Brand.Dark.fill))
+                .clipShape(shape)
             if item.kind != .image && !hovered {
-                VStack {
-                    Spacer()
-                    HStack {
-                        Label(item.kind == .gif ? "GIF" : Format.duration(item.duration ?? 0),
-                              systemImage: item.kind == .gif ? "photo.stack" : "play.fill")
-                            .font(.system(size: 10.5, weight: .bold))
-                            .padding(.horizontal, 7)
-                            .frame(height: 20)
-                            .background(Capsule().fill(Color.black.opacity(0.7)))
-                            .foregroundStyle(.white)
-                        Spacer()
-                    }
-                }
-                .padding(8)
+                MediaBadge(item: item)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    .padding(8)
             }
             if hovered { hoverOverlay.transition(.opacity) }
-            if flashed {
-                RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.black.opacity(0.6))
-                Label("Kopiert", systemImage: "checkmark.circle.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white)
-            }
+            if flashed { copiedOverlay.transition(.opacity) }
         }
         .frame(width: QuickAccessController.cardSize.width, height: QuickAccessController.cardSize.height)
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
-        .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
-        .contentShape(RoundedRectangle(cornerRadius: 12))
+        // Dunkler Rand: hält helle Screenshots auf hellem Grund zusammen; die feine helle Linie innen trägt auf dunklem.
+        .overlay(shape.strokeBorder(Color.brand(Brand.Dark.fill), lineWidth: 1))
+        .overlay(shape.inset(by: 1).strokeBorder(Color.brand(Brand.Dark.line), lineWidth: 1))
+        .compositingGroup()
+        .shadow(color: .black.opacity(0.3), radius: 12, y: 6)
+        .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
+        .contentShape(shape)
         // Klick irgendwo auf die Karte öffnet sie; die Knöpfe darauf haben Vorrang.
         .onTapGesture { actions.open(item) }
         .onDrag { DragProvider.make(for: item) }
@@ -429,10 +426,16 @@ struct QuickAccessCard: View {
 
     private var hoverOverlay: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.black.opacity(0.5))
+            shape.fill(Color.brand(Brand.Dark.fill).opacity(0.58))
             VStack(spacing: 7) {
-                cardButton("Kopieren", symbol: "doc.on.doc") { actions.copy(item) }
-                cardButton("Öffnen", symbol: "arrow.up.forward.app") { actions.open(item) }
+                Button { actions.copy(item) } label: {
+                    Label("Kopieren", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(DarkButtonStyle(kind: .primary, height: 30, width: 122, fontSize: 13))
+                Button { actions.open(item) } label: {
+                    Label(item.kind == .gif ? "Öffnen" : "Bearbeiten", systemImage: item.kind == .gif ? "arrow.up.forward.app" : "pencil")
+                }
+                .buttonStyle(DarkButtonStyle(kind: .raised, height: 30, width: 122, fontSize: 13))
             }
             VStack {
                 HStack {
@@ -443,7 +446,7 @@ struct QuickAccessCard: View {
                     }
                 }
                 Spacer()
-                HStack {
+                HStack(spacing: 6) {
                     corner("folder", help: "Im Finder zeigen") { actions.reveal(item) }
                     if item.kind == .image {
                         corner("text.viewfinder", help: "Text kopieren (ohne zensierte Stellen)") { actions.copyText(item) }
@@ -456,36 +459,54 @@ struct QuickAccessCard: View {
         }
     }
 
-    private func cardButton(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: symbol)
-                .font(.system(size: 12.5, weight: .semibold))
-                .frame(width: 122, height: 30)
-                .background(Capsule().fill(Color.white.opacity(0.94)))
-                .foregroundStyle(Color.black.opacity(0.85))
-                .contentShape(Capsule())
+    /// Kurze grüne Bestätigung nach „Kopieren“.
+    private var copiedOverlay: some View {
+        ZStack {
+            shape.fill(Color.brand(Brand.Dark.fill).opacity(0.62))
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle.fill").font(.system(size: 13, weight: .semibold))
+                Text("Kopiert").font(Brand.font(13, .semibold))
+            }
+            .foregroundStyle(Color.brand(Brand.Dark.success))
+            .padding(.horizontal, 14)
+            .frame(height: 30)
+            .background(Capsule().fill(Color.brand(Brand.Dark.fill)))
+            .overlay(Capsule().strokeBorder(Color.brand(Brand.Dark.success).opacity(0.35)))
         }
-        .buttonStyle(.plain)
+        .allowsHitTesting(false)
     }
 
     private func corner(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 11, weight: .bold))
-                .frame(width: 24, height: 24)
-                .background(Circle().fill(Color.black.opacity(0.6)))
-                .overlay(Circle().strokeBorder(Color.white.opacity(0.18)))
-                .foregroundStyle(.white)
-                .contentShape(Circle())
+        Button(action: action) { Image(systemName: symbol) }
+            .buttonStyle(DarkIconButtonStyle(size: 24, symbolSize: 11))
+            .help(help)
+    }
+}
+
+/// Kleine dunkle Pille unten links auf Video/GIF-Vorschauen: Symbol und Dauer in Mono.
+struct MediaBadge: View {
+    let item: CaptureItem
+    var compact = false
+
+    var body: some View {
+        HStack(spacing: compact ? 3 : 4) {
+            Image(systemName: item.kind == .gif ? "photo.stack" : "play.fill")
+                .font(.system(size: compact ? 6.5 : 8.5, weight: .bold))
+            Text(item.kind == .gif ? "GIF" : Format.duration(item.duration ?? 0))
+                .font(Brand.mono(compact ? 9 : 10.5, .medium))
         }
-        .buttonStyle(.plain)
-        .help(help)
+        .foregroundStyle(Color.brand(Brand.Dark.ink))
+        .padding(.horizontal, compact ? 5 : 7)
+        .frame(height: compact ? 15 : 20)
+        .background(Capsule().fill(Color.brand(Brand.Dark.fill).opacity(0.88)))
+        .overlay(Capsule().strokeBorder(Color.brand(Brand.Dark.line)))
+        .fixedSize()
     }
 }
 
 struct Thumbnail: View {
     let item: CaptureItem
-    var background = Color(white: 0.1)
+    var background = Color.brand(Brand.Dark.fill)
 
     var body: some View {
         if let image = ThumbnailCache.shared.image(for: item) {
@@ -498,7 +519,9 @@ struct Thumbnail: View {
         } else {
             Image(systemName: item.kind == .image ? "photo" : "film")
                 .font(.system(size: 28))
-                .foregroundStyle(.white.opacity(0.4))
+                .foregroundStyle(Color.brand(Brand.Dark.muted))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(background)
         }
     }
 }

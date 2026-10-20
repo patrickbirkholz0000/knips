@@ -125,26 +125,26 @@ param(
     return ([Security.Principal.WindowsPrincipal]$identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
   }
 
-  # --- Voraussetzungen ---------------------------------------------------------------------------------
-  if ([Environment]::OSVersion.Platform -ne 'Win32NT') { Fail 'Dieses Skript installiert die Windows-Fassung von Knips und läuft nur unter Windows.' }
-  if ([Environment]::OSVersion.Version.Major -lt 10) { Fail 'Knips braucht Windows 10 oder 11.' }
-  if (-not [Environment]::Is64BitOperatingSystem) { Fail 'Knips braucht ein 64-Bit-Windows.' }
-  if ($PSVersionTable.PSVersion.Major -lt 6) {
-    # Windows PowerShell 5.1 nimmt sonst je nach .NET-Stand noch TLS 1.0, GitHub verlangt TLS 1.2.
-    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-  }
-  $elevated = Test-Administrator
-  if ($elevated) {
-    Warn "PowerShell läuft als Administrator. Knips wird trotzdem nur für das Konto '$env:USERNAME' installiert."
-  }
-
-  if ($Version) {
-    if ($Version -match '^v?(\d+\.\d+\.\d+)$') { $Version = $Matches[1] }
-    else { Fail "Version '$Version' hat nicht die Form X.Y.Z, z. B. 1.0.0." }
-  }
-
   $tempDir = $null
   try {
+    # --- Voraussetzungen ---------------------------------------------------------------------------------
+    if ([Environment]::OSVersion.Platform -ne 'Win32NT') { Fail 'Dieses Skript installiert die Windows-Fassung von Knips und läuft nur unter Windows.' }
+    if ([Environment]::OSVersion.Version.Major -lt 10) { Fail 'Knips braucht Windows 10 oder 11.' }
+    if (-not [Environment]::Is64BitOperatingSystem) { Fail 'Knips braucht ein 64-Bit-Windows.' }
+    if ($PSVersionTable.PSVersion.Major -lt 6) {
+      # Windows PowerShell 5.1 nimmt sonst je nach .NET-Stand noch TLS 1.0, GitHub verlangt TLS 1.2.
+      [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    }
+    $elevated = Test-Administrator
+    if ($elevated) {
+      Warn "PowerShell läuft als Administrator. Knips wird trotzdem nur für das Konto '$env:USERNAME' installiert."
+    }
+
+    if ($Version) {
+      if ($Version -match '^v?(\d+\.\d+\.\d+)$') { $Version = $Matches[1] }
+      else { Fail "Version '$Version' hat nicht die Form X.Y.Z, z. B. 1.0.0." }
+    }
+
     # --- Installer besorgen und prüfen -----------------------------------------------------------------
     if ($InstallerPath) {
       if (-not (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) { Fail "Datei nicht gefunden: $InstallerPath" }

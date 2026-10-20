@@ -125,7 +125,8 @@ Bilddateien, nie http(s)-Adressen. Kürzel und Menü-Panel rufen `CaptureCoordin
 Test-Instanz: `KNIPS_TEST_DIR=<ordner> build/Knips.app/Contents/MacOS/Knips &`, Befehle dann über
 `swiftc -O scripts/test-command.swift -o .build/knips-test-command && .build/knips-test-command <befehl>`
 (URL-Aufrufe landen sonst bei der installierten App). Dieser Kanal gilt als intern (ohne Rückfrage);
-`link:<befehl>` verhält sich wie ein Link von außen. In der Sandbox fasst Knips die Zwischenablage nie an.
+`link:<befehl>` verhält sich wie ein Link von außen. In der Sandbox fasst Knips die Zwischenablage nie an, nutzt die
+Einstellungs-Domäne `de.birkgroup.knips.sandbox` und bietet keine Übernahme der macOS-Kürzel an.
 Nie Befehle testen, die das Auswahl-Overlay öffnen — das erscheint auf dem Bildschirm des Nutzers.
 
 ## Tempo (gemessen 08.10.2026, M4, zwei 4K-Bildschirme)

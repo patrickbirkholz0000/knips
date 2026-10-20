@@ -257,12 +257,12 @@ pub fn open_item(app: &AppHandle, id: Id, tool: Option<String>) {
             k.editors.set_initial_tool(id, tool);
             let m = knips_platform::monitors::at_cursor();
             let points = item.output_scale.unwrap_or(item.scale).max(0.01);
-            let (w, h) = (item.pixel_width as f64 / points + 64.0, item.pixel_height as f64 / points + 64.0 + 52.0);
+            // Bild + Rand der Arbeitsfläche (2 × 32) + deren Abstand zum Fenster (2 × 12); Leiste oben 60, Zoomzeile 50.
+            let (w, h) = (item.pixel_width as f64 / points + 64.0 + 24.0, item.pixel_height as f64 / points + 64.0 + 110.0);
             let size = wm::clamp_to_work(&m, (w, h), (1140.0, 560.0));
             let (ww, wh) = m.work_points();
             let mut spec = wm::Spec::window(&label, &format!("editor/{id}"), &item.title(), size);
             spec.min_size = Some((1140f64.min(ww * 0.9), 520f64.min(wh * 0.9)));
-            spec.dark = true;
             match wm::ensure(app, &spec) {
                 Ok(w) => {
                     wm::center_on_cursor_monitor(&w, size);
@@ -290,7 +290,6 @@ pub fn open_item(app: &AppHandle, id: Id, tool: Option<String>) {
             let size = wm::clamp_to_work(&m, (info.width as f64 / scale + 80.0, info.height as f64 / scale + 260.0), (900.0, 600.0));
             let mut spec = wm::Spec::window(&label, &format!("video/{id}"), &item.title(), size);
             spec.min_size = Some((900.0, 600.0));
-            spec.dark = true;
             match wm::ensure(app, &spec) {
                 Ok(w) => {
                     wm::center_on_cursor_monitor(&w, size);

@@ -4,13 +4,35 @@
     {
       "identifier": "base",
       "description": "Alle Knips-Fenster: Ereignisse aus Rust empfangen (nicht senden).",
-      "windows": ["*"],
-      "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+      "windows": [
+        "*"
+      ],
+      "permissions": [
+        "core:event:allow-listen",
+        "core:event:allow-unlisten"
+      ]
+    },
+    {
+      "identifier": "titlebar-theme",
+      "description": "Fenster, die Hell/Dunkel folgen: Titelleiste passend zur Einstellung „Darstellung“ (appearance.ts).",
+      "windows": [
+        "settings",
+        "history",
+        "consent",
+        "link-confirm-*",
+        "editor-*",
+        "video-*"
+      ],
+      "permissions": [
+        "core:window:allow-set-theme"
+      ]
     },
     {
       "identifier": "settings",
       "description": "Einstellungen: Einstellungen der Oberfläche, Kürzel, Druck-Taste, Ablage, Zustimmung zur Statistik, erlaubte Webseiten.",
-      "windows": ["settings"],
+      "windows": [
+        "settings"
+      ],
       "permissions": [
         "allow-get-bootstrap",
         "allow-list-items",
@@ -33,7 +55,9 @@
     {
       "identifier": "menu",
       "description": "Menü-Panel: Aufnahmen starten, Fenster öffnen, zuletzt Aufgenommenes, Beenden.",
-      "windows": ["menu"],
+      "windows": [
+        "menu"
+      ],
       "permissions": [
         "allow-get-bootstrap",
         "allow-list-items",
@@ -52,7 +76,9 @@
     {
       "identifier": "cards",
       "description": "Karten unten links.",
-      "windows": ["cards"],
+      "windows": [
+        "cards"
+      ],
       "permissions": [
         "allow-get-bootstrap",
         "allow-get-cards",
@@ -72,7 +98,9 @@
     {
       "identifier": "history",
       "description": "Verlauf.",
-      "windows": ["history"],
+      "windows": [
+        "history"
+      ],
       "permissions": [
         "allow-get-bootstrap",
         "allow-list-items",
@@ -86,7 +114,9 @@
     {
       "identifier": "pins",
       "description": "Angepinnte Bilder: kopieren, verschieben, zoomen, schließen.",
-      "windows": ["pin-*"],
+      "windows": [
+        "pin-*"
+      ],
       "permissions": [
         "allow-pin-info",
         "allow-pin-copy",
@@ -101,7 +131,11 @@
     {
       "identifier": "bars",
       "description": "Leisten für Bildschirmaufnahme, Countdown und Scroll-Screenshot.",
-      "windows": ["rec-controls", "rec-countdown", "scroll-controls"],
+      "windows": [
+        "rec-controls",
+        "rec-countdown",
+        "scroll-controls"
+      ],
       "permissions": [
         "allow-get-recording-state",
         "allow-recording-stop",
@@ -113,19 +147,32 @@
     {
       "identifier": "consent",
       "description": "Frage zur Nutzungsstatistik (Einstellungen nur lesen: Hell/Dunkel).",
-      "windows": ["consent"],
-      "permissions": ["allow-get-bootstrap", "allow-telemetry-set-consent"]
+      "windows": [
+        "consent"
+      ],
+      "permissions": [
+        "allow-get-bootstrap",
+        "allow-telemetry-set-consent"
+      ]
     },
     {
       "identifier": "link-confirm",
       "description": "Rückfrage vor Aufnahmen per knips://-Link: nur die eigene Antwort (Einstellungen nur lesen: Hell/Dunkel).",
-      "windows": ["link-confirm-*"],
-      "permissions": ["allow-get-bootstrap", "allow-link-confirm-shown", "allow-link-confirm-decide"]
+      "windows": [
+        "link-confirm-*"
+      ],
+      "permissions": [
+        "allow-get-bootstrap",
+        "allow-link-confirm-shown",
+        "allow-link-confirm-decide"
+      ]
     },
     {
       "identifier": "editor",
       "description": "Bild-Editor: Original laden, Texterkennung, speichern, Text kopieren; Einstellungen nur den Zensurstil.",
-      "windows": ["editor-*"],
+      "windows": [
+        "editor-*"
+      ],
       "permissions": [
         "allow-get-bootstrap",
         "allow-editor-open",
@@ -147,7 +194,9 @@
     {
       "identifier": "video",
       "description": "Video-Editor: Video laden, Vorschaubilder, Auto-Zensur, Verfolgen, Export; Einstellungen nur den Zensurstil.",
-      "windows": ["video-*"],
+      "windows": [
+        "video-*"
+      ],
       "permissions": [
         "allow-get-bootstrap",
         "allow-video-open",

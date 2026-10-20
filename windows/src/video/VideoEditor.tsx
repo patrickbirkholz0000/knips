@@ -1,4 +1,6 @@
 // Video-Editor (Fenster `#/video/<itemId>`): Kürzen und Zensieren; Rust rechnet beim Speichern/Export.
+// Aussehen wie der Bild-Editor (docs/design.md, „Video-Editor“): Leiste oben mit Export-Knöpfen rechts, Video auf
+// der fill-Fläche, Zeitleiste als Karte mit Königsblau-Spannen für die Zensur, Abspielkopf und Kürzen-Griffe in Tinte.
 import { useEffect, useRef, useState } from "react";
 import {
   CircleAlert, CircleCheck, Copy, EyeOff, FolderOpen, Grid3x3, Droplet, Images, Pause, Pin, Play, RectangleHorizontal,
@@ -13,6 +15,7 @@ import { useVideoState, VideoModel } from "./model";
 import Player from "./Player";
 import Timeline from "./Timeline";
 import "./mock";
+import "../editor/controls.css";
 import "./video.css";
 
 const STYLES: { id: RedactStyle; title: string; icon: typeof Grid3x3 }[] = [
@@ -39,14 +42,25 @@ export default function VideoEditor({ params }: { params: string[] }) {
 
   useEffect(() => () => model?.shutdown(), [model]);
 
-  if (error) return <div className="vid-root vid-center">Video konnte nicht geöffnet werden: {error}</div>;
-  if (!model || !boot) return <div className="vid-root" />;
+  if (error)
+    return (
+      <div className="kc-root vid-root vid-center">
+        <div className="vid-error" role="alert">
+          <span className="vid-error-icon"><CircleAlert size={20} strokeWidth={2} /></span>
+          <span className="kc-overline">Video</span>
+          <h2>Video lässt sich nicht öffnen</h2>
+          <p>{error}</p>
+        </div>
+      </div>
+    );
+  if (!model || !boot) return <div className="kc-root vid-root" />;
   return <Editor model={model} boot={boot} />;
 }
 
 function Editor({ model, boot }: { model: VideoModel; boot: NonNullable<ReturnType<typeof useBootstrap>> }) {
   const s = useVideoState(model);
-  const [askClose, setAskClose] = useState(false);
+  // Im Browser (Attrappe) zeigt `?ask=1` die Rückfrage beim Schließen, die sonst nur Tauri auslöst.
+  const [askClose, setAskClose] = useState(() => !inTauri && location.hash.includes("ask=1"));
   const allowClose = useRef(false);
   const settings = boot.settings;
   const sel = model.selected;
@@ -119,65 +133,72 @@ function Editor({ model, boot }: { model: VideoModel; boot: NonNullable<ReturnTy
   const activeStyle = sel?.style ?? s.style;
 
   return (
-    <div className="vid-root" onMouseDown={(e) => (e.target as HTMLElement).closest("button") && e.preventDefault()}>
+    <div className="kc-root vid-root" onMouseDown={(e) => (e.target as HTMLElement).closest("button") && e.preventDefault()}>
       <div className="vid-toolbar">
-        <EyeOff size={16} className="vid-dim-icon" />
-        <span className="vid-hint">Rechteck ziehen = zensieren</span>
-        <div className="vid-segment">
-          {STYLES.map(({ id, title, icon: Icon }) => (
-            <button key={id} className={activeStyle === id ? "on" : ""} onClick={() => model.setStyle(id)}>
-              <Icon size={13} fill={id === "solid" ? "currentColor" : "none"} /> {title}
-            </button>
-          ))}
+        <div className="kc-group vid-props">
+          <span className="vid-tool-icon" title="Rechteck ziehen = zensieren"><EyeOff size={17} strokeWidth={1.8} /></span>
+          <span className="vid-hint">Rechteck ziehen = zensieren</span>
+          <div className="kc-seg vid-segment">
+            {STYLES.map(({ id, title, icon: Icon }) => (
+              <button key={id} className={activeStyle === id ? "on" : ""} title={title} onClick={() => model.setStyle(id)}>
+                <Icon size={14} strokeWidth={2.1} fill={id === "solid" ? "currentColor" : id === "blur" ? "currentColor" : "none"} fillOpacity={id === "blur" ? 0.25 : 1} />
+                <span className="vid-label">{title}</span>
+              </button>
+            ))}
+          </div>
         </div>
         <div className="vid-spacer" />
-        {settings.showAutoRedact && (
+        <div className="vid-actions">
+          {settings.showAutoRedact && (
+            <button
+              className="kc-btn kc-btn--accent vid-auto"
+              disabled={busy}
+              title="Erkennt E-Mails, IBANs, Telefonnummern, Schlüssel usw. in Einzelbildern (alle 0,5 s) und legt Zensurfelder an."
+              onClick={() => void model.autoRedact(settings.autoRedactKinds)}
+            >
+              <WandSparkles size={15} strokeWidth={2} /> <span className="vid-label">Auto-Zensur</span>
+            </button>
+          )}
+          <div className="kc-group">
+            <button className="kc-tool" disabled={!s.canUndo} onClick={() => model.undo()} title="Rückgängig (Strg+Z)">
+              <Undo2 size={17} strokeWidth={1.8} />
+            </button>
+            <button className="kc-tool" onClick={() => void api.itemReveal(model.id)} title="Im Explorer zeigen">
+              <FolderOpen size={17} strokeWidth={1.8} />
+            </button>
+          </div>
           <button
-            className="vid-btn"
+            className="kc-btn kc-btn--secondary"
             disabled={busy}
-            title="Erkennt E-Mails, IBANs, Telefonnummern, Schlüssel usw. in Einzelbildern (alle 0,5 s) und legt Zensurfelder an."
-            onClick={() => void model.autoRedact(settings.autoRedactKinds)}
+            onClick={() => void model.exportGif()}
+            title={`Als GIF exportieren (${settings.gifFps} fps, max. ${settings.gifWidth} px breit)`}
           >
-            <WandSparkles size={14} /> Auto-Zensur
+            <Images size={15} strokeWidth={2} /> GIF
           </button>
-        )}
-        <button className="vid-btn" disabled={!s.canUndo} onClick={() => model.undo()} title="Rückgängig (Strg+Z)">
-          <Undo2 size={14} />
-        </button>
-        <button
-          className="vid-btn"
-          disabled={busy}
-          onClick={() => void model.exportGif()}
-          title={`Als GIF exportieren (${settings.gifFps} fps, max. ${settings.gifWidth} px breit)`}
-        >
-          <Images size={14} /> GIF
-        </button>
-        <button className="vid-btn" onClick={() => void api.itemReveal(model.id)} title="Im Explorer zeigen">
-          <FolderOpen size={14} />
-        </button>
-        <button className="vid-btn" disabled={busy} onClick={() => void model.copyFile()}>
-          <Copy size={14} /> Kopieren
-        </button>
-        <button className="vid-btn prominent" disabled={busy} onClick={() => void saveAndClose()} title="Strg+Enter">
-          Fertig
-        </button>
+          <button className="kc-btn kc-btn--secondary" disabled={busy} onClick={() => void model.copyFile()} title="Kopieren">
+            <Copy size={15} strokeWidth={2} /> Kopieren
+          </button>
+          <button className="kc-btn kc-btn--primary" disabled={busy} onClick={() => void saveAndClose()} title="Strg+Enter">
+            Fertig
+          </button>
+        </div>
       </div>
-      <div className="vid-divider" />
 
       <div className="vid-stage-wrap">
         <Player model={model} />
         <div className="vid-overlay-slot">
           {busy ? (
-            <div className="vid-pill busy">
+            <div className="kc-pill vid-pill busy">
               <div className="vid-progress">
                 <div style={{ width: `${Math.round(s.progress * 100)}%` }} />
               </div>
               <span>{s.busy}</span>
-              <button className="vid-cancel" onClick={() => model.cancel()}>Abbrechen</button>
+              <span className="kc-mono vid-percent">{Math.round(s.progress * 100)} %</span>
+              <button className="kc-btn kc-btn--quiet kc-btn--sm vid-cancel" onClick={() => model.cancel()}>Abbrechen</button>
             </div>
           ) : s.toast ? (
-            <div className="vid-pill">
-              {s.toast.error ? <CircleAlert size={15} color="rgb(255,69,58)" /> : <CircleCheck size={15} color="rgb(51,184,102)" />}
+            <div className={`kc-pill vid-pill${s.toast.error ? " error" : ""}`} role={s.toast.error ? "alert" : "status"}>
+              {s.toast.error ? <CircleAlert className="kc-err" size={16} strokeWidth={2} /> : <CircleCheck className="kc-ok" size={16} strokeWidth={2} />}
               <span>{s.toast.text}</span>
             </div>
           ) : null}
@@ -187,10 +208,10 @@ function Editor({ model, boot }: { model: VideoModel; boot: NonNullable<ReturnTy
       <div className="vid-bottom">
         <div className="vid-row">
           <button className="vid-play" onClick={() => model.togglePlay()} title="Leertaste">
-            {s.isPlaying ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" style={{ marginLeft: 2 }} />}
+            {s.isPlaying ? <Pause size={15} fill="currentColor" strokeWidth={0} /> : <Play size={15} fill="currentColor" strokeWidth={0} style={{ marginLeft: 2 }} />}
           </button>
-          <span className="vid-time">
-            {preciseDuration(s.currentTime)} / {preciseDuration(model.duration)}
+          <span className="kc-mono vid-time">
+            <b>{preciseDuration(s.currentTime)}</b> / {preciseDuration(model.duration)}
           </span>
           <Timeline model={model} />
         </div>
@@ -202,15 +223,15 @@ function Editor({ model, boot }: { model: VideoModel; boot: NonNullable<ReturnTy
                 {sel.auto ? " (auto)" : ""}
                 {sel.track ? " · folgt" : ""}
               </strong>
-              <span className="vid-mono">
+              <span className="kc-mono vid-mono">
                 {preciseDuration(sel.start)} – {preciseDuration(sel.end)}
               </span>
-              <button className="vid-btn" onClick={() => model.selectedStartHere()} title="Zensur beginnt an der aktuellen Abspielposition">Ab hier</button>
-              <button className="vid-btn" onClick={() => model.selectedEndHere()} title="Zensur endet an der aktuellen Abspielposition">Bis hier</button>
-              <button className="vid-btn" onClick={() => model.selectedWholeClip()}>Ganze Länge</button>
+              <button className="kc-btn kc-btn--secondary kc-btn--sm" onClick={() => model.selectedStartHere()} title="Zensur beginnt an der aktuellen Abspielposition">Ab hier</button>
+              <button className="kc-btn kc-btn--secondary kc-btn--sm" onClick={() => model.selectedEndHere()} title="Zensur endet an der aktuellen Abspielposition">Bis hier</button>
+              <button className="kc-btn kc-btn--secondary kc-btn--sm" onClick={() => model.selectedWholeClip()}>Ganze Länge</button>
               {!sel.track ? (
                 <button
-                  className="vid-btn"
+                  className="kc-btn kc-btn--secondary kc-btn--sm"
                   disabled={busy}
                   onClick={() => void model.followSelected()}
                   title="Balken folgt dem Inhalt darunter, z. B. beim Scrollen — ab der aktuellen Position vor und zurück."
@@ -218,35 +239,41 @@ function Editor({ model, boot }: { model: VideoModel; boot: NonNullable<ReturnTy
                   <Scan size={14} /> Folgen
                 </button>
               ) : (
-                <button className="vid-btn" onClick={() => model.unfollowSelected()} title="Balken bleibt an der aktuellen Stelle stehen">
+                <button className="kc-btn kc-btn--secondary kc-btn--sm" onClick={() => model.unfollowSelected()} title="Balken bleibt an der aktuellen Stelle stehen">
                   <Pin size={14} /> Fest
                 </button>
               )}
-              <button className="vid-btn" onClick={() => model.deleteSelected()}>
+              <button className="kc-btn kc-btn--quiet kc-btn--sm" onClick={() => model.deleteSelected()}>
                 <Trash2 size={14} /> Löschen
               </button>
             </>
           ) : (
             <span className="vid-note">
               {s.redactions.length === 0
-                ? "Gelbe Griffe kürzen das Video. Leertaste spielt ab, ← → springen einzelne Bilder."
+                ? "Die Griffe an den Enden kürzen das Video. Leertaste spielt ab, ← → springen einzelne Bilder."
                 : `${s.redactions.length} Zensurfeld${s.redactions.length === 1 ? "" : "er"} — anklicken, um Zeitraum oder Stil zu ändern.`}
             </span>
           )}
           <div className="vid-spacer" />
-          {trimmed && <span className="vid-trimmed">Gekürzt auf {preciseDuration(s.trimEnd - s.trimStart)}</span>}
+          {trimmed && (
+            <span className="vid-trimmed">
+              Gekürzt auf <span className="kc-mono">{preciseDuration(s.trimEnd - s.trimStart)}</span>
+            </span>
+          )}
         </div>
       </div>
 
       {askClose && (
         <div className="vid-modal-back">
-          <div className="vid-modal">
-            <h3>Änderungen am Video speichern?</h3>
+          <div className="vid-modal" role="dialog" aria-modal="true" aria-labelledby="vid-modal-title">
+            <span className="kc-overline">Ungespeichert</span>
+            <h3 id="vid-modal-title">Änderungen am Video speichern?</h3>
             <p>Zensur und Kürzung werden erst beim Speichern ins Video geschrieben.</p>
             <div className="vid-modal-actions">
-              <button className="vid-btn prominent" onClick={() => { setAskClose(false); void saveAndClose(); }}>Speichern</button>
-              <button className="vid-btn" onClick={closeWindow}>Verwerfen</button>
-              <button className="vid-btn" onClick={() => setAskClose(false)}>Abbrechen</button>
+              <button className="kc-btn kc-btn--quiet" onClick={closeWindow}>Verwerfen</button>
+              <div className="vid-spacer" />
+              <button className="kc-btn kc-btn--secondary" onClick={() => setAskClose(false)}>Abbrechen</button>
+              <button className="kc-btn kc-btn--primary" onClick={() => { setAskClose(false); void saveAndClose(); }}>Speichern</button>
             </div>
           </div>
         </div>

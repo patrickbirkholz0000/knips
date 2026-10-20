@@ -1,0 +1,209 @@
+/* Bausteine beider Editoren (Bild und Video) in der Markensprache der App-Familie (docs/design.md, „Editor“):
+   Leisten-Gruppe (weiß, Radius 12, Linie), Werkzeug-Knöpfe 32×32 (aktiv: Königsblau-Fläche + Königsblau-Icon),
+   Text-Knöpfe (Primär Tinte, Sekundär Karte mit Linie, leise, Königsblau-Fläche), Segment-Schalter (fill-Spur,
+   heller Daumen), Schalter, Tastenkappen, Hinweis-Pille. Nur --k-* Tokens: folgt Hell/Dunkel über <html data-theme>. */
+
+.kc-root {
+  font-family: var(--k-font);
+  color: var(--k-ink);
+  background: var(--k-canvas);
+}
+
+/* Leisten-Gruppe */
+.kc-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  height: 38px;
+  padding: 2px;
+  background: var(--k-surface);
+  border: 1px solid var(--k-line);
+  border-radius: calc(var(--k-radius-field) + 2px);
+  box-shadow: var(--k-shadow);
+}
+.kc-group--sm { height: 32px; padding: 2px; border-radius: var(--k-radius-field); }
+.kc-divider { width: 1px; height: 20px; margin: 0 4px; background: var(--k-line); flex: none; }
+
+/* Werkzeug-Knopf (Symbol, 32×32) */
+.kc-tool {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: calc(var(--k-radius-field) - 2px);
+  color: var(--k-ink-muted);
+  font: 500 13px/1 var(--k-font);
+  white-space: nowrap;
+  transition: background var(--k-t-fast), color var(--k-t-fast);
+}
+.kc-tool:hover:not(:disabled):not(.on) { background: var(--k-fill); color: var(--k-ink); }
+.kc-tool.on { background: var(--k-accent-soft); color: var(--k-accent); }
+.kc-tool:disabled { color: var(--k-ink-soft); opacity: .4; }
+.kc-tool.wide { width: auto; padding: 0 11px 0 9px; }
+.kc-group--sm .kc-tool { width: 26px; height: 26px; border-radius: calc(var(--k-radius-field) - 3px); }
+
+/* Text-Knöpfe */
+.kc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  flex: none;
+  height: 38px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--k-radius-field);
+  font: 500 13px/1 var(--k-font);
+  white-space: nowrap;
+  color: var(--k-ink);
+  transition: background var(--k-t-fast), border-color var(--k-t-fast), color var(--k-t-fast), box-shadow var(--k-t-fast);
+}
+.kc-btn > svg { flex: none; }
+.kc-btn:disabled { opacity: .45; }
+.kc-btn--primary { background: var(--k-button); border-color: var(--k-button); color: var(--k-button-ink); }
+.kc-btn--primary:hover:not(:disabled) { background: var(--k-ink-muted); border-color: var(--k-ink-muted); }
+.kc-btn--secondary { background: var(--k-surface); border-color: var(--k-line-strong); box-shadow: var(--k-shadow); }
+.kc-btn--secondary:hover:not(:disabled) { background: var(--k-surface-raised); border-color: color-mix(in srgb, var(--k-ink) 22%, var(--k-line)); }
+.kc-btn--quiet { color: var(--k-ink-muted); }
+.kc-btn--quiet:hover:not(:disabled) { background: var(--k-fill); color: var(--k-ink); }
+.kc-btn--accent { background: var(--k-accent-soft); color: var(--k-accent); }
+.kc-btn--accent:hover:not(:disabled) { background: color-mix(in srgb, var(--k-accent) 17%, transparent); }
+.kc-btn--sm { height: 28px; padding: 0 10px; gap: 6px; font-size: 12.5px; border-radius: calc(var(--k-radius-field) - 2px); }
+.kc-btn--icon { width: 38px; padding: 0; }
+.kc-btn--sm.kc-btn--icon { width: 28px; }
+
+.kc-tool:focus-visible,
+.kc-btn:focus-visible,
+.kc-seg button:focus-visible,
+.kc-switch:focus-visible {
+  outline: none;
+  box-shadow: var(--k-focus-ring);
+}
+
+/* Segment-Schalter */
+.kc-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  flex: none;
+  border-radius: calc(var(--k-radius-field) - 1px);
+  background: var(--k-fill);
+}
+.kc-seg button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: calc(var(--k-radius-field) - 3px);
+  font: 500 12.5px/1 var(--k-font);
+  color: var(--k-ink-soft);
+  white-space: nowrap;
+  transition: background var(--k-t-fast), color var(--k-t-fast), box-shadow var(--k-t-fast);
+}
+.kc-seg button:hover:not(.on) { color: var(--k-ink); }
+.kc-seg button.on {
+  background: var(--k-segment-thumb);
+  color: var(--k-ink);
+  box-shadow: 0 0 0 1px var(--k-line), var(--k-shadow);
+}
+.kc-seg--fill { display: flex; }
+.kc-seg--fill button { flex: 1; }
+
+/* Schalter (Königsblau) */
+.kc-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  width: 38px;
+  height: 22px;
+  margin: 0;
+  border-radius: var(--k-radius-pill);
+  background: var(--k-line-strong);
+  position: relative;
+  transition: background var(--k-t-fast);
+}
+.kc-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--k-dark-button);
+  box-shadow: var(--k-shadow);
+  transition: transform var(--k-t-fast);
+}
+.kc-switch:checked { background: var(--k-accent); }
+.kc-switch:checked::after { transform: translateX(16px); }
+
+/* Zahlen, Überschriften, Tastenkappen */
+.kc-mono { font-family: var(--k-mono); font-variant-numeric: tabular-nums; }
+.kc-overline {
+  font: 500 11px/1.2 var(--k-mono);
+  letter-spacing: var(--k-overline-tracking);
+  text-transform: uppercase;
+  color: var(--k-ink-soft);
+}
+.kc-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-radius-sm);
+  background: var(--k-surface);
+  font: 500 11px/1 var(--k-mono);
+  color: var(--k-ink-muted);
+}
+.kc-kbd--sym { font-size: 13px; }
+
+/* Hinweis-Pille im Fenster (folgt Hell/Dunkel; schwebt nicht über anderen Apps) */
+.kc-pill {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: calc(100% - 32px);
+  padding: 8px 15px 8px 12px;
+  border-radius: var(--k-radius-pill);
+  background: var(--k-surface);
+  border: 1px solid var(--k-line);
+  box-shadow: var(--k-shadow-float);
+  font: 500 13px/1.35 var(--k-font);
+  color: var(--k-ink);
+  animation: kc-in .22s var(--k-ease);
+}
+.kc-pill > svg { flex: none; }
+.kc-pill .kc-ok { color: var(--k-success); }
+.kc-pill .kc-err { color: var(--k-warn); }
+.kc-spin {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid var(--k-line-strong);
+  border-top-color: var(--k-accent);
+  animation: kc-rot .8s linear infinite;
+}
+@keyframes kc-rot { to { transform: rotate(360deg); } }
+@keyframes kc-in { from { opacity: 0; transform: translateY(8px); } }
+
+/* Popover und Dialog-Karte */
+.kc-popover {
+  background: var(--k-surface);
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-radius-card);
+  box-shadow: var(--k-shadow-float);
+  color: var(--k-ink);
+  animation: kc-pop .16s var(--k-ease);
+  transform-origin: top right;
+}
+@keyframes kc-pop { from { opacity: 0; transform: translateY(-4px) scale(.985); } }

@@ -1,5 +1,7 @@
 // Port von Editor/CanvasView.swift: Zeichenfläche des Bild-Editors als Controller um ein <canvas>.
 // Bildkoordinaten = Pixel des Originals, Ursprung oben links; Ansichtskoordinaten = CSS-Pixel im Canvas.
+// Das Canvas ist durchsichtig: Die fill-Fläche dahinter und der leichte Schatten unter dem Bild (`sheet`) kommen
+// aus CSS. Auswahl, Griffe und Hilfslinien nehmen die Farben aus den Tokens (--k-accent …, Hell/Dunkel).
 import type { Annotation, Point, Rect } from "../shared/types";
 import { api } from "../shared/ipc";
 import { contains, insetBy, intersection, maxX, maxY, midX, midY, rectFromPoints } from "./geometry";
@@ -8,8 +10,14 @@ import {
   FONT_FAMILY, annotationBounds, annotationRect, distanceToSegment, drawAll, fontSize, frameBackgroundPath, lineWidth, measureText, rgbaCss, luminance,
 } from "./renderer";
 
-export const CANVAS_BG = "rgb(27, 27, 29)";
-const ACCENT = "#0a84ff";
+/** Farben und Schrift der Oberfläche aus den Tokens (tokens.css); folgen <html data-theme>. */
+interface Ink {
+  accent: string;
+  paper: string;
+  dark: string;
+  darkInk: string;
+  mono: string;
+}
 
 type Handle = "topLeft" | "top" | "topRight" | "right" | "bottomRight" | "bottom" | "bottomLeft" | "left" | "start" | "end";
 
@@ -42,7 +50,13 @@ export class CanvasController {
   private raf = 0;
   private disposers: (() => void)[] = [];
 
-  constructor(readonly canvas: HTMLCanvasElement, readonly host: HTMLElement, readonly model: EditorModel, private actions: CanvasActions) {
+  constructor(
+    readonly canvas: HTMLCanvasElement,
+    readonly host: HTMLElement,
+    readonly model: EditorModel,
+    private actions: CanvasActions,
+    private sheet: HTMLElement | null = null,
+  ) {
     this.ctx = canvas.getContext("2d")!;
     model.commitPendingEdits = () => this.commitPendingEdits();
     const on = (t: EventTarget, type: string, fn: (e: any) => void, opts?: AddEventListenerOptions) => {
@@ -58,6 +72,10 @@ export class CanvasController {
     const ro = new ResizeObserver(() => this.resize());
     ro.observe(host);
     this.disposers.push(() => ro.disconnect());
+    // Hell/Dunkel umgeschaltet: Auswahl und Griffe in den neuen Farben zeichnen.
+    const mo = new MutationObserver(() => this.invalidate());
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    this.disposers.push(() => mo.disconnect());
     this.disposers.push(model.subscribe(() => this.invalidate()));
     this.resize();
   }
@@ -203,12 +221,27 @@ export class CanvasController {
 
   // ------------------------------------------------------------ Zeichnen
 
+  private ink(): Ink {
+    const cs = getComputedStyle(this.host);
+    const v = (name: string) => cs.getPropertyValue(name).trim();
+    return { accent: v("--k-accent"), paper: v("--k-dark-button"), dark: v("--k-dark"), darkInk: v("--k-dark-ink"), mono: v("--k-mono") };
+  }
+
+  /** Schatten-Fläche unter dem Bild (bzw. dem Rahmen) an dieselbe Stelle legen. */
+  private placeSheet(r: Rect) {
+    const st = this.sheet?.style;
+    if (!st) return;
+    st.transform = `translate(${r.x}px, ${r.y}px)`;
+    st.width = `${Math.max(0, r.width)}px`;
+    st.height = `${Math.max(0, r.height)}px`;
+  }
+
   draw() {
     const { ctx, m } = this;
     const dpr = this.dpr;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = CANVAS_BG;
-    ctx.fillRect(0, 0, this.w, this.h);
     this.updateZoomPercent();
 
     const vp = this.viewport, s = this.scaleFactor;
@@ -218,6 +251,7 @@ export class CanvasController {
     if (f) {
       // Vorschau des Rahmens: Verlauf, Schatten, runde Ecken — wie im gespeicherten Bild.
       const pad = this.framePadding * s;
+      this.placeSheet(insetBy(imageRect, -pad, -pad));
       frameBackgroundPath(ctx, f, insetBy(imageRect, -pad, -pad));
       radius = Math.min(f.cornerRadius * m.scale * s, Math.min(imageRect.width, imageRect.height) / 2);
       if (f.shadow) {
@@ -231,15 +265,7 @@ export class CanvasController {
         ctx.fill();
         ctx.restore();
       }
-    } else {
-      ctx.save();
-      ctx.shadowColor = "rgba(0,0,0,0.55)";
-      ctx.shadowOffsetY = 6 * dpr;
-      ctx.shadowBlur = 24 * dpr;
-      ctx.fillStyle = "#000";
-      ctx.fillRect(imageRect.x, imageRect.y, imageRect.width, imageRect.height);
-      ctx.restore();
-    }
+    } else this.placeSheet(imageRect);
 
     ctx.save();
     ctx.beginPath();
@@ -255,34 +281,34 @@ export class CanvasController {
     drawAll(ctx, m.annotations, m.scale, m.effects, this.editingID, s * dpr);
     ctx.restore();
 
-    if (m.tool === "crop") this.drawCropOverlay(imageRect);
-    else if (m.selected && this.editingID === null) this.drawSelection(m.selected);
+    if (m.tool === "crop") this.drawCropOverlay(imageRect, this.ink());
+    else if (m.selected && this.editingID === null) this.drawSelection(m.selected, this.ink());
   }
 
-  private drawSelection(a: Annotation) {
+  private drawSelection(a: Annotation, ink: Ink) {
     const { ctx } = this;
     const box = insetBy(this.toViewRect(annotationBounds(a, this.m.scale)), -4, -4);
     ctx.save();
-    ctx.strokeStyle = ACCENT;
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = ink.accent;
+    ctx.lineWidth = 1.25;
     ctx.setLineDash([4, 3]);
     if (a.kind !== "arrow" && a.kind !== "line") ctx.strokeRect(box.x + 0.5, box.y + 0.5, box.width, box.height);
     ctx.restore();
-    for (const [, p] of this.handles(a)) this.drawHandle(p);
+    for (const [, p] of this.handles(a)) this.drawHandle(p, ink);
   }
 
-  private drawHandle(p: Point) {
+  private drawHandle(p: Point, ink: Ink) {
     const { ctx } = this;
     ctx.beginPath();
     ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
-    ctx.fillStyle = "#fff";
+    ctx.fillStyle = ink.paper;
     ctx.fill();
-    ctx.strokeStyle = ACCENT;
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = ink.accent;
+    ctx.lineWidth = 2;
     ctx.stroke();
   }
 
-  private drawCropOverlay(imageRect: Rect) {
+  private drawCropOverlay(imageRect: Rect, ink: Ink) {
     const { ctx } = this;
     const draft = this.m.cropDraft;
     if (!draft) return;
@@ -291,13 +317,14 @@ export class CanvasController {
     ctx.beginPath();
     ctx.rect(imageRect.x, imageRect.y, imageRect.width, imageRect.height);
     ctx.rect(r.x, r.y, r.width, r.height);
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillStyle = ink.dark;
+    ctx.globalAlpha = 0.55;
     ctx.fill("evenodd");
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(r.x, r.y, r.width, r.height);
-    ctx.strokeStyle = "rgba(255,255,255,0.35)";
-    ctx.lineWidth = 0.5;
+    ctx.globalAlpha = 1;
+    // Hilfslinien (Drittel) und Rahmen in Königsblau
+    ctx.strokeStyle = ink.accent;
+    ctx.globalAlpha = 0.55;
+    ctx.lineWidth = 1;
     ctx.beginPath();
     for (let i = 1; i <= 2; i++) {
       const x = r.x + (r.width * i) / 3, y = r.y + (r.height * i) / 3;
@@ -305,20 +332,33 @@ export class CanvasController {
       ctx.moveTo(r.x, y); ctx.lineTo(maxX(r), y);
     }
     ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(r.x, r.y, r.width, r.height);
     ctx.restore();
-    ctx.fillStyle = "#fff";
-    for (const [, p] of this.cropHandles(r)) ctx.fillRect(p.x - 4, p.y - 4, 8, 8);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = ink.accent;
+    ctx.fillStyle = ink.paper;
+    for (const [, p] of this.cropHandles(r)) {
+      ctx.beginPath();
+      ctx.roundRect(p.x - 4.5, p.y - 4.5, 9, 9, 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    // Größe als dunkle Pille in Mono (wie im Auswahl-Overlay)
     const label = `${Math.trunc(draft.width)} × ${Math.trunc(draft.height)}`;
-    ctx.font = `600 11px ${FONT_FAMILY}`;
+    ctx.font = `500 11px ${ink.mono || FONT_FAMILY}`;
     const tw = ctx.measureText(label).width, th = 14;
-    const bg = { x: midX(r) - tw / 2 - 8, y: Math.max(4, r.y - th - 12), width: tw + 16, height: th + 6 };
-    ctx.fillStyle = "rgba(0,0,0,0.7)";
+    const bg = { x: midX(r) - tw / 2 - 9, y: Math.max(4, r.y - th - 14), width: tw + 18, height: th + 8 };
+    ctx.fillStyle = ink.dark;
+    ctx.globalAlpha = 0.9;
     ctx.beginPath();
     ctx.roundRect(bg.x, bg.y, bg.width, bg.height, bg.height / 2);
     ctx.fill();
-    ctx.fillStyle = "#fff";
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = ink.darkInk;
     ctx.textBaseline = "middle";
-    ctx.fillText(label, bg.x + 8, bg.y + bg.height / 2 + 0.5);
+    ctx.fillText(label, bg.x + 9, bg.y + bg.height / 2 + 0.5);
     ctx.textBaseline = "alphabetic";
   }
 

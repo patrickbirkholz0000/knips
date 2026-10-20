@@ -1,13 +1,14 @@
-// Bild-Editor (Fenster `#/editor/<itemId>?tool=redact`): Port von EditorWindow.swift.
+// Bild-Editor (Fenster `#/editor/<itemId>?tool=redact`): Port von EditorWindow.swift, Aussehen nach docs/design.md.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CircleCheck, Minus, Plus } from "lucide-react";
 import { api, events, fileUrl, inTauri, itemTitle } from "../shared/ipc";
 import { useBootstrap } from "../shared/hooks";
 import type { EditorSession, EditorTool, Settings } from "../shared/types";
 import { CanvasController } from "./canvas";
+import "./controls.css";
 import "./editor.css";
 import "./mock";
-import { EditorModel, useModel } from "./model";
+import { EditorModel, TOOL_KIND, useModel } from "./model";
 import { render, type BaseImage } from "./renderer";
 import { Toolbar, type EditorActions } from "./Toolbar";
 
@@ -57,8 +58,8 @@ export default function Editor({ params, query }: { params: string[]; query: URL
     setModel(new EditorModel({ ...session, initialTool: tool }, base, boot.settings));
   }, [session, base, boot, model, query]);
 
-  if (error) return <div className="ed-root" style={{ padding: 24, color: "#ff6961" }}>Bild nicht gefunden — {error}</div>;
-  if (!model || !boot) return <div className="ed-root" />;
+  if (error) return <div className="kc-root ed-root ed-error">Bild nicht gefunden — {error}</div>;
+  if (!model || !boot) return <div className="kc-root ed-root" />;
   return <EditorView model={model} settings={boot.settings} />;
 }
 
@@ -66,6 +67,7 @@ function EditorView({ model, settings }: { model: EditorModel; settings: Setting
   useModel(model);
   model.settings = settings;
   const stageRef = useRef<HTMLDivElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const controller = useRef<CanvasController | null>(null);
   const closing = useRef(false);
@@ -165,7 +167,7 @@ function EditorView({ model, settings }: { model: EditorModel; settings: Setting
 
   // Canvas
   useEffect(() => {
-    const c = new CanvasController(canvasRef.current!, stageRef.current!, model, { close: () => void closeWindow() });
+    const c = new CanvasController(canvasRef.current!, stageRef.current!, model, { close: () => void closeWindow() }, sheetRef.current);
     controller.current = c;
     return () => c.dispose();
   }, [model, closeWindow]);
@@ -232,27 +234,52 @@ function EditorView({ model, settings }: { model: EditorModel; settings: Setting
   }, [model, item.id, persist]);
 
   const c = controller.current;
+  // Maße des Ergebnisses (wie `render`: Zuschnitt plus Rahmen), in Bildschirmgröße (1×, Standard) oder voller Auflösung.
+  const vp = model.crop ?? model.fullRect;
+  const pad = model.frame ? Math.trunc(2 * model.frame.padding * model.scale) : 0;
+  const k = settings.exportAtScreenSize ? model.scale : 1;
+  const outW = Math.round((Math.floor(vp.width) + pad) / k), outH = Math.round((Math.floor(vp.height) + pad) / k);
+  const redactHint = (model.selected?.kind ?? TOOL_KIND[model.tool]) === "redact" && model.tool !== "crop";
   return (
-    <div className="ed-root" onContextMenu={(e) => e.preventDefault()}>
+    <div className="kc-root ed-root" onContextMenu={(e) => e.preventDefault()}>
       <Toolbar model={model} actions={actions} showAutoRedact={settings.showAutoRedact} />
       <div className="ed-stage" ref={stageRef}>
+        <div className="ed-sheet" ref={sheetRef} />
         <canvas ref={canvasRef} />
-        {model.busy ? (
-          <div className="ed-pill"><span className="ed-spin" />{model.busy}</div>
-        ) : model.toast ? (
-          <div className="ed-pill" key={model.toast}><CircleCheck size={15} fill="currentColor" stroke="#000" strokeWidth={1.6} />{model.toast}</div>
-        ) : null}
-        <div className="ed-zoom">
-          <button className="step" title="Verkleinern (Strg+−)" onClick={() => c?.zoomOut()}><Minus size={12} strokeWidth={3} /></button>
+        <div className="ed-pill-slot">
+          {model.busy ? (
+            <div className="kc-pill ed-pill"><span className="kc-spin" />{model.busy}</div>
+          ) : model.toast ? (
+            <div className="kc-pill ed-pill" key={model.toast}><CircleCheck className="kc-ok" size={16} strokeWidth={2} />{model.toast}</div>
+          ) : null}
+        </div>
+      </div>
+      <div className="ed-footer">
+        <div className="kc-group kc-group--sm ed-zoom">
+          <button className="kc-tool step" title="Verkleinern (Strg+−)" onClick={() => c?.zoomOut()}><Minus size={13} strokeWidth={2.4} /></button>
           <button
-            className="pct"
+            className="kc-tool pct"
             title={model.zoom === null ? "Originalgröße (Strg+1)" : "Einpassen (Strg+0) · Leertaste + Ziehen verschiebt"}
             onClick={() => (model.zoom === null ? c?.zoomActualSize() : c?.zoomToFit())}
           >
-            {model.zoom === null ? `Einpassen · ${model.zoomPercent} %` : `${model.zoomPercent} %`}
+            {model.zoomPercent} %
           </button>
-          <button className="step" title="Vergrößern (Strg++) · auch Strg + Mausrad" onClick={() => c?.zoomIn()}><Plus size={12} strokeWidth={3} /></button>
+          <button className="kc-tool step" title="Vergrößern (Strg++) · auch Strg + Mausrad" onClick={() => c?.zoomIn()}><Plus size={13} strokeWidth={2.4} /></button>
         </div>
+        {model.zoom === null && <span className="ed-fit">Eingepasst</span>}
+        <span className="ed-dot" />
+        <span className="kc-mono ed-dims" title={settings.exportAtScreenSize ? "Größe beim Speichern (Bildschirmgröße)" : "Größe beim Speichern"}>
+          {outW} × {outH}
+        </span>
+        <div className="ed-spacer" />
+        {redactHint && (
+          <span
+            className="ed-hint"
+            title="Klick auf eine Textzeile legt einen Balken darüber, Alt-Klick nur über ein Wort. Beim Ziehen wird der Balken bis zum Wortende erweitert — Alt beim Ziehen schaltet das ab."
+          >
+            Klick auf Text = Zeile · <kbd className="kc-kbd">Alt</kbd> = Wort
+          </span>
+        )}
       </div>
     </div>
   );

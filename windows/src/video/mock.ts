@@ -13,13 +13,22 @@ if (!inTauri) {
     }
   };
 
-  registerMock("video_open", (): VideoSession => ({
-    item,
-    sourcePath: "/mock/sample.mp4",
-    scale: 2,
-    info: { duration: 14, width: 1400, height: 880, fps: 30, hevc: false, hasAudio: false },
-    document: { version: 1, trimStart: null, trimEnd: null, redactions: [] },
-  }));
+  // Zum Prüfen: `#/video/<id>?fail=media` zeigt den Fehler wie unter Windows N/KN ohne Media Feature Pack,
+  // `?fail=save` denselben Fehler beim Speichern (Hinweis-Pille).
+  const MEDIA_HINT =
+    "Für Videos braucht Windows das „Media Feature Pack“. Diese Windows-Ausgabe (N/KN) enthält es nicht. " +
+    "Installieren unter Einstellungen → Apps → Optionale Features → Feature hinzufügen → „Media Feature Pack“, danach neu starten. " +
+    "Screenshots funktionieren auch ohne.";
+  registerMock("video_open", (): VideoSession => {
+    if (location.hash.includes("fail=media")) throw MEDIA_HINT;
+    return {
+      item,
+      sourcePath: "/mock/sample.mp4",
+      scale: 2,
+      info: { duration: 14, width: 1400, height: 880, fps: 30, hevc: false, hasAudio: false },
+      document: { version: 1, trimStart: null, trimEnd: null, redactions: [] },
+    };
+  });
   registerMock("video_thumbnails", ({ count }) =>
     Array.from({ length: count }, (_, i) => `/mock/video-thumbs/t${String(i).padStart(2, "0")}.jpg`),
   );
@@ -46,6 +55,7 @@ if (!inTauri) {
   });
   registerMock("video_save", async ({ id }) => {
     await run(id, 5);
+    if (location.hash.includes("fail=save")) throw MEDIA_HINT;
     return item;
   });
   registerMock("video_export_gif", async ({ id }) => {

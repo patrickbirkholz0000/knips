@@ -1,13 +1,15 @@
-// Popover „Hintergrund und Rahmen“ (FramePanel in EditorWindow.swift).
-import { useEffect, useRef, useState } from "react";
+// Popover „Hintergrund und Rahmen“ (FramePanel in EditorWindow.swift): Karte mit Schalter (Königsblau),
+// Verläufen (bunt, Inhalt) und Segment-Schaltern; Überschriften in Mono-Versalien wie in der App-Familie.
+import { useCallback, useRef, useState } from "react";
 import { Layers } from "lucide-react";
 import type { FrameStyle } from "../shared/types";
 import { EditorModel, useModel } from "./model";
+import { useDismiss } from "./popover";
 import { FRAME_GRADIENTS, rgbaCss } from "./renderer";
 
 function Segmented<T extends number>({ value, options, onChange }: { value: T; options: [string, T][]; onChange: (v: T) => void }) {
   return (
-    <div className="ed-seg">
+    <div className="kc-seg kc-seg--fill">
       {options.map(([label, v]) => (
         <button key={v} className={value === v ? "on" : ""} onClick={() => onChange(v)}>
           {label}
@@ -21,38 +23,27 @@ export function FrameButton({ model }: { model: EditorModel }) {
   useModel(model);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const down = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        setOpen(false);
-      }
-    };
-    window.addEventListener("mousedown", down);
-    window.addEventListener("keydown", key, true);
-    return () => {
-      window.removeEventListener("mousedown", down);
-      window.removeEventListener("keydown", key, true);
-    };
-  }, [open]);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(open, close, ref);
 
   const style: FrameStyle = model.frame ?? model.lastFrame;
   const update = (change: Partial<FrameStyle>) => model.setFrame({ ...style, ...change });
 
   return (
     <div className="ed-pop-wrap" ref={ref}>
-      <button className={`ed-icon${model.frame ? " accent" : ""}`} title="Hintergrund und Rahmen" onClick={() => setOpen(!open)}>
-        <Layers size={16} strokeWidth={2} fill={model.frame ? "currentColor" : "none"} fillOpacity={0.25} />
+      <button
+        className={`kc-tool ed-icon${model.frame || open ? " on" : ""}`}
+        title="Hintergrund und Rahmen"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        <Layers size={17} strokeWidth={1.8} fill={model.frame ? "currentColor" : "none"} fillOpacity={0.2} />
       </button>
       {open && (
-        <div className="ed-popover">
+        <div className="kc-popover ed-popover">
           <label className="ed-switch-row">
-            <span style={{ fontWeight: 600 }}>Hintergrund und Rahmen</span>
-            <input type="checkbox" className="ed-switch" checked={!!model.frame} onChange={(e) => model.setFrame(e.target.checked ? style : null)} />
+            <span className="ed-pop-title">Hintergrund und Rahmen</span>
+            <input type="checkbox" className="kc-switch ed-switch" checked={!!model.frame} onChange={(e) => model.setFrame(e.target.checked ? style : null)} />
           </label>
           <div className="ed-grads">
             {FRAME_GRADIENTS.map((g, i) => (
@@ -66,16 +57,16 @@ export function FrameButton({ model }: { model: EditorModel }) {
             ))}
           </div>
           <div className="ed-field">
-            <span>Abstand</span>
+            <span className="kc-overline">Abstand</span>
             <Segmented value={style.padding} options={[["Klein", 24], ["Mittel", 48], ["Groß", 80]]} onChange={(v) => update({ padding: v })} />
           </div>
           <div className="ed-field">
-            <span>Ecken</span>
+            <span className="kc-overline">Ecken</span>
             <Segmented value={style.cornerRadius} options={[["Eckig", 0], ["Rund", 12], ["Sehr rund", 24]]} onChange={(v) => update({ cornerRadius: v })} />
           </div>
           <label className="ed-switch-row">
             <span>Schatten</span>
-            <input type="checkbox" className="ed-switch" checked={style.shadow} onChange={(e) => update({ shadow: e.target.checked })} />
+            <input type="checkbox" className="kc-switch ed-switch" checked={style.shadow} onChange={(e) => update({ shadow: e.target.checked })} />
           </label>
         </div>
       )}

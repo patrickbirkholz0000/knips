@@ -1,11 +1,21 @@
 // Video-Fläche: <video> plus Zeichenebene mit Live-Zensur, Rahmen, Griffen und Ziehen neuer Felder.
+// Rahmen, Griffe und das aufgezogene Feld in Königsblau aus den Tokens (--k-accent, folgt Hell/Dunkel).
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Rect } from "../shared/types";
 import { contains, drawRedaction, rectAt } from "./redact";
 import { useVideoState, type VideoModel } from "./model";
 
 const INSET = 16;
-const RED = "rgba(255,59,48,0.85)";
+
+/** Farben der Oberfläche aus tokens.css; neu gelesen, wenn <html data-theme> wechselt. */
+interface Ink {
+  accent: string;
+  paper: string;
+}
+function readInk(el: Element): Ink {
+  const cs = getComputedStyle(el);
+  return { accent: cs.getPropertyValue("--k-accent").trim(), paper: cs.getPropertyValue("--k-dark-button").trim() };
+}
 
 type Drag =
   | { kind: "none" }
@@ -22,6 +32,7 @@ export default function Player({ model }: { model: VideoModel }) {
   const dragRef = useRef<Drag>({ kind: "none" });
   const draftRef = useRef<Rect | null>(null);
   const [cursor, setCursor] = useState("crosshair");
+  const inkRef = useRef<Ink | null>(null);
 
   // Seitenverhältnis einpassen (AVMakeRect)
   const vr = (() => {
@@ -76,6 +87,7 @@ export default function Player({ model }: { model: VideoModel }) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const t = st.isPlaying ? video.currentTime : st.currentTime;
     const { factor } = geo.current;
+    const ink = (inkRef.current ??= readInk(canvas));
 
     // Vorschau der Zensur im Bild
     for (const r of st.redactions) {
@@ -86,7 +98,8 @@ export default function Player({ model }: { model: VideoModel }) {
 
     // Rahmen der aktiven Felder
     ctx.lineWidth = 1.5;
-    ctx.strokeStyle = RED;
+    ctx.strokeStyle = ink.accent;
+    ctx.globalAlpha = 0.9;
     ctx.setLineDash([5, 4]);
     for (const r of st.redactions) {
       if (r.id === st.selectedId || !model.isActive(r, t)) continue;
@@ -94,32 +107,35 @@ export default function Player({ model }: { model: VideoModel }) {
       ctx.strokeRect(v.x, v.y, v.width, v.height);
     }
     ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
 
     // Auswahl mit Griffen
     const sel = st.redactions.find((r) => r.id === st.selectedId);
     if (sel) {
       const v = toView(rectAt(sel, t));
-      const alpha = model.isActive(sel, t) ? 1 : 0.45;
-      ctx.strokeStyle = `rgba(0,122,255,${alpha})`;
+      ctx.globalAlpha = model.isActive(sel, t) ? 1 : 0.45;
+      ctx.strokeStyle = ink.accent;
       ctx.lineWidth = 2;
       ctx.strokeRect(v.x, v.y, v.width, v.height);
-      ctx.lineWidth = 1.5;
       for (const [cx, cy] of [[v.x, v.y], [v.x + v.width, v.y], [v.x, v.y + v.height], [v.x + v.width, v.y + v.height]]) {
         ctx.beginPath();
         ctx.arc(cx, cy, 5, 0, Math.PI * 2);
-        ctx.fillStyle = "#fff";
+        ctx.fillStyle = ink.paper;
         ctx.fill();
         ctx.stroke();
       }
+      ctx.globalAlpha = 1;
     }
 
     // Feld, das gerade aufgezogen wird
     const draft = draftRef.current;
     if (draft) {
       const v = toView(draft);
-      ctx.fillStyle = "rgba(255,59,48,0.25)";
+      ctx.fillStyle = ink.accent;
+      ctx.globalAlpha = 0.18;
       ctx.fillRect(v.x, v.y, v.width, v.height);
-      ctx.strokeStyle = "#fff";
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = ink.accent;
       ctx.lineWidth = 1.5;
       ctx.strokeRect(v.x, v.y, v.width, v.height);
     }
@@ -133,6 +149,16 @@ export default function Player({ model }: { model: VideoModel }) {
       draw();
     });
   }, [draw]);
+
+  // Hell/Dunkel umgeschaltet: Farben neu lesen und neu zeichnen.
+  useEffect(() => {
+    const mo = new MutationObserver(() => {
+      inkRef.current = null;
+      requestDraw();
+    });
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => mo.disconnect();
+  }, [requestDraw]);
 
   // Jede Zustandsänderung und Größenänderung zeichnet neu.
   useEffect(() => {

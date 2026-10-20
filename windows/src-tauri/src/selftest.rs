@@ -1417,14 +1417,18 @@ fn ui(app: &AppHandle, out: &Path) -> Result<()> {
     };
     check("statistik-sandbox", sandbox_off);
 
-    // Bild-Editor und Video-Editor
+    // Bild-Editor und Video-Editor, hell und dunkel (Fenster folgen Hell/Dunkel, docs/design.md)
     crate::commands::open_item(app, items[0].id, Some("redact".into()));
     std::thread::sleep(Duration::from_millis(3000));
-    check("editor", shoot(app, &format!("editor-{}", items[0].id), out, "editor.png"));
+    let editor = format!("editor-{}", items[0].id);
+    check("editor", shoot(app, &editor, out, "editor.png"));
+    check("editor-dunkel", shoot_editor_dark(app, &editor, out, "editor-dunkel.png"));
     if let Some(v) = &video {
         crate::commands::open_item(app, v.id, None);
         std::thread::sleep(Duration::from_millis(3500));
-        check("video-editor", shoot(app, &format!("video-{}", v.id), out, "video-editor.png"));
+        let label = format!("video-{}", v.id);
+        check("video-editor", shoot(app, &label, out, "video-editor.png"));
+        check("video-editor-dunkel", shoot_editor_dark(app, &label, out, "video-editor-dunkel.png"));
     }
 
     // Anpinnen
@@ -1552,6 +1556,17 @@ fn ui_windows(app: &AppHandle, out: &Path, suffix: &str, check: &mut dyn FnMut(&
             let _ = w.hide();
         }
     }
+}
+
+/// Editor-Fenster dunkel fotografieren: setzt `<html data-theme="dark">` wie `appearance.ts` bei „Dunkel“
+/// (Canvas und Video-Ebene zeichnen dabei neu), danach zurück auf den Stand vorher.
+fn shoot_editor_dark(app: &AppHandle, label: &str, out: &Path, name: &str) -> Result<()> {
+    let window = app.get_webview_window(label).with_context(|| format!("Fenster {label} fehlt"))?;
+    window.eval("window.__knipsTheme = document.documentElement.dataset.theme; document.documentElement.dataset.theme = 'dark'")?;
+    std::thread::sleep(Duration::from_millis(700));
+    let shot = shoot(app, label, out, name);
+    let _ = window.eval("document.documentElement.dataset.theme = window.__knipsTheme || 'light'");
+    shot
 }
 
 /// Dateien unter `dir`, die einen der Texte enthalten (Kennungen der Aufnahmen).

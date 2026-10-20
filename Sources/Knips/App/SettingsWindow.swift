@@ -2,11 +2,11 @@ import AppKit
 import AVFoundation
 import SwiftUI
 
-/// Einstellungen: links eine dunkle, abgerundete Liste (ausgewählter Eintrag mit Pfeil),
-/// rechts helle Fläche mit großen Überschriften und weißen Karten.
+/// Einstellungen in der Markensprache (docs/design.md): dunkle Seitenleiste über die volle Höhe (Zeichen, Wortmarke,
+/// Gruppen, Status unten), rechts Papier mit Seitentitel, Abschnitten und weißen Karten.
 @MainActor final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private static var instance: SettingsWindowController?
-    static let size = NSSize(width: 900, height: 640)
+    static let size = NSSize(width: 920, height: 700)
     /// Bei DockPresence angemeldet (zwischen Öffnen und Schließen) — erneutes Öffnen zählt nicht doppelt.
     private var inDock = false
 
@@ -18,10 +18,16 @@ import SwiftUI
         }
     }
 
+    /// Ohne Bereich: der zuletzt gezeigte — oder „Start“, solange im Bereit-Check noch etwas fehlt.
     static func show(_ pane: SettingsPane? = nil) {
         Telemetry.count(.settingsOpen)
         if instance == nil { instance = SettingsWindowController() }
-        if let pane { SettingsNavigation.shared.pane = pane }
+        Readiness.shared.refresh()
+        if let pane {
+            SettingsNavigation.shared.pane = pane
+        } else if Readiness.shared.missing > 0 {
+            SettingsNavigation.shared.pane = .start
+        }
         if let instance, !instance.inDock {
             instance.inDock = true
             DockPresence.windowOpened()
@@ -38,22 +44,26 @@ import SwiftUI
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.title = "Knips – Einstellungen"
-        window.appearance = NSAppearance(named: .aqua)
-        window.backgroundColor = NSColor(Theme.page)
+        // Keine feste Darstellung: das Fenster folgt `NSApp.appearance` (Einstellung „Darstellung“).
+        window.backgroundColor = Brand.canvas
         window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
-        window.contentMinSize = NSSize(width: Self.size.width, height: 520)
+        window.contentMinSize = NSSize(width: Self.size.width, height: 640)
         window.contentMaxSize = NSSize(width: Self.size.width, height: 1400)
-        window.contentView = NSHostingView(rootView: SettingsRoot(settings: AppSettings.shared, nav: SettingsNavigation.shared))
+        window.contentView = NSHostingView(rootView: SettingsRoot(settings: AppSettings.shared, nav: SettingsNavigation.shared,
+                                                                  readiness: Readiness.shared))
         // Fensterposition merkt sich AppKit in der echten Domäne — Selbsttests legen das Fenster neben den Bildschirm.
         let autosave = Paths.testRoot == nil
-        if autosave { window.setFrameAutosaveName("KnipsSettings2") }
+        if autosave { window.setFrameAutosaveName("KnipsSettings3") }
         super.init(window: window)
         window.delegate = self
-        if !autosave || !window.setFrameUsingName("KnipsSettings2") { window.center() }
+        if !autosave || !window.setFrameUsingName("KnipsSettings3") { window.center() }
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { nil }
+
+    /// Zurück aus den Systemeinstellungen: Freigaben, Kürzel und Ordner neu prüfen.
+    func windowDidBecomeKey(_ notification: Notification) { Readiness.shared.refresh() }
 
     func windowWillClose(_ notification: Notification) {
         HotkeyRecorderState.shared.cancel()
@@ -64,32 +74,21 @@ import SwiftUI
     }
 }
 
-/// Farben und Formen der Einstellungen: helle Fläche, dunkle Seitenleiste, weiße Karten, schwarze Knöpfe.
-enum Theme {
-    static let page = Color(red: 0.955, green: 0.955, blue: 0.962)
-    static let sidebar = Color(red: 0.11, green: 0.11, blue: 0.118)
-    static let sidebarSelected = Color(white: 0.2)
-    static let card = Color.white
-    static let border = Color.black.opacity(0.07)
-    static let ink = Color(white: 0.09)
-    static let muted = Color(white: 0.45)
-    static let soft = Color(white: 0.93)
-}
-
 @MainActor final class SettingsNavigation: ObservableObject {
     static let shared = SettingsNavigation()
-    @Published var pane: SettingsPane = SettingsPane(rawValue: UserDefaults.knips.string(forKey: "settingsPane") ?? "") ?? .general {
+    @Published var pane: SettingsPane = SettingsPane(rawValue: UserDefaults.knips.string(forKey: "settingsPane") ?? "") ?? .start {
         didSet { UserDefaults.knips.set(pane.rawValue, forKey: "settingsPane") }
     }
 }
 
 enum SettingsPane: String, CaseIterable, Identifiable {
-    case general, shortcuts, recording, redaction, export, storage, privacy, about
+    case start, general, shortcuts, recording, redaction, export, storage, privacy, about
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .start: "Start"
         case .general: "Allgemein"
         case .shortcuts: "Tastaturkürzel"
         case .recording: "Bildschirmaufnahme"
@@ -101,8 +100,12 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Überschrift der Seite (die Startseite heißt wie in der App-Familie „So geht's“).
+    var pageTitle: String { self == .start ? "So geht's" : title }
+
     var symbol: String {
         switch self {
+        case .start: "house"
         case .general: "gearshape"
         case .shortcuts: "command"
         case .recording: "record.circle"
@@ -116,16 +119,47 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 
     var summary: String {
         switch self {
-        case .general: "Was nach einem Screenshot oder einer Aufnahme passiert."
+        case .start: "Knips nimmt Bereich, Fenster oder Bildschirm auf und macht sensible Stellen unkenntlich, bevor du teilst."
+        case .general: "Was nach einer Aufnahme passiert, die Karten unten links und wie Knips aussieht."
         case .shortcuts: "Globale Kürzel für Screenshots und Aufnahmen. Sie funktionieren in jeder App."
         case .recording: "Größe, Format und Darstellung deiner Bildschirmvideos."
         case .redaction: "Wie sensible Stellen in Bildern und Videos unkenntlich werden."
         case .export: "Größe und Format von Screenshots, GIFs und Videos."
         case .storage: "Wo deine Aufnahmen liegen und wie lange Originale bleiben."
         case .privacy: "Freigaben von macOS und anonyme Nutzungsstatistik. Aufnahmen bleiben auf deinem Mac."
-        case .about: "Screenshots und kurze Bildschirmaufnahmen — mit Zensur für Bilder und Videos."
+        case .about: "Screenshots und kurze Bildschirmaufnahmen, mit Zensur für Bilder und Videos."
         }
     }
+}
+
+/// Gruppen der Seitenleiste (Mono-Überschrift in Versalien).
+enum SettingsGroup: CaseIterable, Identifiable {
+    case start, capture, edit, app
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .start: "Start"
+        case .capture: "Aufnahme"
+        case .edit: "Bearbeiten"
+        case .app: "App"
+        }
+    }
+
+    var panes: [SettingsPane] {
+        switch self {
+        case .start: [.start]
+        case .capture: [.general, .shortcuts, .recording]
+        case .edit: [.redaction, .export]
+        case .app: [.storage, .privacy, .about]
+        }
+    }
+}
+
+enum AppVersion {
+    static var short: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0" }
+    static var build: String { Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1" }
 }
 
 // MARK: - Gerüst
@@ -133,197 +167,201 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 struct SettingsRoot: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var nav: SettingsNavigation
+    @ObservedObject var readiness: Readiness
 
     var body: some View {
-        HStack(alignment: .top, spacing: 26) {
-            Sidebar(nav: nav)
+        HStack(spacing: 0) {
+            SettingsSidebar(nav: nav, readiness: readiness)
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 30) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(nav.pane.title)
-                            .font(.system(size: 30, weight: .bold))
-                            .tracking(-0.6)
-                            .foregroundStyle(Theme.ink)
+                        Text(nav.pane.pageTitle)
+                            .font(Brand.font(28, .semibold))
+                            .tracking(-0.3)
+                            .foregroundStyle(Color.brand(Brand.ink))
                         Text(nav.pane.summary)
-                            .font(.system(size: 14))
-                            .foregroundStyle(Theme.muted)
+                            .font(Brand.font(14))
+                            .foregroundStyle(Color.brand(Brand.inkSoft))
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .padding(.top, 34)
                     detail
                 }
-                .padding(.trailing, 28)
-                .padding(.bottom, 28)
+                .padding(.horizontal, 32)
+                .padding(.top, 44)
+                .padding(.bottom, 36)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollIndicators(.never)
+            .id(nav.pane)   // neue Seite beginnt oben
         }
-        .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.page)
+        .background(Color.brand(Brand.canvas))
         .ignoresSafeArea()
-        .tint(Theme.ink)
+        .tint(Color.brand(Brand.accent))
     }
 
     @ViewBuilder private var detail: some View {
         switch nav.pane {
+        case .start: StartPane(settings: settings, readiness: readiness) { nav.pane = $0 }
         case .general: GeneralPane(settings: settings)
-        case .shortcuts: ShortcutsPane(settings: settings)
-        case .recording: RecordingPane(settings: settings)
+        case .shortcuts: ShortcutsPane(settings: settings, readiness: readiness)
+        case .recording: RecordingPane(settings: settings, readiness: readiness)
         case .redaction: RedactionPane(settings: settings)
         case .export: ExportPane(settings: settings)
-        case .storage: StoragePane(settings: settings)
-        case .privacy: PrivacyPane()
+        case .storage: StoragePane(settings: settings, readiness: readiness)
+        case .privacy: PrivacyPane(readiness: readiness)
         case .about: AboutPane()
         }
     }
 }
 
-/// Dunkle Seitenleiste: ausgewählter Eintrag heller, mit Pfeil.
-private struct Sidebar: View {
+/// Dunkle Seitenleiste über die volle Fensterhöhe (die Fensterknöpfe sitzen oben darauf).
+private struct SettingsSidebar: View {
     @ObservedObject var nav: SettingsNavigation
+    @ObservedObject var readiness: Readiness
     @State private var hovered: SettingsPane?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 10) {
-                Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 30, height: 30)
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("Knips").font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
-                    Text("Einstellungen").font(.system(size: 12)).foregroundStyle(.white.opacity(0.5))
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 9) {
+                BrandMark(size: 26)
+                Wordmark(size: 22)
             }
-            .padding(.horizontal, 8)
-            .padding(.bottom, 16)
-            ForEach(SettingsPane.allCases) { pane in
-                row(pane)
-                if pane == .shortcuts || pane == .export {
-                    Rectangle().fill(Color.white.opacity(0.07)).frame(height: 1).padding(.vertical, 6).padding(.horizontal, 8)
-                }
+            .padding(.leading, 10)
+            .padding(.top, 52)
+            .padding(.bottom, 14)
+            ForEach(SettingsGroup.allCases) { group in
+                BrandOverline(group.title, color: Brand.Side.muted)
+                    .padding(.leading, 10)
+                    .padding(.top, 16)
+                    .padding(.bottom, 6)
+                ForEach(group.panes) { row($0) }
             }
-            Spacer(minLength: 12)
-            Text(version)
-                .font(.system(size: 11))
-                .foregroundStyle(.white.opacity(0.35))
-                .padding(.horizontal, 8)
+            Spacer(minLength: 16)
+            Button { nav.pane = .start } label: {
+                VStack(alignment: .leading, spacing: 6) {
+                    BrandStatusDot(ok: readiness.missing == 0, text: readiness.summary, ink: Brand.Side.ink,
+                                   green: successOnDark, red: Brand.Dark.record)
+                    Text("Version \(AppVersion.short) · \(AppVersion.build)")
+                        .font(Brand.mono(11))
+                        .foregroundStyle(Color.brand(Brand.Side.muted))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(readiness.missing == 0 ? "Alles eingerichtet" : "Zum Bereit-Check")
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 18)
+        .padding(.horizontal, 8)
         .padding(.bottom, 14)
-        .frame(width: 252)
-        .frame(maxHeight: .infinity)
-        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Theme.sidebar))
-        .padding(.top, 30)   // Fensterknöpfe sitzen darüber auf der hellen Fläche
+        .frame(width: 216)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(Color.brand(Brand.Side.fill))
     }
 
-    private var version: String {
-        let info = Bundle.main.infoDictionary
-        return "Version \(info?["CFBundleShortVersionString"] as? String ?? "1.0.0") (\(info?["CFBundleVersion"] as? String ?? "1"))"
-    }
+    /// Grün für „erledigt“ auf der immer dunklen Seitenleiste (wie `Brand.success` im Dunkeln).
+    private var successOnDark: NSColor { Brand.success.resolved(dark: true) }
 
     private func row(_ pane: SettingsPane) -> some View {
         let selected = nav.pane == pane
+        let open = pane == .start ? readiness.missing : 0
         return Button { nav.pane = pane } label: {
-            HStack(spacing: 11) {
+            HStack(spacing: 9) {
                 Image(systemName: pane.symbol)
-                    .font(.system(size: 14, weight: .medium))
-                    .frame(width: 20)
-                    .foregroundStyle(.white.opacity(selected ? 1 : 0.55))
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 18)
                 Text(pane.title)
-                    .font(.system(size: 13.5, weight: .medium))
-                    .foregroundStyle(.white.opacity(selected ? 1 : 0.78))
-                Spacer()
-                if selected {
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.9))
+                    .font(Brand.font(13, selected ? .medium : .regular))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if open > 0 {
+                    Text("\(open)")
+                        .font(Brand.mono(10.5, .semibold))
+                        .foregroundStyle(Color.brand(Brand.Dark.record))
+                        .padding(.horizontal, 6)
+                        .frame(minWidth: 18, minHeight: 18)
+                        .background(Capsule().fill(Color.brand(Brand.Dark.record).opacity(0.16)))
+                        .accessibilityLabel("\(open) offen")
+                } else if selected {
+                    Image(systemName: "arrow.right").font(.system(size: 11, weight: .semibold))
                 }
             }
-            .padding(.horizontal, 12)
-            .frame(height: 42)
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(selected ? Theme.sidebarSelected : Color.white.opacity(hovered == pane ? 0.06 : 0)))
+            .foregroundStyle(Color.brand(selected || hovered == pane ? Brand.Side.ink : Brand.Side.muted))
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Color.brand(Brand.Side.raised).opacity(selected ? 1 : (hovered == pane ? 0.55 : 0))))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 ? pane : (hovered == pane ? nil : hovered) }
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
-// MARK: - Bausteine
-
-/// Weiße Karte mit feinem Rand, optional mit Überschrift darüber und Erklärung darunter.
-private struct Card<Content: View>: View {
-    var title: String?
-    var footer: String?
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            if let title {
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.muted)
-                    .padding(.leading, 6)
-            }
-            VStack(spacing: 0) { content }
-                .padding(.horizontal, 18)
-                .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Theme.card))
-                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.border))
-            if let footer {
-                Text(footer)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 6)
-            }
+private extension NSColor {
+    /// Dynamische Farbe in einer festen Darstellung auflösen (für immer dunkle Flächen).
+    func resolved(dark: Bool) -> NSColor {
+        var result = self
+        (NSAppearance(named: dark ? .darkAqua : .aqua) ?? NSAppearance.currentDrawing()).performAsCurrentDrawingAppearance {
+            result = NSColor(cgColor: self.cgColor) ?? self
         }
+        return result
     }
 }
 
-/// Zeile in einer Karte: Titel (+ Untertitel) links, Bedienelement rechts.
-private struct Row<Accessory: View>: View {
+// MARK: - Bausteine der Seiten
+
+/// Zeile im Bereit-Check: Zustand, Titel, Beschreibung, Knopf rechts.
+private struct CheckRow<Accessory: View>: View {
+    let tone: BrandCheckTone
     let title: String
-    var subtitle: String?
+    let detail: Text
     @ViewBuilder var accessory: Accessory
 
     var body: some View {
         HStack(spacing: 14) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 14)).foregroundStyle(Theme.ink)
-                if let subtitle {
-                    Text(subtitle).font(.system(size: 12)).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
-                }
+            BrandStatusIcon(tone: tone)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(Brand.font(14, .medium)).foregroundStyle(Color.brand(Brand.ink))
+                detail
+                    .font(Brand.font(12.5))
+                    .foregroundStyle(Color.brand(Brand.inkSoft))
+                    .lineSpacing(1.5)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
             accessory
         }
-        .padding(.vertical, 13)
-        .frame(minHeight: 52)
+        .padding(.vertical, 14)
+        .frame(minHeight: 62)
     }
 }
 
-private struct RowDivider: View {
-    var body: some View { Rectangle().fill(Theme.border).frame(height: 1) }
-}
-
-private struct Switch: View {
-    @Binding var isOn: Bool
-    var body: some View {
-        Toggle("", isOn: $isOn).toggleStyle(.switch).labelsHidden().controlSize(.small).tint(Color(red: 0.2, green: 0.72, blue: 0.4))
+/// Kürzel im Fließtext in Mono („macOS belegt ⇧⌘3, ⇧⌘4 …“).
+private func keysText(_ combos: [KeyCombo], size: CGFloat = 12.5) -> Text {
+    combos.enumerated().reduce(Text("")) { text, entry in
+        text + Text(entry.offset == 0 ? "" : ", ") + entry.element.inlineText(size: size)
     }
 }
 
-/// Auswahl als kompakte Menü-Schaltfläche.
-private struct Choice<Value: Hashable>: View {
-    @Binding var selection: Value
-    let options: [(Value, String)]
+/// Infozeile mit Icon-Kachel.
+private struct InfoLine: View {
+    let symbol: String
+    let text: String
+
     var body: some View {
-        Picker("", selection: $selection) {
-            ForEach(options, id: \.0) { Text($0.1).tag($0.0) }
+        HStack(spacing: 12) {
+            BrandIconTile(symbol: symbol, size: 28)
+            Text(text)
+                .font(Brand.font(13.5))
+                .foregroundStyle(Color.brand(Brand.ink))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .fixedSize()
+        .padding(.vertical, 11)
     }
 }
 
@@ -334,32 +372,58 @@ private struct SecondsField: View {
     let range: ClosedRange<Int>
     @State private var text = ""
     @FocusState private var focused: Bool
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
-        HStack(spacing: 8) {
-            TextField("", text: $text)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13.5, weight: .medium).monospacedDigit())
-                .foregroundStyle(Theme.ink)
-                .multilineTextAlignment(.center)
-                .focused($focused)
-                .frame(width: 52, height: 28)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.soft))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(focused ? Theme.ink.opacity(0.4) : Theme.border))
-                .onSubmit(normalize)
-                .onChange(of: text) { _, new in
-                    if let n = Int(new.filter(\.isNumber)), range.contains(n), n != value { value = n }
+        HStack(spacing: 10) {
+            HStack(spacing: 0) {
+                TextField("", text: $text)
+                    .textFieldStyle(.plain)
+                    .font(Brand.mono(13.5, .medium))
+                    .foregroundStyle(Color.brand(Brand.ink))
+                    .multilineTextAlignment(.center)
+                    .focused($focused)
+                    .frame(width: 54)
+                    .onSubmit(normalize)
+                    .onChange(of: text) { _, new in
+                        if let n = Int(new.filter(\.isNumber)), range.contains(n), n != value { value = n }
+                    }
+                    .onChange(of: focused) { _, isFocused in if !isFocused { normalize() } }
+                Rectangle().fill(Color.brand(Brand.line)).frame(width: 1)
+                VStack(spacing: 0) {
+                    step("chevron.up", +1)
+                    Rectangle().fill(Color.brand(Brand.line)).frame(height: 1)
+                    step("chevron.down", -1)
                 }
-                .onChange(of: focused) { _, isFocused in if !isFocused { normalize() } }
+                .frame(width: 24)
+            }
+            .frame(height: 34)
+            .background(RoundedRectangle(cornerRadius: Brand.Radius.field, style: .continuous).fill(Color.brand(Brand.surfaceRaised)))
+            .clipShape(RoundedRectangle(cornerRadius: Brand.Radius.field, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Brand.Radius.field, style: .continuous)
+                .strokeBorder(Color.brand(focused ? Brand.accent : Brand.line)))
+            .background(RoundedRectangle(cornerRadius: Brand.Radius.field + 3, style: .continuous)
+                .stroke(Color.brand(Brand.accentSoft), lineWidth: focused ? 3 : 0).padding(-1.5))
             Text(value == 1 ? "Sekunde" : "Sekunden")
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.muted)
+                .font(Brand.font(13))
+                .foregroundStyle(Color.brand(Brand.inkSoft))
                 .frame(width: 62, alignment: .leading)
-            Stepper("", value: $value, in: range).labelsHidden()
         }
+        .opacity(isEnabled ? 1 : 0.45)
         .onAppear { text = "\(value)" }
         .onChange(of: value) { _, new in if Int(text) != new { text = "\(new)" } }
+    }
+
+    private func step(_ symbol: String, _ delta: Int) -> some View {
+        Button { value = (value + delta).clamped(to: range) } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 8.5, weight: .bold))
+                .foregroundStyle(Color.brand(Brand.inkMuted))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(delta > 0 ? "Mehr" : "Weniger")
     }
 
     private func normalize() {
@@ -368,100 +432,269 @@ private struct SecondsField: View {
     }
 }
 
-/// Schwarze Schaltfläche als Hauptaktion, hellgrau als Nebenaktion.
-struct PillButtonStyle: ButtonStyle {
-    var primary = false
-    var destructive = false
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 12.5, weight: .semibold))
-            .padding(.horizontal, 14)
-            .frame(height: 30)
-            .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(primary ? Theme.ink : (destructive ? Color.red.opacity(0.1) : Theme.soft)))
-            .foregroundStyle(primary ? .white : (destructive ? .red : Theme.ink))
-            .opacity(configuration.isPressed ? 0.8 : 1)
-            .contentShape(Rectangle())
-    }
-}
+/// Zeitgeber für Seiten mit Freigaben: Freigaben in den Systemeinstellungen ändern sich, ohne dass Knips es erfährt.
+private let readinessTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
-/// Hinweis-Karte (gelb = zu tun, grün = erledigt).
-private struct Notice<Action: View>: View {
-    let symbol: String
-    let color: Color
-    let title: String
-    let detail: String
-    @ViewBuilder var action: Action
+// MARK: - Start
+
+private struct StartPane: View {
+    @ObservedObject var settings: AppSettings
+    @ObservedObject var readiness: Readiness
+    let open: (SettingsPane) -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: symbol).font(.system(size: 16)).foregroundStyle(color).padding(.top, 1)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.ink)
-                Text(detail).font(.system(size: 12)).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
-                action.padding(.top, 6)
+        VStack(alignment: .leading, spacing: 30) {
+            if readiness.missing > 0 {
+                check
+                howTo
+            } else {
+                howTo
+                check
             }
-            Spacer(minLength: 0)
         }
-        .padding(16)
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(color.opacity(0.09)))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(color.opacity(0.25)))
+        .onAppear { readiness.refresh() }
+        .onReceive(readinessTimer) { _ in readiness.refresh() }
+    }
+
+    // MARK: So geht's
+
+    private static let shortcuts: [(HotkeyAction, String)] = [
+        (.captureArea, "Bereich"), (.captureFullscreen, "Bildschirm"), (.captureWindow, "Fenster"), (.toggleRecording, "Video"),
+    ]
+
+    private static let steps: [(String, String)] = [
+        ("Aufnehmen", "Kürzel drücken, Bereich ziehen. Leertaste wählt ein Fenster."),
+        ("Zensieren", "Balken über Namen, E-Mails oder Schlüssel ziehen."),
+        ("Teilen", "Kopieren oder die Karte in eine App ziehen."),
+    ]
+
+    private var howTo: some View {
+        BrandCard {
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Deine Kürzel").font(Brand.font(14, .semibold)).foregroundStyle(Color.brand(Brand.ink))
+                    Text("Funktionieren in jeder App, ohne Knips zu öffnen.")
+                        .font(Brand.font(12.5)).foregroundStyle(Color.brand(Brand.inkSoft))
+                }
+                Spacer(minLength: 8)
+                Button("Ändern") { open(.shortcuts) }
+                    .buttonStyle(BrandButtonStyle(kind: .secondary, compact: true))
+            }
+            .padding(.top, 20)
+            HStack(alignment: .top, spacing: 8) {
+                ForEach(Self.shortcuts, id: \.0) { action, label in
+                    VStack(spacing: 10) {
+                        BrandKeys(combo: settings.activeHotkeys[action], large: true)
+                            .frame(height: 36)
+                        Text(label).font(Brand.font(12.5, .medium)).foregroundStyle(Color.brand(Brand.inkMuted))
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .padding(.top, 20)
+            BrandRowDivider().padding(.top, 20)
+            HStack(alignment: .top, spacing: 8) {
+                ForEach(Array(Self.steps.enumerated()), id: \.offset) { index, step in
+                    StepTile(number: index + 1, title: step.0, text: step.1)
+                }
+            }
+            .padding(.vertical, 20)
+        }
+    }
+
+    // MARK: Bereit-Check
+
+    private var checkTitle: String {
+        switch readiness.missing {
+        case 0: "Alles bereit"
+        case 1: "Noch ein Schritt"
+        default: "Noch \(readiness.missing) Schritte"
+        }
+    }
+
+    private var check: some View {
+        let state = readiness.state
+        return VStack(alignment: .leading, spacing: 0) {
+            Text(checkTitle)
+                .font(Brand.font(17, .semibold))
+                .foregroundStyle(Color.brand(Brand.ink))
+                .padding(.bottom, 10)
+            BrandCard {
+                ScreenCheckRow(granted: state.screen, readiness: readiness)
+                BrandRowDivider()
+                MicrophoneCheckRow(state: state, readiness: readiness)
+                BrandRowDivider()
+                hotkeyRow(state.hotkeys)
+                BrandRowDivider()
+                folderRow(state.folderReachable)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text("Änderst du etwas in den Systemeinstellungen, prüft Knips neu, sobald du hierher zurückkommst.")
+                    .font(Brand.font(12.5))
+                    .foregroundStyle(Color.brand(Brand.inkSoft))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Button("Neu prüfen") { readiness.refresh() }
+                    .buttonStyle(BrandButtonStyle(kind: .quiet, compact: true))
+            }
+            .padding(.top, 8)
+            .padding(.leading, 4)
+        }
+    }
+
+    @ViewBuilder private func hotkeyRow(_ hotkeys: Readiness.Hotkeys) -> some View {
+        switch hotkeys {
+        case .ok:
+            CheckRow(tone: .done, title: "Kürzel aktiv", detail: Text("Knips bekommt deine Kürzel in jeder App.")) { EmptyView() }
+        case .none:
+            CheckRow(tone: .missing, title: "Kürzel aktiv", detail: Text("Kein Kürzel eingeschaltet.")) {
+                Button("Festlegen") { open(.shortcuts) }.buttonStyle(BrandButtonStyle(kind: .primary, compact: true))
+            }
+        case let .system(combos, ids):
+            CheckRow(tone: .missing, title: "Kürzel aktiv",
+                     detail: Text("macOS belegt ") + keysText(combos) + Text(" noch für eigene Bildschirmfotos. Knips schaltet sie ab, jederzeit rückgängig.")) {
+                Button("Freimachen") { readiness.freeSystemShortcuts(ids) }
+                    .buttonStyle(BrandButtonStyle(kind: .primary, compact: true))
+            }
+        case let .taken(combos):
+            CheckRow(tone: .missing, title: "Kürzel aktiv",
+                     detail: keysText(combos) + Text(combos.count == 1 ? " ist schon von einer anderen App belegt." : " sind schon von anderen Apps belegt.")) {
+                Button("Ändern") { open(.shortcuts) }.buttonStyle(BrandButtonStyle(kind: .primary, compact: true))
+            }
+        }
+    }
+
+    private func folderRow(_ reachable: Bool) -> some View {
+        let path = settings.saveFolder.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+        return CheckRow(tone: reachable ? .done : .missing, title: "Ablageordner erreichbar",
+                        detail: Text(reachable ? path : "„\(path)“ ist nicht erreichbar. Bis dahin landen Aufnahmen in Bilder/Knips.")) {
+            if !reachable {
+                Button("Ordner wählen") { readiness.chooseFolder() }.buttonStyle(BrandButtonStyle(kind: .primary, compact: true))
+            }
+        }
     }
 }
 
-private struct InfoLine: View {
-    let symbol: String
+/// Schritt in heller Kachel mit Königsblau-Nummer.
+private struct StepTile: View {
+    let number: Int
+    let title: String
     let text: String
+
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "checkmark").font(.system(size: 12, weight: .semibold)).foregroundStyle(Color(red: 0.2, green: 0.6, blue: 0.4))
-            Text(text).font(.system(size: 13.5)).foregroundStyle(Theme.ink)
-            Spacer()
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("\(number)")
+                    .font(Brand.mono(11, .semibold))
+                    .foregroundStyle(Color.brand(Brand.onAccent))
+                    .frame(width: 20, height: 20)
+                    .background(Circle().fill(Color.brand(Brand.accent)))
+                Text(title).font(Brand.font(13.5, .semibold)).foregroundStyle(Color.brand(Brand.ink))
+            }
+            Text(text)
+                .font(Brand.font(12))
+                .foregroundStyle(Color.brand(Brand.inkSoft))
+                .lineSpacing(1.5)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 28)
         }
-        .padding(.vertical, 11)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.brand(Brand.canvas)))
     }
 }
 
-// MARK: - Bereiche
+/// Bildschirmaufnahme-Freigabe (Start und Datenschutz).
+private struct ScreenCheckRow: View {
+    let granted: Bool
+    let readiness: Readiness
+
+    var body: some View {
+        CheckRow(tone: granted ? .done : .missing, title: "Bildschirm aufnehmen (Bildschirmaufnahme-Freigabe)",
+                 detail: Text(granted ? "Erlaubt. Für Screenshots und Videos nötig."
+                                      : "Ohne Freigabe sieht Knips nur den Schreibtisch. Nach dem Erlauben Knips neu starten.")) {
+            if !granted {
+                Button("Erlauben") { readiness.requestScreen() }.buttonStyle(BrandButtonStyle(kind: .primary, compact: true))
+            }
+        }
+    }
+}
+
+/// Mikrofon — freiwillig, nur für Videos mit Ton (Start und Datenschutz).
+private struct MicrophoneCheckRow: View {
+    let state: Readiness.State
+    let readiness: Readiness
+
+    private var detail: String {
+        switch state.microphoneTone {
+        case .done: "Erlaubt. Videos können deine Stimme mit aufnehmen."
+        case .missing: "„Mikrofon aufnehmen“ ist an, aber Knips darf noch nicht zuhören."
+        case .optional: "Freiwillig, nur für Videos mit Ton."
+        }
+    }
+
+    var body: some View {
+        CheckRow(tone: state.microphoneTone, title: "Mikrofon", detail: Text(detail)) {
+            if state.microphoneTone != .done {
+                Button("Erlauben") { readiness.requestMicrophone() }
+                    .buttonStyle(BrandButtonStyle(kind: state.microphoneTone == .missing ? .primary : .secondary, compact: true))
+            }
+        }
+    }
+}
+
+// MARK: - Allgemein
 
 private struct GeneralPane: View {
     @ObservedObject var settings: AppSettings
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            Card(title: "Nach einer Aufnahme") {
-                Row(title: "In die Zwischenablage kopieren") { Switch(isOn: $settings.copyToClipboard) }
-                RowDivider()
-                Row(title: "Editor sofort öffnen") { Switch(isOn: $settings.openEditorAfterCapture) }
-                RowDivider()
-                Row(title: "Auslöser-Ton") { Switch(isOn: $settings.playSound) }
-            }
-            Card(title: "Karten unten links",
-                 footer: "Ein Klick auf die Karte öffnet die Aufnahme. Über die Knöpfe darauf kopierst du, pinnst an oder kopierst den Text, und du kannst die Karte in eine andere App ziehen. Solange die Maus darauf liegt, bleibt sie stehen.") {
-                Row(title: "Karte anzeigen") { Switch(isOn: $settings.showQuickAccess) }
-                RowDivider()
-                Row(title: "Automatisch ausblenden") {
-                    Switch(isOn: $settings.quickAccessAutoHide).disabled(!settings.showQuickAccess)
+        VStack(alignment: .leading, spacing: 30) {
+            BrandSection(title: "Nach einer Aufnahme") {
+                BrandRow(title: "In die Zwischenablage kopieren", detail: "Gleich einfügen, ohne Umweg über eine Datei.") {
+                    BrandToggle(isOn: $settings.copyToClipboard, label: "In die Zwischenablage kopieren")
                 }
-                RowDivider()
+                BrandRowDivider()
+                BrandRow(title: "Editor sofort öffnen", detail: "Sonst erscheint die Aufnahme als Karte unten links.") {
+                    BrandToggle(isOn: $settings.openEditorAfterCapture, label: "Editor sofort öffnen")
+                }
+                BrandRowDivider()
+                BrandRow(title: "Auslöser-Ton") { BrandToggle(isOn: $settings.playSound, label: "Auslöser-Ton") }
+            }
+            BrandSection(title: "Karten unten links",
+                         footer: "Ein Klick auf die Karte öffnet die Aufnahme. Über die Knöpfe darauf kopierst du, pinnst an oder kopierst den Text, und du kannst die Karte in eine andere App ziehen. Solange die Maus darauf liegt, bleibt sie stehen.") {
+                BrandRow(title: "Karte anzeigen") { BrandToggle(isOn: $settings.showQuickAccess, label: "Karte anzeigen") }
+                BrandRowDivider()
+                BrandRow(title: "Automatisch ausblenden") {
+                    BrandToggle(isOn: $settings.quickAccessAutoHide, label: "Automatisch ausblenden").disabled(!settings.showQuickAccess)
+                }
+                BrandRowDivider()
                 let timed = settings.showQuickAccess && settings.quickAccessAutoHide
-                Row(title: "Anzeigedauer", subtitle: timed ? "So lange bleibt die Karte stehen" : "Die Karte bleibt, bis du sie schließt") {
+                BrandRow(title: "Anzeigedauer", detail: timed ? "So lange bleibt die Karte stehen." : "Die Karte bleibt, bis du sie schließt.") {
                     SecondsField(value: $settings.quickAccessSeconds, range: AppSettings.quickAccessSecondsRange)
                 }
                 .disabled(!timed)
-                .opacity(timed ? 1 : 0.45)
             }
-            Card(title: "Start") {
-                Row(title: "Beim Anmelden öffnen") {
-                    Switch(isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
+            BrandSection(title: "Darstellung und Start") {
+                BrandRow(title: "Darstellung", detail: "Gilt für alle Fenster. Menü, Leisten und Karten-Knöpfe bleiben dunkel.") {
+                    BrandSegmented(selection: $settings.appearance, options: AppearanceMode.allCases.map { ($0, $0.title) })
+                }
+                BrandRowDivider()
+                BrandRow(title: "Beim Anmelden öffnen", detail: "Knips startet still in der Menüleiste.") {
+                    BrandToggle(isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }),
+                                label: "Beim Anmelden öffnen")
                 }
             }
         }
     }
 }
 
+// MARK: - Tastaturkürzel
+
 private struct ShortcutsPane: View {
     @ObservedObject var settings: AppSettings
+    @ObservedObject var readiness: Readiness
     @State private var tick = 0
 
     private let groups: [(String, [HotkeyAction])] = [
@@ -475,60 +708,93 @@ private struct ShortcutsPane: View {
         let conflicts = settings.activeHotkeys.values.filter { SystemShortcuts.conflict(for: $0) != nil }.sorted { $0.keyCode < $1.keyCode }
         let blockedIDs = Array(Set(SystemShortcuts.conflictingIDs(for: Array(settings.activeHotkeys.values)))
             .union(SystemShortcuts.enabledScreenshotIDs())).sorted()
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 30) {
             if !blockedIDs.isEmpty {
-                Notice(symbol: "exclamationmark.triangle.fill", color: .orange,
-                       title: conflicts.isEmpty ? "macOS belegt \(SystemShortcuts.displayList(blockedIDs)) noch selbst"
-                                                : "macOS nutzt \(conflicts.map(\.display).joined(separator: ", ")) noch selbst",
-                       detail: "Solange das so ist, kommen diese Kürzel nicht bei Knips an — auch nicht beim Festlegen hier. Knips schaltet die macOS-Kürzel für Bildschirmfotos ab; jederzeit rückgängig zu machen.") {
+                notice(tone: .missing,
+                       title: conflicts.isEmpty ? Text("macOS belegt ") + Text(SystemShortcuts.displayList(blockedIDs)) + Text(" noch selbst")
+                                                : Text("macOS nutzt ") + keysText(conflicts, size: 14) + Text(" noch selbst"),
+                       detail: "Solange das so ist, kommen diese Kürzel nicht bei Knips an, auch nicht beim Festlegen hier. Knips schaltet die macOS-Kürzel für Bildschirmfotos ab, jederzeit rückgängig zu machen.") {
                     Button("Für Knips freimachen") {
                         SystemShortcuts.takeOver(blockedIDs)
+                        HotkeyManager.shared.apply(settings.activeHotkeys)
+                        readiness.refresh()
                         tick += 1
                     }
-                    .buttonStyle(PillButtonStyle(primary: true))
+                    .buttonStyle(BrandButtonStyle(kind: .primary, compact: true))
                 }
             } else if SystemShortcuts.hasTakenOver {
-                Notice(symbol: "checkmark.circle.fill", color: .green, title: "Knips hat die Bildschirmfoto-Kürzel übernommen",
+                notice(tone: .done, title: Text("Knips hat die Bildschirmfoto-Kürzel übernommen"),
                        detail: "Die entsprechenden macOS-Kürzel sind abgeschaltet.") {
                     Button("macOS-Kürzel wiederherstellen") {
                         SystemShortcuts.restore()
+                        readiness.refresh()
                         tick += 1
                     }
-                    .buttonStyle(PillButtonStyle())
+                    .buttonStyle(BrandButtonStyle(kind: .secondary, compact: true))
                 }
             }
             ForEach(groups, id: \.0) { title, actions in
-                Card(title: title) {
+                BrandSection(title: title) {
                     ForEach(Array(actions.enumerated()), id: \.element) { index, action in
-                        if index > 0 { RowDivider() }
+                        if index > 0 { BrandRowDivider() }
                         ShortcutRow(action: action, settings: settings)
                     }
                 }
             }
-            HStack(spacing: 10) {
-                Button("Standardwerte wiederherstellen") {
-                    HotkeyRecorderState.shared.cancel()
-                    settings.hotkeys = AppSettings.defaultHotkeys
-                    settings.disabledHotkeys = []
-                    HotkeyManager.shared.apply(settings.activeHotkeys)
-                    tick += 1
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Button("Standardwerte wiederherstellen") {
+                        HotkeyRecorderState.shared.cancel()
+                        settings.hotkeys = AppSettings.defaultHotkeys
+                        settings.disabledHotkeys = []
+                        HotkeyManager.shared.apply(settings.activeHotkeys)
+                        readiness.refresh()
+                        tick += 1
+                    }
+                    .buttonStyle(BrandButtonStyle(kind: .secondary))
+                    Button("Kurzbefehle von macOS …") {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")!)
+                    }
+                    .buttonStyle(BrandButtonStyle(kind: .quiet))
                 }
-                .buttonStyle(PillButtonStyle())
-                Button("Kurzbefehle von macOS …") {
-                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")!)
-                }
-                .buttonStyle(PillButtonStyle())
+                (Text("Kürzel anklicken und die neue Kombination drücken. ") + Text(Image(systemName: "delete.left"))
+                 + Text(" entfernt, ") + Text("Esc").font(Brand.mono(12)) + Text(" bricht ab. Standard wie bei macOS: ")
+                 + defaultKeys(.captureFullscreen) + Text(" Bildschirm, ") + defaultKeys(.captureArea)
+                 + Text(" Bereich (Leertaste: Fenster), ") + defaultKeys(.toggleRecording) + Text(" Video."))
+                    .font(Brand.font(12.5))
+                    .foregroundStyle(Color.brand(Brand.inkSoft))
+                    .lineSpacing(1.5)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
             }
-            Text("Kürzel anklicken und die neue Kombination drücken. ⌫ entfernt, Esc bricht ab. Standard wie bei macOS: ⇧⌘3 Bildschirm, ⇧⌘4 Bereich (Leertaste: Fenster), ⇧⌘5 Video.")
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.muted)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 6)
+        }
+    }
+
+    private func defaultKeys(_ action: HotkeyAction) -> Text {
+        action.defaultCombo.map { $0.inlineText(size: 12) } ?? Text("")
+    }
+
+    private func notice<Action: View>(tone: BrandCheckTone, title: Text, detail: String, @ViewBuilder action: () -> Action) -> some View {
+        BrandCard {
+            HStack(alignment: .top, spacing: 14) {
+                BrandStatusIcon(tone: tone)
+                VStack(alignment: .leading, spacing: 4) {
+                    title.font(Brand.font(14, .semibold)).foregroundStyle(Color.brand(Brand.ink))
+                    Text(detail)
+                        .font(Brand.font(12.5))
+                        .foregroundStyle(Color.brand(Brand.inkSoft))
+                        .lineSpacing(1.5)
+                        .fixedSize(horizontal: false, vertical: true)
+                    action().padding(.top, 8)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 18)
         }
     }
 }
 
-/// Häkchen, Titel, rechts das Kürzel als Tastenkappe; Klick nimmt ein neues auf.
+/// Titel links; rechts das Kürzel als Tastenkappen (Klick nimmt ein neues auf) und der Schalter.
 private struct ShortcutRow: View {
     let action: HotkeyAction
     @ObservedObject var settings: AppSettings
@@ -542,43 +808,60 @@ private struct ShortcutRow: View {
         Binding(get: { combo != nil && !settings.disabledHotkeys.contains(action) }, set: { on in
             if on { settings.disabledHotkeys.remove(action) } else { settings.disabledHotkeys.insert(action) }
             HotkeyManager.shared.apply(settings.activeHotkeys)
+            Readiness.shared.refresh()
         })
     }
 
+    private var warning: String? {
+        guard let combo, enabled.wrappedValue else { return nil }
+        if let conflict = SystemShortcuts.conflict(for: combo) { return "macOS nutzt das Kürzel auch („\(conflict)“)" }
+        if HotkeyManager.shared.failures.contains(action) { return "Schon von einer anderen App belegt" }
+        return nil
+    }
+
     var body: some View {
-        HStack(spacing: 12) {
-            Toggle("", isOn: enabled).toggleStyle(.checkbox).labelsHidden().disabled(combo == nil)
-            Text(action.title)
-                .font(.system(size: 14))
-                .foregroundStyle(enabled.wrappedValue ? Theme.ink : Theme.muted)
-            Spacer(minLength: 8)
-            if let combo, enabled.wrappedValue, let conflict = SystemShortcuts.conflict(for: combo) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                    .help("Wird auch von macOS verwendet („\(conflict)“).")
+        HStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(action.title)
+                    .font(Brand.font(14, .medium))
+                    .foregroundStyle(Color.brand(enabled.wrappedValue ? Brand.ink : Brand.inkSoft))
+                if let warning {
+                    Label(warning, systemImage: "exclamationmark.triangle.fill")
+                        .font(Brand.font(12))
+                        .foregroundStyle(Color.brand(Brand.warn))
+                        .labelStyle(.titleAndIcon)
+                }
             }
-            if enabled.wrappedValue, HotkeyManager.shared.failures.contains(action) {
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red).help("Bereits von einer anderen App belegt.")
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             Button {
                 if isRecording { recorder.cancel() } else { record() }
             } label: {
-                Text(isRecording ? "Kürzel drücken …" : (combo?.display ?? "Kein Kürzel"))
-                    .font(.system(size: 13, weight: isRecording || combo == nil ? .regular : .semibold).monospacedDigit())
-                    .foregroundStyle(isRecording ? Theme.muted : (combo == nil ? Theme.muted : Theme.ink))
-                    .padding(.horizontal, 12)
-                    .frame(minWidth: 92, minHeight: 30)
-                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(hovering || isRecording ? Theme.soft : Theme.page))
-                    .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .strokeBorder(isRecording ? Theme.ink : Theme.border, lineWidth: isRecording ? 2 : 1))
-                    .contentShape(Rectangle())
+                Group {
+                    if isRecording {
+                        Text("Kürzel drücken …").font(Brand.font(12.5, .medium)).foregroundStyle(Color.brand(Brand.accent))
+                    } else if let combo {
+                        BrandKeys(combo: combo).opacity(enabled.wrappedValue ? 1 : 0.5)
+                    } else {
+                        Text("Kein Kürzel").font(Brand.font(12.5)).foregroundStyle(Color.brand(Brand.inkSoft))
+                    }
+                }
+                .padding(.horizontal, 10)
+                .frame(minWidth: 118, minHeight: 36)
+                .background(RoundedRectangle(cornerRadius: Brand.Radius.field, style: .continuous)
+                    .fill(Color.brand(isRecording ? Brand.accentSoft : (hovering ? Brand.fill : Brand.surfaceRaised))))
+                .overlay(RoundedRectangle(cornerRadius: Brand.Radius.field, style: .continuous)
+                    .strokeBorder(Color.brand(isRecording ? Brand.accent : Brand.line), lineWidth: isRecording ? 1.5 : 1))
+                .background(RoundedRectangle(cornerRadius: Brand.Radius.field + 3, style: .continuous)
+                    .stroke(Color.brand(Brand.accentSoft), lineWidth: isRecording ? 3 : 0).padding(-1.5))
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .onHover { hovering = $0 }
             .help("Klicken und neue Tastenkombination drücken")
+            BrandToggle(isOn: enabled, label: action.title).disabled(combo == nil)
         }
-        .padding(.vertical, 10)
-        .frame(minHeight: 52)
+        .padding(.vertical, 12)
+        .frame(minHeight: 60)
     }
 
     private func record() {
@@ -594,80 +877,103 @@ private struct ShortcutRow: View {
             }
             settings.hotkeys = keys
             HotkeyManager.shared.apply(settings.activeHotkeys)
+            Readiness.shared.refresh()
         }
     }
 }
+
+// MARK: - Bildschirmaufnahme
 
 private struct RecordingPane: View {
     @ObservedObject var settings: AppSettings
+    @ObservedObject var readiness: Readiness
     private var modern: Bool { ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15 }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            Card(title: "Video",
-                 footer: "Gemessen am Vollbild je 4 Sekunden: Retina-H.264 2,2 MB · 1×-H.264 1,2 MB · 1×-HEVC 0,9 MB. HEVC spielt jeder Mac ab, Windows nicht immer.") {
-                Row(title: "Größe") {
-                    Choice(selection: $settings.recordingAtScreenSize, options: [(true, "Bildschirmgröße (1×)"), (false, "Retina (2×)")])
+        VStack(alignment: .leading, spacing: 30) {
+            BrandSection(title: "Video",
+                         footer: "Gemessen am Vollbild je 4 Sekunden: Retina-H.264 2,2 MB · 1×-H.264 1,2 MB · 1×-HEVC 0,9 MB. HEVC spielt jeder Mac ab, Windows nicht immer.") {
+                BrandRow(title: "Größe") {
+                    BrandSelect(selection: $settings.recordingAtScreenSize,
+                                options: [(true, "Bildschirmgröße (1×)"), (false, "Retina (2×)")], minWidth: 220)
                 }
-                RowDivider()
-                Row(title: "Format") {
-                    Choice(selection: $settings.recordingHEVC, options: [(false, "H.264 – überall abspielbar"), (true, "HEVC – kleiner")])
+                BrandRowDivider()
+                BrandRow(title: "Format") {
+                    BrandSelect(selection: $settings.recordingHEVC,
+                                options: [(false, "H.264 – überall abspielbar"), (true, "HEVC – kleiner")], minWidth: 220)
                 }
-                RowDivider()
-                Row(title: "Bildrate") {
-                    Choice(selection: $settings.recordingFPS, options: [(30, "30 fps"), (60, "60 fps")])
-                }
-            }
-            Card(title: "Darstellung") {
-                Row(title: "Mauszeiger aufnehmen") { Switch(isOn: $settings.recordingShowCursor) }
-                RowDivider()
-                Row(title: "Mausklicks hervorheben", subtitle: modern ? nil : "braucht macOS 15") {
-                    Switch(isOn: $settings.recordingShowClicks).disabled(!modern)
-                }
-                RowDivider()
-                Row(title: "Countdown 3 – 2 – 1") { Switch(isOn: $settings.recordingCountdown) }
-            }
-            Card(title: "Ton", footer: "Für gesprochene Erklärungen. Beim ersten Mal fragt macOS nach dem Mikrofon.") {
-                Row(title: "Mikrofon aufnehmen", subtitle: modern ? nil : "braucht macOS 15") {
-                    Switch(isOn: $settings.recordingMicrophone).disabled(!modern)
+                BrandRowDivider()
+                BrandRow(title: "Bildrate") {
+                    BrandSegmented(selection: $settings.recordingFPS, options: [(30, "30 fps"), (60, "60 fps")])
                 }
             }
-            Card(title: "Stoppen") {
-                Row(title: "Stopp-Leiste, Menüleisten-Symbol oder Kürzel") {
-                    Text(settings.activeHotkeys[.toggleRecording]?.display ?? "—")
-                        .font(.system(size: 13, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(Theme.muted)
+            BrandSection(title: "Im Video") {
+                BrandRow(title: "Mauszeiger aufnehmen") {
+                    BrandToggle(isOn: $settings.recordingShowCursor, label: "Mauszeiger aufnehmen")
+                }
+                BrandRowDivider()
+                BrandRow(title: "Mausklicks hervorheben", detail: modern ? "Ein Kreis zeigt, wo du klickst." : "Braucht macOS 15.") {
+                    BrandToggle(isOn: $settings.recordingShowClicks, label: "Mausklicks hervorheben").disabled(!modern)
+                }
+                BrandRowDivider()
+                BrandRow(title: "Countdown 3 – 2 – 1") {
+                    BrandToggle(isOn: $settings.recordingCountdown, label: "Countdown")
+                }
+            }
+            BrandSection(title: "Ton", footer: "Für gesprochene Erklärungen. Beim ersten Mal fragt macOS nach dem Mikrofon.") {
+                BrandRow(title: "Mikrofon aufnehmen", detail: modern ? microphoneDetail : "Braucht macOS 15.") {
+                    BrandToggle(isOn: Binding(get: { settings.recordingMicrophone }, set: {
+                        settings.recordingMicrophone = $0
+                        readiness.refresh()
+                    }), label: "Mikrofon aufnehmen").disabled(!modern)
+                }
+            }
+            BrandSection(title: "Stoppen") {
+                BrandRow(title: "Stopp-Leiste, Menüleisten-Symbol oder Kürzel") {
+                    BrandKeys(combo: settings.activeHotkeys[.toggleRecording])
                 }
             }
         }
     }
+
+    private var microphoneDetail: String {
+        switch readiness.state.microphone {
+        case .authorized: "Mikrofon ist erlaubt."
+        case .denied, .restricted: "Mikrofon ist in den Systemeinstellungen gesperrt."
+        default: "Fragt beim ersten Video mit Ton nach dem Mikrofon."
+        }
+    }
 }
+
+// MARK: - Zensur
 
 private struct RedactionPane: View {
     @ObservedObject var settings: AppSettings
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            Card(title: "Standardstil",
-                 footer: "„Balken“ ist am sichersten. Im Editor: Klick auf Text legt einen Balken über die Zeile, ⌥-Klick über ein Wort; gezogene Balken wachsen auf ganze Wörter.") {
-                HStack(spacing: 18) {
+        VStack(alignment: .leading, spacing: 30) {
+            BrandSection(title: "Standardstil",
+                         footer: "„Balken“ ist am sichersten. Im Editor: Klick auf Text legt einen Balken über die Zeile, ⌥-Klick über ein Wort; gezogene Balken wachsen auf ganze Wörter.") {
+                HStack(spacing: 16) {
                     ForEach(RedactStyle.allCases) { style in
                         RedactStyleCard(style: style, selected: settings.redactStyle == style) { settings.redactStyle = style }
                     }
                     Spacer(minLength: 0)
                 }
-                .padding(.vertical, 16)
+                .padding(.vertical, 20)
             }
-            Card(title: "Auto-Zensur",
-                 footer: "Sucht per Texterkennung nach E-Mails, IBANs, Schlüsseln usw. und legt Balken an. Normalerweise ziehst du Balken selbst — der Knopf ist deshalb aus.") {
-                Row(title: "Knopf „Auto-Zensur“ in den Editoren") { Switch(isOn: $settings.showAutoRedact) }
+            BrandSection(title: "Auto-Zensur",
+                         footer: "Sucht per Texterkennung nach E-Mails, IBANs, Schlüsseln usw. und legt Balken an. Normalerweise ziehst du Balken selbst, der Knopf ist deshalb aus.") {
+                BrandRow(title: "Knopf „Auto-Zensur“ in den Editoren") {
+                    BrandToggle(isOn: $settings.showAutoRedact, label: "Knopf Auto-Zensur")
+                }
                 if settings.showAutoRedact {
                     ForEach(SensitiveDetector.Kind.allCases, id: \.self) { kind in
-                        RowDivider()
-                        Row(title: kind.longTitle, subtitle: kind.example) {
-                            Switch(isOn: Binding(get: { settings.autoRedactKinds.contains(kind) }, set: { on in
+                        BrandRowDivider()
+                        BrandRow(title: kind.longTitle, detail: kind.example) {
+                            BrandToggle(isOn: Binding(get: { settings.autoRedactKinds.contains(kind) }, set: { on in
                                 if on { settings.autoRedactKinds.insert(kind) } else { settings.autoRedactKinds.remove(kind) }
-                            }))
+                            }), label: kind.longTitle)
                         }
                     }
                 }
@@ -676,30 +982,38 @@ private struct RedactionPane: View {
     }
 }
 
-/// Auswahlkarte mit Vorschau.
+/// Auswahlkarte mit Vorschau; die gewählte trägt einen Königsblau-Rahmen.
 private struct RedactStyleCard: View {
     let style: RedactStyle
     let selected: Bool
     let action: () -> Void
+    @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 8) {
+            VStack(spacing: 9) {
                 Image(nsImage: RedactPreview.image(for: style))
                     .resizable()
-                    .frame(width: 112, height: 66)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(selected ? Theme.ink : Theme.border, lineWidth: selected ? 2.5 : 1))
+                    .frame(width: 120, height: 71)
+                    .clipShape(RoundedRectangle(cornerRadius: Brand.Radius.field, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: Brand.Radius.field, style: .continuous)
+                        .strokeBorder(Color.brand(selected ? Brand.accent : (hovering ? Brand.lineStrong : Brand.line)),
+                                      lineWidth: selected ? 2 : 1))
+                    .background(RoundedRectangle(cornerRadius: Brand.Radius.field + 3, style: .continuous)
+                        .stroke(Color.brand(Brand.accentSoft), lineWidth: selected ? 4 : 0).padding(-2))
                 Text(style.title)
-                    .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
-                    .foregroundStyle(selected ? Theme.ink : Theme.muted)
+                    .font(Brand.font(12.5, selected ? .semibold : .regular))
+                    .foregroundStyle(Color.brand(selected ? Brand.ink : Brand.inkSoft))
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
+
+// MARK: - Export
 
 private struct ExportPane: View {
     @ObservedObject var settings: AppSettings
@@ -714,75 +1028,88 @@ private struct ExportPane: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            Card(title: "Screenshots",
-                 footer: "Bildschirmgröße: so groß wie auf dem Bildschirm, beim Einfügen nicht doppelt so groß. Das Original bleibt für spätere Bearbeitung in voller Auflösung.") {
-                Row(title: "Größe") {
-                    Choice(selection: $settings.exportAtScreenSize, options: [(true, "Bildschirmgröße (1×)"), (false, "Retina (2×)")])
+        VStack(alignment: .leading, spacing: 30) {
+            BrandSection(title: "Screenshots",
+                         footer: "Bildschirmgröße: so groß wie auf dem Bildschirm, beim Einfügen nicht doppelt so groß. Das Original bleibt für spätere Bearbeitung in voller Auflösung.") {
+                BrandRow(title: "Größe") {
+                    BrandSelect(selection: $settings.exportAtScreenSize,
+                                options: [(true, "Bildschirmgröße (1×)"), (false, "Retina (2×)")], minWidth: 220)
                 }
-                RowDivider()
-                Row(title: "Format") {
-                    Choice(selection: $settings.imageFormat, options: ImageFormat.allCases.map { ($0, $0.title) })
+                BrandRowDivider()
+                BrandRow(title: "Format") {
+                    BrandSelect(selection: $settings.imageFormat, options: ImageFormat.allCases.map { ($0, $0.title) }, minWidth: 220)
                 }
-                RowDivider()
-                Row(title: "Vollbild-Screenshot") {
-                    Text(sizeHint).font(.system(size: 13).monospacedDigit()).foregroundStyle(Theme.muted)
-                }
-            }
-            Card(title: "GIF", footer: "Ruhige Stellen werden zusammengefasst — das hält GIFs klein.") {
-                Row(title: "Bildrate") {
-                    Choice(selection: $settings.gifFPS, options: [(10, "10 fps"), (15, "15 fps"), (20, "20 fps"), (25, "25 fps")])
-                }
-                RowDivider()
-                Row(title: "Maximale Breite") {
-                    Choice(selection: $settings.gifWidth, options: [(640, "640 px"), (800, "800 px"), (960, "960 px"), (1280, "1280 px")])
+                BrandRowDivider()
+                BrandRow(title: "Vollbild-Screenshot", detail: "Ungefähre Dateigröße") {
+                    Text(sizeHint).font(Brand.mono(12.5)).foregroundStyle(Color.brand(Brand.inkMuted))
                 }
             }
-            Card(title: "Video") {
-                Row(title: "Zensur und Kürzung", subtitle: "werden beim Speichern eingerechnet, das Format bleibt erhalten") { EmptyView() }
+            BrandSection(title: "GIF", footer: "Ruhige Stellen werden zusammengefasst, das hält GIFs klein.") {
+                BrandRow(title: "Bildrate") {
+                    BrandSegmented(selection: $settings.gifFPS, options: [(10, "10 fps"), (15, "15 fps"), (20, "20 fps"), (25, "25 fps")])
+                }
+                BrandRowDivider()
+                BrandRow(title: "Maximale Breite") {
+                    BrandSelect(selection: $settings.gifWidth,
+                                options: [(640, "640 px"), (800, "800 px"), (960, "960 px"), (1280, "1280 px")], minWidth: 130)
+                }
+            }
+            BrandSection(title: "Video") {
+                BrandRow(title: "Zensur und Kürzung", detail: "Werden beim Speichern eingerechnet, das Format bleibt erhalten.") { EmptyView() }
             }
         }
     }
 }
 
+// MARK: - Ablage
+
 private struct StoragePane: View {
     @ObservedObject var settings: AppSettings
+    @ObservedObject var readiness: Readiness
     @State private var usage = "…"
     @State private var confirmPurge = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            Card(title: "Ablageordner", footer: "Dort liegt immer die bearbeitete Fassung — zensierte Stellen sind darin endgültig unkenntlich.") {
-                HStack(spacing: 12) {
-                    Image(nsImage: FileManager.default.fileExists(atPath: settings.saveFolder.path)
-                          ? NSWorkspace.shared.icon(forFile: settings.saveFolder.path)
-                          : NSWorkspace.shared.icon(for: .folder))
-                        .resizable().frame(width: 30, height: 30)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(settings.saveFolder.lastPathComponent).font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.ink)
-                        Text(settings.saveFolder.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-                            .font(.system(size: 12)).foregroundStyle(Theme.muted).lineLimit(1).truncationMode(.middle)
+        let reachable = readiness.state.folderReachable
+        VStack(alignment: .leading, spacing: 30) {
+            BrandSection(title: "Ablageordner", footer: "Dort liegt immer die bearbeitete Fassung, zensierte Stellen sind darin endgültig unkenntlich.") {
+                HStack(spacing: 14) {
+                    BrandIconTile(symbol: "folder", size: 36)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(settings.saveFolder.lastPathComponent)
+                            .font(Brand.font(14, .medium))
+                            .foregroundStyle(Color.brand(Brand.ink))
+                        Text(reachable ? settings.saveFolder.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+                                       : "Nicht erreichbar. Bis dahin landen Aufnahmen in Bilder/Knips.")
+                            .font(Brand.font(12.5))
+                            .foregroundStyle(Color.brand(reachable ? Brand.inkSoft : Brand.warn))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
-                    Spacer()
-                    Button("Ändern …") { chooseFolder() }.buttonStyle(PillButtonStyle())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("Ändern …") { readiness.chooseFolder() }
+                        .buttonStyle(BrandButtonStyle(kind: .secondary, compact: true))
                     Button("Öffnen") {
                         try? FileManager.default.createDirectory(at: settings.saveFolder, withIntermediateDirectories: true)
                         NSWorkspace.shared.open(settings.saveFolder)
+                        readiness.refresh()
                     }
-                    .buttonStyle(PillButtonStyle(primary: true))
+                    .buttonStyle(BrandButtonStyle(kind: .primary, compact: true))
                 }
-                .padding(.vertical, 14)
+                .padding(.vertical, 16)
             }
-            Card(title: "Originale", footer: "Mit dem Original lässt sich eine Zensur später ändern. Es liegt getrennt in der App-Ablage und wird nie geteilt.") {
-                Row(title: "Aufbewahren") {
-                    Choice(selection: $settings.retentionDays,
-                           options: [(7, "7 Tage"), (30, "30 Tage"), (90, "90 Tage"), (365, "1 Jahr"), (0, "Unbegrenzt")])
+            BrandSection(title: "Originale", footer: "Mit dem Original lässt sich eine Zensur später ändern. Es liegt getrennt in der App-Ablage und wird nie geteilt.") {
+                BrandRow(title: "Aufbewahren") {
+                    BrandSelect(selection: $settings.retentionDays,
+                                options: [(7, "7 Tage"), (30, "30 Tage"), (90, "90 Tage"), (365, "1 Jahr"), (0, "Unbegrenzt")], minWidth: 150)
                 }
-                RowDivider()
-                Row(title: "Belegt") { Text(usage).font(.system(size: 13).monospacedDigit()).foregroundStyle(Theme.muted) }
-                RowDivider()
-                Row(title: "Alle Originale löschen", subtitle: "Dateien im Ablageordner bleiben") {
-                    Button("Löschen …") { confirmPurge = true }.buttonStyle(PillButtonStyle(destructive: true))
+                BrandRowDivider()
+                BrandRow(title: "Belegt") {
+                    Text(usage).font(Brand.mono(12.5)).foregroundStyle(Color.brand(Brand.inkMuted))
+                }
+                BrandRowDivider()
+                BrandRow(title: "Alle Originale löschen", detail: "Dateien im Ablageordner bleiben.") {
+                    Button("Löschen …") { confirmPurge = true }.buttonStyle(BrandButtonStyle(kind: .secondary, compact: true))
                 }
             }
         }
@@ -801,152 +1128,138 @@ private struct StoragePane: View {
         let bytes = CaptureStore.shared.storageSize()
         usage = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) + " · \(CaptureStore.shared.items.count) Aufnahmen"
     }
-
-    private func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = true
-        panel.directoryURL = settings.saveFolder
-        panel.prompt = "Auswählen"
-        if panel.runModal() == .OK, let url = panel.url { settings.saveFolderPath = url.path }
-    }
 }
+
+// MARK: - Datenschutz
 
 private struct PrivacyPane: View {
     @ObservedObject private var telemetry = Telemetry.shared
-    @State private var screen = ScreenCapture.hasPermission
-    @State private var mic = AVCaptureDevice.authorizationStatus(for: .audio)
-    private let timer = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
+    @ObservedObject var readiness: Readiness
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            Card(title: "Freigaben") {
-                permission("rectangle.dashed.badge.record", "Bildschirm- & Systemaudioaufnahme", "Für Screenshots und Videos nötig", screen) {
-                    if !CGRequestScreenCaptureAccess() { PermissionWindowController.show() }
-                }
-                RowDivider()
-                permission("mic", "Mikrofon", "Nur für Aufnahmen mit Kommentar", mic == .authorized) {
-                    if mic == .notDetermined {
-                        AVCaptureDevice.requestAccess(for: .audio) { _ in }
-                    } else {
-                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
-                    }
-                }
+        VStack(alignment: .leading, spacing: 30) {
+            BrandSection(title: "Freigaben", detail: "macOS fragt nach, bevor Knips den Bildschirm oder das Mikrofon nutzen darf.") {
+                ScreenCheckRow(granted: readiness.state.screen, readiness: readiness)
+                BrandRowDivider()
+                MicrophoneCheckRow(state: readiness.state, readiness: readiness)
             }
-            Card(title: "Nutzungsstatistik",
-                 footer: telemetry.config.enabled ? nil : "Entwickler-Build: Hier wird nichts gesendet. KNIPS_TELEMETRY=1 schaltet das Senden ein.") {
-                HStack(spacing: 14) {
+            BrandSection(title: "Nutzungsstatistik",
+                         footer: telemetry.config.enabled ? nil : "Entwickler-Build: Hier wird nichts gesendet. KNIPS_TELEMETRY=1 schaltet das Senden ein.") {
+                HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Anonyme Nutzungsstatistik").font(.system(size: 14)).foregroundStyle(Theme.ink)
-                        Text("Zählt nur, welche Funktionen wie oft genutzt werden — nie Bilder, Texte oder Dateinamen.")
-                            .font(.system(size: 12)).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
-                        Link(destination: Telemetry.infoURL) {
-                            HStack(spacing: 3) {
-                                Text("Was wird gesendet?")
-                                Image(systemName: "arrow.up.right").font(.system(size: 9.5, weight: .semibold))
-                            }
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(Theme.ink)
-                        }
-                        .padding(.top, 2)
+                        Text("Anonyme Nutzungsstatistik").font(Brand.font(14, .medium)).foregroundStyle(Color.brand(Brand.ink))
+                        Text("Zählt nur, welche Funktionen wie oft genutzt werden, nie Bilder, Texte oder Dateinamen.")
+                            .font(Brand.font(12.5))
+                            .foregroundStyle(Color.brand(Brand.inkSoft))
+                            .fixedSize(horizontal: false, vertical: true)
+                        BrandLink(title: "Was wird gesendet?", url: Telemetry.infoURL).padding(.top, 3)
                     }
-                    Spacer(minLength: 8)
-                    Switch(isOn: Binding(get: { telemetry.consent == true }, set: { telemetry.setConsent($0) }))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    BrandToggle(isOn: Binding(get: { telemetry.consent == true }, set: { telemetry.setConsent($0) }),
+                                label: "Anonyme Nutzungsstatistik")
                 }
-                .padding(.vertical, 13)
+                .padding(.vertical, 15)
             }
-            Card(title: "So arbeitet Knips") {
+            BrandSection(title: "So arbeitet Knips") {
                 InfoLine(symbol: "cpu", text: "Texterkennung läuft auf diesem Mac")
-                RowDivider()
+                BrandRowDivider()
                 InfoLine(symbol: "network.slash", text: telemetry.consent == true
-                         ? "Kein Konto — ins Internet gehen nur die anonymen Zähler"
+                         ? "Kein Konto. Ins Internet gehen nur die anonymen Zähler"
                          : "Kein Konto, nichts geht ins Internet")
-                RowDivider()
+                BrandRowDivider()
                 InfoLine(symbol: "checkmark.shield", text: "Geteilte Dateien sind immer die zensierte Fassung")
-                RowDivider()
+                BrandRowDivider()
                 InfoLine(symbol: "doc.on.clipboard", text: "„Text kopieren“ lässt Zensiertes und Weggeschnittenes weg")
-                RowDivider()
+                BrandRowDivider()
                 InfoLine(symbol: "link", text: "Aufnahmen per knips://-Link nur nach Rückfrage")
             }
         }
-        .onReceive(timer) { _ in
-            screen = ScreenCapture.hasPermission
-            mic = AVCaptureDevice.authorizationStatus(for: .audio)
-        }
-    }
-
-    private func permission(_ symbol: String, _ title: String, _ detail: String, _ granted: Bool, action: @escaping () -> Void) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: symbol).font(.system(size: 16)).frame(width: 30, height: 30)
-                .background(Circle().fill(Theme.soft)).foregroundStyle(Theme.ink)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 14)).foregroundStyle(Theme.ink)
-                Text(detail).font(.system(size: 12)).foregroundStyle(Theme.muted)
-            }
-            Spacer()
-            if granted {
-                Label("Erlaubt", systemImage: "checkmark.circle.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color(red: 0.2, green: 0.6, blue: 0.4))
-            } else {
-                Button("Erlauben …", action: action).buttonStyle(PillButtonStyle(primary: true))
-            }
-        }
-        .padding(.vertical, 12)
+        .onAppear { readiness.refresh() }
+        .onReceive(readinessTimer) { _ in readiness.refresh() }
     }
 }
 
-private struct AboutPane: View {
-    private var version: String {
-        let info = Bundle.main.infoDictionary
-        return "Version \(info?["CFBundleShortVersionString"] as? String ?? "1.0.0") (\(info?["CFBundleVersion"] as? String ?? "1"))"
-    }
+// MARK: - Über Knips
+
+struct AboutPane: View {
+    static let sourceURL = URL(string: "https://github.com/patrickbirkholz0000/knips")!
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            Card {
-                VStack(spacing: 10) {
-                    Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 84, height: 84)
-                    Text("Knips").font(.system(size: 26, weight: .bold)).tracking(-0.5).foregroundStyle(Theme.ink)
-                    Text(version).font(.system(size: 12.5)).foregroundStyle(Theme.muted)
-                    VStack(spacing: 3) {
-                        Text("© 2026 Patrick Birkholz").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink)
-                        Text("Freie Software unter der GNU GPL v3 oder neuer — ohne jede Gewährleistung.")
-                            .font(.system(size: 12)).foregroundStyle(Theme.muted)
+        VStack(alignment: .leading, spacing: 30) {
+            BrandCard {
+                VStack(spacing: 0) {
+                    HStack(spacing: 14) {
+                        BrandMark(size: 60, ink: .brand(Brand.ink), accent: .brand(Brand.accent))
+                        Wordmark(size: 46, ink: .brand(Brand.ink), lamp: .brand(Brand.accent))
+                    }
+                    Text("Version \(AppVersion.short) · Build \(AppVersion.build)")
+                        .font(Brand.mono(12))
+                        .foregroundStyle(Color.brand(Brand.inkSoft))
+                        .padding(.top, 14)
+                    VStack(spacing: 4) {
+                        Text("© 2026 Patrick Birkholz").font(Brand.font(13.5, .medium)).foregroundStyle(Color.brand(Brand.ink))
+                        Text("Freie Software unter der GNU GPL v3 oder neuer, ohne jede Gewährleistung.")
+                            .font(Brand.font(12.5))
+                            .foregroundStyle(Color.brand(Brand.inkSoft))
                     }
                     .multilineTextAlignment(.center)
-                    .padding(.top, 8)
-                    Button { NSWorkspace.shared.open(AboutPane.sourceURL) } label: {
+                    .padding(.top, 16)
+                    Button { NSWorkspace.shared.open(Self.sourceURL) } label: {
                         HStack(spacing: 5) {
                             Text("Quellcode")
                             Image(systemName: "arrow.up.right").font(.system(size: 10, weight: .semibold))
                         }
                     }
-                    .buttonStyle(PillButtonStyle())
-                    .help(AboutPane.sourceURL.absoluteString)
-                    .padding(.top, 4)
+                    .buttonStyle(BrandButtonStyle(kind: .secondary, compact: true))
+                    .help(Self.sourceURL.absoluteString)
+                    .padding(.top, 16)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 24)
+                .padding(.vertical, 30)
             }
-            Card(title: "Funktionen") {
-                InfoLine(symbol: "", text: "Bereich, Fenster oder Bildschirm — Auswahl auf eingefrorenem Bild")
-                RowDivider()
-                InfoLine(symbol: "", text: "Zensur-Balken mit Text-Erkennung, auch in Videos")
-                RowDivider()
-                InfoLine(symbol: "", text: "Bildschirmvideos als MP4 oder GIF")
-                RowDivider()
-                InfoLine(symbol: "", text: "Text aus Screenshots kopieren")
+            BrandSection(title: "Schriften", detail: "Beide stehen unter der SIL Open Font License 1.1 und liegen der App bei.") {
+                fontRow("Outfit", "Text und Titel", file: "OFL-Outfit")
+                BrandRowDivider()
+                fontRow("JetBrains Mono", "Zahlen, Zeiten und Kürzel", file: "OFL-JetBrainsMono")
             }
-            Card(title: "Für Raycast & Co.") {
-                Row(title: "Befehle", subtitle: "Bildschirm, letzter Bereich und Videostart fragen vorher nach (Allgemein)") {
-                    Text("knips://area · window · fullscreen · record · text · last · menu")
-                        .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.muted)
+            BrandSection(title: "Funktionen") {
+                InfoLine(symbol: "rectangle.dashed", text: "Bereich, Fenster oder Bildschirm, Auswahl auf eingefrorenem Bild")
+                BrandRowDivider()
+                InfoLine(symbol: "eye.slash", text: "Zensur-Balken mit Texterkennung, auch in Videos")
+                BrandRowDivider()
+                InfoLine(symbol: "record.circle", text: "Bildschirmvideos als MP4 oder GIF")
+                BrandRowDivider()
+                InfoLine(symbol: "text.viewfinder", text: "Text aus Screenshots kopieren")
+            }
+            BrandSection(title: "Für Raycast & Co.", footer: "Bildschirm, letzter Bereich und Videostart fragen vorher nach.") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Befehle").font(Brand.font(14, .medium)).foregroundStyle(Color.brand(Brand.ink))
+                    Text("knips://area · window · fullscreen · record · text · scroll · last · pin · menu · history · settings")
+                        .font(Brand.mono(12))
+                        .foregroundStyle(Color.brand(Brand.inkMuted))
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
                 }
+                .padding(.vertical, 16)
             }
         }
     }
 
-    static let sourceURL = URL(string: "https://github.com/patrickbirkholz0000/knips")!
+    private func fontRow(_ name: String, _ use: String, file: String) -> some View {
+        BrandRow(title: name, detail: use) {
+            Button("Lizenz") { Self.openLicense(file) }
+                .buttonStyle(BrandButtonStyle(kind: .secondary, compact: true))
+                .help("\(file).txt")
+        }
+    }
+
+    /// Lizenztext aus dem App-Bundle (`Resources/Fonts`), sonst im Quellcode.
+    static func openLicense(_ file: String) {
+        if let url = Bundle.main.url(forResource: file, withExtension: "txt", subdirectory: "Fonts") {
+            NSWorkspace.shared.open(url)
+        } else {
+            NSWorkspace.shared.open(sourceURL.appendingPathComponent("blob/main/Resources/Fonts/\(file).txt"))
+        }
+    }
 }

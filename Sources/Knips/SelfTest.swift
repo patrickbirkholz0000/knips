@@ -466,10 +466,11 @@ import Vision
         window.setFrameOrigin(origin)
     }
 
-    private static func windowShot(_ window: NSWindow, _ url: URL) async throws {
+    /// `settle`: Wartezeit nach dem Platzieren (Darstellung, Layout, Animationen).
+    private static func windowShot(_ window: NSWindow, _ url: URL, settle: TimeInterval = 0.9) async throws {
         let size = window.frame.size
         placeOffscreen(window)
-        try await Task.sleep(nanoseconds: 900_000_000)
+        if settle > 0 { try await Task.sleep(nanoseconds: UInt64(settle * 1_000_000_000)) }
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         guard let scw = content.windows.first(where: { $0.windowID == CGWindowID(window.windowNumber) }) else { throw CaptureError.windowGone }
         let config = SCStreamConfiguration()
@@ -479,6 +480,24 @@ import Vision
         let image = try await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: scw), configuration: config)
         try write(image, url)
         print("   Fensterposition: \(window.frame.origin)")
+    }
+
+    /// Hell und dunkel (Dateiname ohne bzw. mit „-dunkel“). `KNIPS_TEST_APPEARANCE=light|dark` beschränkt auf eine.
+    static func testAppearances() -> [(suffix: String, appearance: NSAppearance)] {
+        let only = ProcessInfo.processInfo.environment["KNIPS_TEST_APPEARANCE"]
+        return [("light", "", NSAppearance.Name.aqua), ("dark", "-dunkel", .darkAqua)].compactMap { key, suffix, name in
+            guard only == nil || only == key, let appearance = NSAppearance(named: name) else { return nil }
+            return (suffix, appearance)
+        }
+    }
+
+    /// Fenster in jeder Darstellung fotografieren: `<name>.png` (hell), `<name>-dunkel.png`.
+    private static func windowShots(_ window: NSWindow, _ out: URL, _ name: String, settle: TimeInterval = 0.9) async throws {
+        for (suffix, appearance) in testAppearances() {
+            NSApp.appearance = appearance
+            try await windowShot(window, out.appendingPathComponent("\(name)\(suffix).png"), settle: settle)
+        }
+        NSApp.appearance = testAppearances().first?.appearance
     }
 
     static func menu(_ out: URL) async throws {
@@ -506,13 +525,25 @@ import Vision
 
     static func history(_ out: URL) async throws {
         let store = CaptureStore.shared
+        NSApp.appearance = testAppearances().first?.appearance   // Einzelbilder unabhängig vom System-Modus
+        let empty = HistoryWindowController().window!
+        try await windowShots(empty, out, "verlauf-leer")
+        empty.orderOut(nil)
+        let clip = out.appendingPathComponent("verlauf-video.mp4")
+        _ = try await makeSampleVideo(clip, seconds: 2)
+        _ = try await store.addVideo(from: clip, scale: 2)
         for (w, h) in [(1400, 880), (900, 1200), (1600, 700), (1200, 800), (1000, 1000)] {
             let item = try store.addImage(sampleImage(width: w, height: h), scale: 2)
             await store.waitUntilWritten(item.id)
         }
-        let window = HistoryWindowController().window!
-        try await windowShot(window, out.appendingPathComponent("verlauf.png"))
+        // Die neueste Karte mit Maus darüber: Königsblau-Linie und Knöpfe.
+        let window = HistoryWindowController(hovered: store.items.first?.id).window!
+        try await windowShots(window, out, "verlauf")
         window.orderOut(nil)
+        let filtered = HistoryWindowController(filter: .gifs).window!
+        try await windowShot(filtered, out.appendingPathComponent("verlauf-filter-leer.png"))
+        filtered.orderOut(nil)
+        print("   \(store.items.count) Einträge, davon \(store.items.filter { $0.kind == .video }.count) Video")
     }
 
     /// Klicks auf eine Karte: die Fläche öffnet, die Knöpfe lösen nur ihre eigene Aktion aus.
@@ -656,11 +687,56 @@ import Vision
     }
 
     static func settings(_ out: URL, panes: [SettingsPane]) async throws {
+        defer { NSApp.appearance = nil }
+        var wrongChecks: [String] = []
+        func check(_ name: String, _ ok: Bool) {
+            print("   \(ok ? "ok    " : "FALSCH") \(name)")
+            if !ok { wrongChecks.append(name) }
+        }
+
+        // Darstellung: wirkt sofort auf die ganze App (Sandbox-Domäne, die echte Einstellung bleibt unberührt).
+        let settings = AppSettings.shared
+        settings.appearance = .dark
+        check("Darstellung Dunkel → NSApp.appearance darkAqua", NSApp.appearance?.name == .darkAqua)
+        settings.appearance = .light
+        check("Darstellung Hell → NSApp.appearance aqua", NSApp.appearance?.name == .aqua)
+        settings.appearance = .system
+        check("Darstellung System → NSApp.appearance nil (folgt macOS)", NSApp.appearance == nil
+              && UserDefaults.knips.string(forKey: "appearance") == "system")
+
+        // Bereit-Check: fehlende Schritte zählen, das Mikrofon nur, wenn „Mikrofon aufnehmen“ an ist.
+        let missingState = Readiness.State(screen: false, microphone: .notDetermined, microphoneWanted: false,
+                                           hotkeys: .system([KeyCombo(keyCode: 20, modifiers: 768), KeyCombo(keyCode: 21, modifiers: 768)], ids: [28, 30]),
+                                           folderReachable: false)
+        let readyState = Readiness.State(screen: true, microphone: .authorized, microphoneWanted: true,
+                                         hotkeys: .ok(Array(AppSettings.defaultHotkeys.values)), folderReachable: true)
+        var micWanted = readyState
+        micWanted.microphone = .denied
+        check("3 Schritte offen (Mikrofon freiwillig)", missingState.missing == 3)
+        check("alles bereit", readyState.missing == 0)
+        check("Mikrofon zählt, wenn „Mikrofon aufnehmen“ an ist", micWanted.missing == 1 && micWanted.microphoneTone == .missing)
+        check("Ablageordner der Sandbox erreichbar", Readiness.folderReachable(settings.saveFolder))
+        check("nicht anlegbarer Ordner unerreichbar", !Readiness.folderReachable(URL(fileURLWithPath: "/System/Knips-gibt-es-nicht")))
+
         let controller = SettingsWindowController()
         let window = controller.window!
+        // Für die Durchsicht ganzer Seiten: KNIPS_TEST_WINDOW_HEIGHT=1400.
+        if let raw = ProcessInfo.processInfo.environment["KNIPS_TEST_WINDOW_HEIGHT"], let height = Double(raw) {
+            window.setContentSize(NSSize(width: SettingsWindowController.size.width, height: height))
+        }
         for pane in panes {
             SettingsNavigation.shared.pane = pane
-            try await windowShot(window, out.appendingPathComponent("einstellungen-\(pane.rawValue).png"))
+            try await windowShots(window, out, "einstellungen-\(pane.rawValue)")
+            if pane == .start {
+                // Bereit-Check simuliert: drei offene Schritte bzw. alles bereit.
+                Readiness.shared.simulated = missingState
+                check("Seitenleiste: „3 Schritte offen“", Readiness.shared.summary == "3 Schritte offen")
+                try await windowShots(window, out, "start-offen")
+                Readiness.shared.simulated = readyState
+                check("Seitenleiste: „Bereit“", Readiness.shared.summary == "Bereit")
+                try await windowShots(window, out, "start-bereit")
+                Readiness.shared.simulated = nil
+            }
             if pane == .shortcuts {
                 HotkeyRecorderState.shared.recording = .captureArea
                 try await windowShot(window, out.appendingPathComponent("einstellungen-shortcuts-eingabe.png"))
@@ -668,7 +744,6 @@ import Vision
             }
             if pane == .general {
                 // Anzeigedauer eingeschaltet (Sandbox-Domäne — die echten Einstellungen bleiben unberührt).
-                let settings = AppSettings.shared
                 let (hide, seconds) = (settings.quickAccessAutoHide, settings.quickAccessSeconds)
                 settings.quickAccessAutoHide = true
                 settings.quickAccessSeconds = 7
@@ -696,7 +771,7 @@ import Vision
 
         // Frage beim ersten Start (eigenes Fenster, nicht über anderen Dialogen)
         let consent = ConsentWindowController(telemetry: Telemetry.shared)
-        try await windowShot(consent.window!, out.appendingPathComponent("zustimmung.png"))
+        try await windowShots(consent.window!, out, "zustimmung")
         // ⏎ stimmt nicht zu: Das Fenster holt sich beim Start den Fokus, ein Tastendruck für eine andere App zählt nicht.
         let before = Telemetry.shared.consent
         guard let enter = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
@@ -708,6 +783,19 @@ import Vision
         guard Telemetry.shared.consent == before else { throw CheckFailed(message: "⏎ im Zustimmungsdialog hat entschieden") }
         print("   ok     ⏎ im Zustimmungsdialog entscheidet nichts")
         consent.window?.orderOut(nil)
+
+        // Freigabe beim ersten Start und Frage „Kürzel für Knips übernehmen?“ (nur zeigen — nie übernehmen,
+        // das würde die echten macOS-Kürzel umschreiben).
+        let permission = PermissionWindowController()
+        try await windowShots(permission.window!, out, "freigabe")
+        permission.window?.orderOut(nil)
+        let takeover = ShortcutTakeoverWindowController(conflicts: [
+            (KeyCombo(keyCode: 20, modifiers: 768), "Bildschirm"), (KeyCombo(keyCode: 21, modifiers: 768), "Bereich"),
+            (KeyCombo(keyCode: 23, modifiers: 768), "Video"),
+        ])
+        try await windowShots(takeover.window!, out, "kuerzel-uebernehmen")
+        takeover.window?.orderOut(nil)
+        if !wrongChecks.isEmpty { throw CheckFailed(message: "Einstellungen falsch: \(wrongChecks.joined(separator: ", "))") }
     }
 
     // MARK: knips://-Links
@@ -726,6 +814,8 @@ import Vision
         commands.recordingBusy = { recording }
         commands.place = { placed += 1; placeOffscreen($0) }
         let delegate = AppDelegate()
+        NSApp.appearance = testAppearances().first?.appearance   // Einzelbilder unabhängig vom System-Modus
+        defer { NSApp.appearance = nil }
         func link(_ command: String, sender: String? = nil) {
             if let sender {
                 delegate.handle(URL(string: "knips://\(command)")!, fromLink: true, sender: sender)
@@ -787,12 +877,14 @@ import Vision
         print("     Text: \(record.model.prompt.message)")
         check("Absender steht in der Rückfrage", record.model.prompt.message.hasPrefix("„Kurzbefehle“ möchte")
               || record.model.prompt.message.hasPrefix("„Shortcuts“ möchte"))
-        try await windowShot(record.window!, out.appendingPathComponent("link-rueckfrage-record.png"))
+        try await windowShots(record.window!, out, "link-rueckfrage-record")
         record.cancel()
         check("Abbrechen", calls.isEmpty && commands.confirmation == nil)
 
         link("fullscreen")
-        try await windowShot(try dialog("fullscreen").window!, out.appendingPathComponent("link-rueckfrage-fullscreen.png"))
+        // Schutzzeit sichtbar: kurz nach dem Zeigen ist „Aufnehmen“ noch blass, darunter läuft der Fortschritt.
+        try await windowShot(try dialog("fullscreen").window!, out.appendingPathComponent("link-schutzzeit.png"), settle: 0.05)
+        try await windowShots(try dialog("fullscreen").window!, out, "link-rueckfrage-fullscreen")
         try dialog("fullscreen").window!.close()
         check("Fenster schließen = Abbrechen", calls.isEmpty && commands.confirmation == nil)
 
@@ -856,7 +948,7 @@ import Vision
         let text = try dialog("text")
         text.confirm()
         check("vor der Schutzzeit wird nichts kopiert", copied == 0 && commands.confirmation === text)
-        try await windowShot(text.window!, out.appendingPathComponent("link-text-kopieren.png"))
+        try await windowShots(text.window!, out, "link-text-kopieren")
         try press(text.window!, "\r", 36)
         check("⏎ = Kopieren", copied == 1 && commands.confirmation == nil)
         commands.confirmTextCopy(sample) { copied += 1 }

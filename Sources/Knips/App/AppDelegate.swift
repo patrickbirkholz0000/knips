@@ -1,8 +1,10 @@
 import AppKit
 import ScreenCaptureKit
+import SwiftUI
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppSettings.shared.applyAppearance()   // Hell/Dunkel/System, bevor das erste Fenster erscheint
         NSApp.mainMenu = Self.makeMainMenu()
         Paths.ensure(Paths.items)
         _ = CaptureStore.shared
@@ -204,20 +206,105 @@ import ScreenCaptureKit
         guard !UserDefaults.knips.bool(forKey: asked) else { return }
         UserDefaults.knips.set(true, forKey: asked)
 
-        let list = combos.filter { SystemShortcuts.conflict(for: $0) != nil }.map(\.display).sorted().joined(separator: ", ")
-        var info: [String] = []
-        if !ids.isEmpty {
-            info.append("macOS belegt \(list) noch für eigene Bildschirmfotos. Knips schaltet diese macOS-Kürzel ab — in den Knips-Einstellungen unter „Tastaturkurzbefehle“ jederzeit wiederherstellbar.")
-        }
-        let alert = NSAlert()
-        alert.messageText = "⇧⌘3, ⇧⌘4 und ⇧⌘5 für Knips übernehmen?"
-        alert.informativeText = info.joined(separator: "\n\n")
-        alert.addButton(withTitle: "Übernehmen")
-        alert.addButton(withTitle: "Nicht jetzt")
+        let dialog = ShortcutTakeoverWindowController(conflicts: conflicts(AppSettings.shared))
         NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard dialog.runModal() else { return }
         SystemShortcuts.takeOver(ids)
         HotkeyManager.shared.apply(AppSettings.shared.activeHotkeys)
         HUD.show("Kürzel übernommen")
+    }
+
+    /// Kürzel, die macOS noch selbst belegt, mit dem Namen der Knips-Aktion — sortiert wie die macOS-Kürzel.
+    static func conflicts(_ settings: AppSettings) -> [(KeyCombo, String)] {
+        HotkeyAction.allCases.compactMap { action in
+            guard let combo = settings.activeHotkeys[action], SystemShortcuts.conflict(for: combo) != nil else { return nil }
+            return (combo, label(action))
+        }
+        .sorted { $0.0.display < $1.0.display }
+    }
+
+    /// Kurzname unter den Tastenkappen.
+    private static func label(_ action: HotkeyAction) -> String {
+        switch action {
+        case .captureArea: "Bereich"
+        case .captureWindow: "Fenster"
+        case .captureFullscreen: "Bildschirm"
+        case .captureLastArea: "Letzter Bereich"
+        case .captureText: "Text"
+        case .captureScrolling: "Scrollen"
+        case .toggleRecording: "Video"
+        case .pinClipboard: "Anpinnen"
+        }
+    }
+}
+
+/// Frage „Kürzel für Knips übernehmen?“ — eigenes Dialogfenster im Stil der übrigen Dialoge, modal wie früher der
+/// NSAlert: Die Statistik-Frage kommt erst danach. „Übernehmen“ (⏎) oder „Nicht jetzt“ (Esc, Schließen).
+@MainActor final class ShortcutTakeoverWindowController: NSWindowController, NSWindowDelegate {
+    static let width: CGFloat = 520
+    private var modal = false
+
+    init(conflicts: [(KeyCombo, String)]) {
+        let window = BrandDialogWindow.make(width: Self.width, title: "Kürzel für Knips übernehmen?")
+        window.level = .floating
+        super.init(window: window)
+        window.delegate = self
+        window.setDialogContent(ShortcutTakeoverView(conflicts: conflicts,
+                                                     accept: { [weak self] in self?.finish(true) },
+                                                     decline: { [weak self] in self?.finish(false) }))
+        window.center()
+    }
+
+    @available(*, unavailable) required init?(coder: NSCoder) { nil }
+
+    /// Zeigt den Dialog modal; `true` = übernehmen.
+    func runModal() -> Bool {
+        guard let window else { return false }
+        window.makeKeyAndOrderFront(nil)
+        modal = true
+        let response = NSApp.runModal(for: window)
+        modal = false
+        window.orderOut(nil)
+        return response == .alertFirstButtonReturn
+    }
+
+    private func finish(_ accept: Bool) {
+        guard modal else { window?.orderOut(nil); return }
+        NSApp.stopModal(withCode: accept ? .alertFirstButtonReturn : .alertSecondButtonReturn)
+    }
+
+    func windowWillClose(_ notification: Notification) { finish(false) }
+}
+
+struct ShortcutTakeoverView: View {
+    let conflicts: [(KeyCombo, String)]
+    let accept: () -> Void
+    let decline: () -> Void
+
+    var body: some View {
+        BrandDialog(overline: "Tastaturkürzel", title: "Kürzel für Knips übernehmen?",
+                    message: "macOS belegt diese Kürzel noch für eigene Bildschirmfotos. Solange das so ist, kommen sie nicht bei Knips an.",
+                    width: ShortcutTakeoverWindowController.width) {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .top, spacing: 22) {
+                    ForEach(Array(conflicts.enumerated()), id: \.offset) { _, entry in
+                        VStack(spacing: 8) {
+                            BrandKeys(combo: entry.0, large: true)
+                            Text(entry.1).font(Brand.font(12.5, .medium)).foregroundStyle(Color.brand(Brand.inkMuted))
+                        }
+                    }
+                }
+                BrandDialogPoint(symbol: "arrow.uturn.backward", title: "Jederzeit rückgängig",
+                                 text: "Knips schaltet nur diese macOS-Kürzel ab. In den Knips-Einstellungen unter „Tastaturkürzel“ stellst du sie wieder her.")
+            }
+        } buttons: {
+            Spacer()
+            Button("Nicht jetzt", action: decline)
+                .buttonStyle(BrandButtonStyle(kind: .secondary))
+                .keyboardShortcut(.cancelAction)
+            Button("Übernehmen", action: accept)
+                .buttonStyle(BrandButtonStyle(kind: .primary))
+                .keyboardShortcut(.defaultAction)
+        }
     }
 }

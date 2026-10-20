@@ -4,45 +4,80 @@ import SwiftUI
 
 /// Setzt beim Scrollen aufgenommene Bilder eines Bereichs zu einem langen Bild zusammen.
 /// Jedes neue Bild wird gegen das vorige verschoben verglichen (Zeilenprofile); nur die neu
-/// sichtbaren Zeilen unten werden angehängt.
+/// sichtbaren Zeilen unten werden behalten, als eigene Kopie — nie ganze Bilder. `add` und
+/// `assemble` dürfen aus verschiedenen Threads kommen, sie laufen nacheinander.
 final class ScrollStitcher: @unchecked Sendable {
-    private(set) var pieces: [(image: CGImage, rows: Range<Int>)] = []
-    private var previous: RowProfile?
-    private(set) var height = 0
-    let width: Int
+    /// Höchste Höhe in Pixeln. JPEG schafft höchstens 65 535, und ein 2800 px breiter Bereich belegt
+    /// bei 60 000 Zeilen schon ~670 MB.
+    static let maxHeight = 60_000
 
-    init(first: CGImage) {
+    private let lock = NSLock()
+    private var strips: [CGImage] = []
+    private var previous: RowProfile?
+    private var rows = 0
+    private var full = false
+    let width: Int
+    let maxHeight: Int
+
+    init(first: CGImage, maxHeight: Int = ScrollStitcher.maxHeight) {
         width = first.width
-        pieces = [(first, 0..<first.height)]
+        self.maxHeight = maxHeight
+        let take = min(first.height, maxHeight)
+        if let strip = Self.copy(first, rows: 0..<take) { strips = [strip] }
         previous = RowProfile(first)
-        height = first.height
+        rows = strips.first?.height ?? 0
+        full = rows >= maxHeight
     }
+
+    var height: Int { lock.withLock { rows } }
+    /// Obergrenze erreicht: weitere Bilder werden ignoriert.
+    var limitReached: Bool { lock.withLock { full } }
+    /// Speicher der behaltenen Zeilen in Bytes.
+    var storedBytes: Int { lock.withLock { strips.reduce(0) { $0 + $1.bytesPerRow * $1.height } } }
 
     /// true, wenn das Bild neue Zeilen beigetragen hat.
     @discardableResult
     func add(_ frame: CGImage) -> Bool {
-        guard frame.width == width, let prev = previous else { return false }
+        lock.lock()
+        defer { lock.unlock() }
+        guard !full, frame.width == width, let prev = previous else { return false }
         let current = RowProfile(frame)
         guard let shift = prev.shift(to: current), shift > 0 else { return false }
-        pieces.append((frame, (frame.height - shift)..<frame.height))
-        height += shift
+        let take = min(shift, maxHeight - rows)
+        let start = frame.height - shift
+        guard let strip = Self.copy(frame, rows: start..<(start + take)) else { return false }
+        strips.append(strip)
+        rows += take
         previous = current
+        full = rows >= maxHeight
         return true
     }
 
     func assemble() -> CGImage? {
-        guard let first = pieces.first?.image else { return nil }
-        guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+        lock.lock()
+        defer { lock.unlock() }
+        guard let first = strips.first, rows > 0 else { return nil }
+        guard let ctx = CGContext(data: nil, width: width, height: rows, bitsPerComponent: 8, bytesPerRow: 0,
                                   space: Renderer.rgbSpace(first.colorSpace),
                                   bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
         else { return nil }
         var y = 0   // von oben
-        for piece in pieces {
-            let rows = piece.rows
-            guard let strip = piece.image.cropping(to: CGRect(x: 0, y: rows.lowerBound, width: width, height: rows.count)) else { continue }
-            ctx.draw(strip, in: CGRect(x: 0, y: height - y - rows.count, width: width, height: rows.count))
-            y += rows.count
+        for strip in strips {
+            ctx.draw(strip, in: CGRect(x: 0, y: rows - y - strip.height, width: width, height: strip.height))
+            y += strip.height
         }
+        return ctx.makeImage()
+    }
+
+    /// Zeilen als eigenständiges Bild — `cropping` allein hielte das ganze Bild im Speicher.
+    private static func copy(_ image: CGImage, rows: Range<Int>) -> CGImage? {
+        guard !rows.isEmpty,
+              let crop = image.cropping(to: CGRect(x: 0, y: rows.lowerBound, width: image.width, height: rows.count)),
+              let ctx = CGContext(data: nil, width: image.width, height: rows.count, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: Renderer.rgbSpace(image.colorSpace),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return nil }
+        ctx.draw(crop, in: CGRect(x: 0, y: 0, width: image.width, height: rows.count))
         return ctx.makeImage()
     }
 }
@@ -56,8 +91,11 @@ struct RowProfile {
     init(_ image: CGImage) {
         rows = image.height
         var buffer = [UInt8](repeating: 0, count: Self.columns * rows)
-        if let ctx = CGContext(data: &buffer, width: Self.columns, height: rows, bitsPerComponent: 8, bytesPerRow: Self.columns,
-                               space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) {
+        let rows = rows
+        // Der Zeiger gilt nur innerhalb des Blocks — der Kontext darf ihn nicht überleben.
+        buffer.withUnsafeMutableBytes { raw in
+            guard let ctx = CGContext(data: raw.baseAddress, width: Self.columns, height: rows, bitsPerComponent: 8, bytesPerRow: Self.columns,
+                                      space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return }
             ctx.interpolationQuality = .medium
             ctx.draw(image, in: CGRect(x: 0, y: 0, width: Self.columns, height: rows))
         }
@@ -113,24 +151,40 @@ struct RowProfile {
     @Published private(set) var active = false
     @Published private(set) var sections = 0
     @Published private(set) var pixelHeight = 0
+    /// Obergrenze (`ScrollStitcher.maxHeight`) erreicht: Es wird nichts mehr angehängt.
+    @Published private(set) var limitReached = false
 
     /// Höhe so, wie sie in der gespeicherten Datei herauskommt (1× oder Retina).
     var outputHeight: Int { Int(CGFloat(pixelHeight) * AppSettings.shared.outputFactor(sourceScale: scale)) }
 
     private var stitcher: ScrollStitcher?
     private var loop: Task<Void, Never>?
+    /// Laufendes Anhängen im Hintergrund — „Fertig“ wartet darauf.
+    private var ingesting: Task<(added: Bool, height: Int, full: Bool), Never>?
+    /// Zusammensetzen und Speichern nach „Fertig“ (Beenden der App wartet darauf).
+    private var finishing: Task<Void, Never>?
+    /// Jede Aufnahme bekommt eine Nummer. Bilder, die erst nach „Fertig“ zurückkommen, gehören zu
+    /// einer alten Sitzung und dürfen nie in der nächsten landen.
+    private var session = 0
+    private var failures = 0
     private var panel: NSPanel?
     private var frameWindow: NSPanel?
     private var screen: NSScreen?
+    private var screenFrame: CGRect = .zero
     private var scale: CGFloat = 2
+
+    private init() {
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { _ in
+            onMainActor { ScrollCaptureController.shared.screensChanged() }
+        }
+    }
 
     func begin(screen: NSScreen, display: SCDisplay, localRect: CGRect, content: SCShareableContent) {
         guard !active else { return }
+        let id = startSession()
         self.screen = screen
+        screenFrame = screen.frame
         scale = screen.backingScaleFactor
-        active = true
-        sections = 0
-        pixelHeight = 0
         let global = localRect.offsetBy(dx: screen.frame.minX, dy: screen.frame.minY)
         showFrame(around: global)
         showControls(below: global)
@@ -143,40 +197,80 @@ struct RowProfile {
         config.captureResolution = .best
         loop = Task { [weak self] in
             while !Task.isCancelled {
-                if let image = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) {
-                    await self?.ingest(image)
+                do {
+                    let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+                    await self?.ingest(image, session: id)
+                } catch {
+                    self?.captureFailed(error, session: id)
                 }
                 try? await Task.sleep(nanoseconds: 150_000_000)
             }
         }
     }
 
+    private func startSession() -> Int {
+        session += 1
+        active = true
+        stitcher = nil
+        ingesting = nil
+        sections = 0
+        pixelHeight = 0
+        limitReached = false
+        failures = 0
+        return session
+    }
+
     /// Vergleichen und Anhängen im Hintergrund (bei 4K-Bereichen ~0,1 s pro Bild).
-    private func ingest(_ image: CGImage) async {
+    func ingest(_ image: CGImage, session id: Int) async {
+        guard active, id == session, !limitReached else { return }
+        failures = 0
         guard let stitcher else {
             stitcher = ScrollStitcher(first: image)
             sections = 1
-            pixelHeight = image.height
+            pixelHeight = stitcher?.height ?? 0
             return
         }
-        let (added, height) = await Task.detached(priority: .userInitiated) { (stitcher.add(image), stitcher.height) }.value
-        if added { sections += 1 }
-        pixelHeight = height
+        // Höchstens ein Anhängen zur Zeit; die Reihenfolge der Bilder muss stimmen.
+        _ = await ingesting?.value
+        guard id == session else { return }
+        let task = Task.detached(priority: .userInitiated) { (added: stitcher.add(image), height: stitcher.height, full: stitcher.limitReached) }
+        ingesting = task
+        let result = await task.value
+        guard id == session else { return }
+        if result.added { sections += 1 }
+        pixelHeight = result.height
+        if result.full {
+            limitReached = true
+            loop?.cancel()
+            loop = nil
+        }
+    }
+
+    /// Der Bildschirm lässt sich nicht mehr aufnehmen (abgesteckt, Freigabe entzogen): nach ~3 s beenden.
+    private func captureFailed(_ error: Error, session id: Int) {
+        guard active, id == session else { return }
+        failures += 1
+        guard failures >= 20 else { return }
+        Log.error("Scroll-Aufnahme: Bildschirm nicht mehr erreichbar: \(error.localizedDescription)")
+        HUD.show("Scroll-Aufnahme beendet – Bildschirm nicht erreichbar", symbol: "exclamationmark.triangle.fill")
+        finish(save: true)
+    }
+
+    /// Bildschirm abgesteckt oder umgestellt: Bereich und Leiste stimmen nicht mehr — beenden und behalten, was da ist.
+    private func screensChanged() {
+        guard active, let screen else { return }
+        let same = NSScreen.screens.first { $0.displayID == screen.displayID }
+        if let same, same.frame == screenFrame, same.backingScaleFactor == scale { return }
+        HUD.show("Bildschirme geändert – Scroll-Aufnahme beendet", symbol: "display.trianglebadge.exclamationmark")
+        finish(save: true)
     }
 
     func finish(save: Bool) {
-        loop?.cancel()
-        loop = nil
-        panel?.orderOut(nil)
-        frameWindow?.orderOut(nil)
-        panel = nil
-        frameWindow = nil
-        active = false
-        let stitcher = self.stitcher
-        self.stitcher = nil
-        guard save, let stitcher, let screen else { return }
+        guard let (stitcher, pending) = end(), save, let stitcher, let screen else { return }
         let scale = self.scale
-        Task {
+        finishing = Task {
+            // Laufendes Anhängen abwarten, damit das letzte Stück dabei ist.
+            _ = await pending?.value
             let image = await Task.detached(priority: .userInitiated) { stitcher.assemble() }.value
             guard let image else { return }
             Sounds.playShutter()
@@ -184,6 +278,42 @@ struct RowProfile {
             CaptureCoordinator.shared.finish(image: image, scale: scale, screen: screen)
         }
     }
+
+    /// Beenden der App: laufende Aufnahme speichern und warten, bis sie angelegt ist.
+    func finishForQuit() async {
+        if active { finish(save: true) }
+        await finishing?.value
+    }
+
+    /// Schleife und Fenster beenden; neue Sitzungsnummer, damit nachzügelnde Bilder verworfen werden.
+    private func end() -> (ScrollStitcher?, Task<(added: Bool, height: Int, full: Bool), Never>?)? {
+        guard active else { return nil }
+        loop?.cancel()
+        loop = nil
+        panel?.orderOut(nil)
+        frameWindow?.orderOut(nil)
+        panel = nil
+        frameWindow = nil
+        active = false
+        session += 1
+        let result = (stitcher, ingesting)
+        stitcher = nil
+        ingesting = nil
+        return result
+    }
+
+    #if KNIPS_DEV
+    /// Nur Selbsttest: Sitzung ohne Bildschirm, Fenster und Aufnahme-Schleife.
+    func debugBeginSession() -> Int { startSession() }
+    var debugStitcher: ScrollStitcher? { stitcher }
+    var debugIsIngesting: Bool { ingesting != nil }
+    /// Wie „Fertig“, liefert das Bild aber zurück, statt eine Aufnahme anzulegen.
+    func debugFinish() async -> CGImage? {
+        guard let (stitcher, pending) = end(), let stitcher else { return nil }
+        _ = await pending?.value
+        return stitcher.assemble()
+    }
+    #endif
 
     private func panelWindow(_ rect: NSRect, ignoresMouse: Bool) -> NSPanel {
         let p = ClickablePanel(contentRect: rect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -238,7 +368,7 @@ private struct ScrollControlsView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.85))
             VStack(alignment: .leading, spacing: 1) {
-                Text("Jetzt langsam nach unten scrollen")
+                Text(controller.limitReached ? "Maximale Länge erreicht" : "Jetzt langsam nach unten scrollen")
                     .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
                     .fixedSize()

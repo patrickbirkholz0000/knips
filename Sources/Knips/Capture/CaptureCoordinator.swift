@@ -266,6 +266,11 @@ import ScreenCaptureKit
         }
     }
 
+    /// Bildschirm ab- oder angesteckt: Das Overlay passt nicht mehr zu den Bildschirmen — abbrechen.
+    func screensChanged() {
+        overlay?.finish(.cancelled)
+    }
+
     private func ensurePermission() -> Bool {
         if ScreenCapture.hasPermission { return true }
         PermissionWindowController.show()

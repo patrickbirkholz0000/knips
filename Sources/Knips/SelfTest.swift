@@ -66,6 +66,7 @@ import Vision
             case "track": try runAsync { try await track(out) }
             case "stitch": try stitch(out)
             case "ocr-bench": try ocrBench(out)
+            case "robust": try robust(out)
             default:
                 print("Unbekannter Test \(args[0])")
                 return 2
@@ -915,6 +916,7 @@ import Vision
         print("Scroll-Screenshot: \(added) Abschnitte angehängt, Höhe \(result.height) px (erwartet \(expected)), abweichende Stichproben: \(diff)")
         try write(ImageIOHelper.downscale(result, maxPixel: 1600), out.appendingPathComponent("scroll-zusammengesetzt.png"))
         guard result.height == expected, diff == 0 else { throw CaptureStore.StoreError.read }
+        try stitchRobust(out)
     }
 
     // MARK: Mitlaufende Balken

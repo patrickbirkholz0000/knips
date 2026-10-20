@@ -35,7 +35,7 @@ Systemaudioaufnahme“ über Updates hinweg erhalten. Ad hoc signiert müsste si
 | Test | prüft |
 |---|---|
 | `render` | Renderer: alle Werkzeuge, Zensurstile, Zuschnitt → PNG |
-| `detect` | Auto-Zensur (Vision + Muster) am Testbild; Pflicht: erfundener Stripe-Key und E-Mail in 1× und 2× |
+| `detect` | Auto-Zensur (Vision + Muster) am Testbild; Pflicht: erfundener Stripe-Key und E-Mail in 1× und 2×, außerdem auf hohen (1400×7040, 1400×14080), breiten (7000×880) und 1×-Bildern (4K, Ultrawide) in jedem Fenster an der richtigen Stelle; „Text kopieren“ ohne doppelte Zeilen über Kachelnähte; jede Überschneidung mit Zensur oder gefüllter Form verdeckt |
 | `ui` / `selection` | Karten, Einstellungen, Auswahl-Overlay offscreen |
 | `cards` | Klicks auf eine Karte als echte Mausereignisse: Fläche öffnet, jeder Knopf nur seine Aktion; Raster mit mehreren Spalten trifft die richtige Karte |
 | `live` | Bild- und Video-Editor als echtes Fenster, 1 pt in der Bildschirmecke, per SCK fotografiert |
@@ -44,7 +44,9 @@ Systemaudioaufnahme“ über Updates hinweg erhalten. Ad hoc signiert müsste si
 | `telemetry [live]` | Nutzungsstatistik: Sperren (Selbsttest/Sandbox/CI/Entwickler-Build), Payload (genau die Vertragsfelder, Allowlist, Deckel), Zustimmung → Zählen → Senden an lokalen Server (127.0.0.1) → Abmelden; Zähler bleiben nach Fehlern. `live` schickt zusätzlich einen echten Ping (nur mit `KNIPS_TELEMETRY=1`, Kanal `dev`) |
 | `output` | Ausgabe 1× + PNG/JPEG, Rahmen, Speichern aus dem Editor, „Text kopieren“ ohne Zensiertes |
 | `track` | Mitlaufender Zensurbalken in scrollendem Video (Texterkennung prüft jeden Zeitpunkt) |
-| `stitch` | Scroll-Screenshot: Ausschnitte → exakt das Originalbild (Pixelvergleich) |
+| `stitch` | Scroll-Screenshot: Ausschnitte → exakt das Originalbild (Pixelvergleich); nur neue Zeilen im Speicher, Obergrenze, Anhängen und Zusammensetzen gleichzeitig, Nachzügler einer beendeten Aufnahme landen nie in der nächsten |
+| `robust` | Ablage und Abläufe ohne Bildschirm: JPEG über 65 535 px → PNG, Ausweichordner bei nicht erreichbarer Ablage, Schreibfehler werden gemeldet, Aufräumen (Frist, `$TMPDIR/Knips`), Beenden wartet auf Schreibvorgänge; Aufnahme-Zustände mit einer Attrappe (belegt ab dem Start, Abbruch während Start/Countdown, Writer-Fehler, Beenden während der Aufnahme) |
+| `ocr-bench` | Tempo und Trefferzahl der Texterkennung auf Testbildern im Speicher (4K/5K 2× und 1× textreich, hohe/breite Bilder, ohne Text) |
 | `menu` / `history` | Menü-Panel und Verlauf-Fenster |
 | `perf` / `record-bench` | Zeiten (Overlay, Speichern, Texterkennung) und Video-Varianten |
 | `video` | Video-Zensur mit Zeitbereich, Kürzen, MP4- und GIF-Export, Auto-Zensur im Video |
@@ -72,7 +74,15 @@ und schreibt beim Speichern wieder die verkleinerte Fassung (`AppSettings.output
 - Sichtbare Dateien: `~/Pictures/Knips` (einstellbar). Dort liegt immer die **gerenderte** Fassung,
   also bereits zensiert. Herausziehen/Kopieren gibt nie das Original weiter.
 - Originale + Bearbeitungsstand (JSON): `~/Library/Application Support/Knips/items/<uuid>/`.
-  Nur damit lässt sich eine Zensur wieder aufheben. Wird nach 30 Tagen aufgeräumt.
+  Nur damit lässt sich eine Zensur wieder aufheben. Wird nach 30 Tagen aufgeräumt (beim Start und alle 6 h,
+  `CaptureStore.purgeExpired`); Reste in `$TMPDIR/Knips`, an denen seit 1 h nichts geschrieben wurde, ebenso.
+- Ablageordner nicht erreichbar (Netzlaufwerk, keine Schreibrechte) → `~/Pictures/Knips` mit Hinweis.
+  Schreibfehler werden gemeldet (Dialog, danach höchstens alle 10 s), nie verschluckt. JPEG über 65 535 px
+  je Kante → PNG. Videos werden im Hintergrund in die Ablage kopiert.
+- Scroll-Screenshots behalten nur die neuen Zeilen, höchstens 60 000 px hoch (`ScrollStitcher.maxHeight`,
+  dann Hinweis in der Leiste). Bilder, die nach „Fertig“ zurückkommen, werden verworfen (Sitzungsnummer).
+- Beenden während einer Aufnahme oder eines Schreibvorgangs (`QuitGuard`): Video bzw. Scroll-Screenshot wird
+  gespeichert, offene Schreibvorgänge abgewartet, höchstens 10 s.
 
 ## Nutzungsstatistik (Opt-in)
 
@@ -120,9 +130,14 @@ Nie Befehle testen, die das Auswahl-Overlay öffnen — das erscheint auf dem Bi
 - Nach dem Loslassen: 2 ms im Hauptthread. PNG-Kodierung, Schreiben, Vorschaubild laufen über
   `PNGPromise` im Hintergrund; die Zwischenablage liefert PNG/TIFF erst bei Anfrage.
   `CaptureStore.waitUntilWritten` vor Kopieren/Ziehen/Löschen/Öffnen.
-- Texterkennung immer auf ≤ 2048 px (`SensitiveDetector.ocrMaxPixel`): 4K „genau“ dauerte auf einem
-  textreichen Bildschirm 35 s, verkleinert 0,1–0,15 s bei gleicher Trefferzahl. Video: zusätzlich
-  unveränderte Frames überspringen (`FrameSignature`).
+- Texterkennung in überlappenden Kacheln je ≤ 2048 px (`TextRecognizer`, `SensitiveDetector.ocrMaxPixel`):
+  4K „genau“ im Ganzen dauerte auf einem textreichen Bildschirm 35 s. Nie stärker als 0,5 verkleinert; ist
+  die Schrift dann zu klein (1×-Bildschirme), zweiter Durchgang in voller Größe. Früher wurde das ganze Bild
+  auf 2048 px verkleinert: 1400×14080 fand 0 von 16 E-Mails, 4K in 1× 2 von 9. Gemessen 20.10.2026
+  (`--selftest ocr-bench`): 4K Retina textreich 0,17 s (vorher 0,18 s), 5K Retina textreich 0,45 s,
+  1400×14080 0,27 s mit 16/16, 4K 1× 0,5–1,25 s, 4K ohne Text 0,26 s. Wörter gehören der Kachel, die
+  für ihre Mitte zuständig ist; über Nähte geteilte Zeilen werden verbunden. Video: Frames sind ≤ 2048 px,
+  zusätzlich unveränderte Frames überspringen (`FrameSignature`).
 - `--selftest perf` misst das alles (Bildschirmfoto nur im Speicher, gibt nur Zeiten aus).
 
 ## Oberfläche
@@ -134,4 +149,6 @@ Verlauf-Fenster, Zustimmungsdialog und Link-Rückfrage im selben Stil.
 ## Nicht automatisch prüfbar
 
 Am Gerät testen: Maus-Hover auf den Karten (Klicks prüft `cards`), Ziehen aus den Karten in andere Apps,
-das interaktive Auswahl-Overlay, Mikrofon-Aufnahme.
+das interaktive Auswahl-Overlay, Mikrofon-Aufnahme. Außerdem: Bildschirm ab-/anstecken (Karten ziehen um,
+Overlay bricht ab, Scroll-Leiste beendet mit Speichern), volle Platte während einer echten Aufnahme
+(Writer-Fehler → Abbruch mit Meldung), Beenden über das Menü während einer echten Aufnahme.

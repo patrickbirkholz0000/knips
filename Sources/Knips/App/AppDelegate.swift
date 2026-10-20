@@ -11,6 +11,9 @@ import ScreenCaptureKit
 
         HotkeyManager.shared.onAction = { action in CaptureCoordinator.shared.perform(action) }
         HotkeyManager.shared.apply(AppSettings.shared.activeHotkeys)
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { _ in
+            onMainActor { CaptureCoordinator.shared.screensChanged() }
+        }
 
         if UserDefaults.standard.object(forKey: "didFirstLaunch") == nil {
             UserDefaults.standard.set(true, forKey: "didFirstLaunch")
@@ -78,6 +81,13 @@ import ScreenCaptureKit
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
+    /// Beenden während einer Aufnahme oder eines Schreibvorgangs: erst sauber abschließen, höchstens 10 s.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard QuitGuard.needsTime else { return .terminateNow }
+        QuitGuard.finish { sender.reply(toApplicationShouldTerminate: true) }
+        return .terminateLater
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { SettingsWindowController.show() }
         return true
@@ -140,6 +150,43 @@ import ScreenCaptureKit
         }
     }
     #endif
+}
+
+/// Beenden der App, während noch etwas läuft: laufende Aufnahmen speichern (Bildschirmvideo, Scroll-Screenshot)
+/// und offene Schreibvorgänge abwarten — sonst gingen sie verloren.
+@MainActor enum QuitGuard {
+    /// Länger wartet Knips beim Beenden nicht.
+    nonisolated static let timeout: TimeInterval = 10
+    private static var waiting: (() -> Void)?
+
+    static var needsTime: Bool {
+        RecordingController.shared.isBusy || ScrollCaptureController.shared.active || CaptureStore.shared.hasPendingWrites
+    }
+
+    static func finish() async {
+        await ScrollCaptureController.shared.finishForQuit()
+        await RecordingController.shared.finishForQuit()
+        await CaptureStore.shared.waitForAllWrites()
+    }
+
+    /// Ruft `done` genau einmal auf: sobald alles fertig ist, spätestens nach `timeout` Sekunden.
+    static func finish(timeout: TimeInterval = timeout, then done: @escaping () -> Void) {
+        waiting = done
+        Task {
+            await finish()
+            complete()
+        }
+        Task {
+            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+            complete()
+        }
+    }
+
+    private static func complete() {
+        let done = waiting
+        waiting = nil
+        done?()
+    }
 }
 
 /// Bietet einmalig an, die macOS-Bildschirmfoto-Kürzel für Knips freizumachen.

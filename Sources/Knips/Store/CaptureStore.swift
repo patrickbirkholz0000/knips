@@ -106,10 +106,17 @@ struct VideoDocument: Codable {
     private var pendingCount: [UUID: Int] = [:]
     /// Dateinamen, die vergeben, aber noch nicht geschrieben sind.
     private var reservedNames: Set<String> = []
+    private var housekeeping: Timer?
+    private var lastWriteAlert: Date?
 
     private init() {
         Paths.ensure(Paths.items)
         load()
+        Task.detached(priority: .utility) { Self.cleanTemp() }
+        // Knips läuft oft wochenlang durch: abgelaufene Originale nicht nur beim Start entfernen.
+        housekeeping = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { _ in
+            onMainActor { CaptureStore.shared.purgeExpired() }
+        }
     }
 
     var recent: [CaptureItem] { Array(items.prefix(12)) }
@@ -130,13 +137,18 @@ struct VideoDocument: Codable {
     func addImage(_ image: CGImage, scale: CGFloat, output outputPromise: ImagePromise? = nil, name: String? = nil) throws -> CaptureItem {
         let id = UUID()
         let settings = AppSettings.shared
-        let promise = outputPromise ?? settings.outputPromise(sourceScale: scale) { image }
+        var promise = outputPromise ?? settings.outputPromise(sourceScale: scale) { image }
         let factor = settings.outputFactor(sourceScale: scale)
+        let width = Int((CGFloat(image.width) * factor).rounded()), height = Int((CGFloat(image.height) * factor).rounded())
+        if Self.format(promise.format, width: width, height: height) != promise.format {
+            // Zu lang für JPEG (z. B. Scroll-Screenshot): als PNG speichern statt still gar nicht.
+            let rendered = promise
+            promise = ImagePromise(format: .png) { rendered.image }
+        }
         let output = try uniqueOutputURL(base: name ?? "Knips \(Format.fileDate.string(from: Date()))", ext: promise.format.fileExtension)
         reservedNames.insert(output.path)
         var item = CaptureItem(id: id, kind: .image, createdAt: Date(), fileURL: output,
-                               pixelWidth: Int((CGFloat(image.width) * factor).rounded()),
-                               pixelHeight: Int((CGFloat(image.height) * factor).rounded()), scale: Double(scale))
+                               pixelWidth: width, pixelHeight: height, scale: Double(scale))
         item.outputScale = Double(scale * factor)
         Paths.ensure(directory(for: item))
         item.revision = 1
@@ -150,23 +162,70 @@ struct VideoDocument: Codable {
         let snapshot = item
         beginWrite(id)
         writes[id] = Task.detached(priority: .userInitiated) {
-            if let data = await original.value() { try? data.write(to: originalURL, options: .atomic) }
-            if let data = await promise.value() { try? data.write(to: output, options: .atomic) }
+            let originalError = Self.write(await original.value(), to: originalURL)
+            let failure = Self.write(await promise.value(), to: output) ?? originalError
             let thumb = ImageIOHelper.downscale(image, maxPixel: 640)
-            try? thumb.pngData()?.write(to: thumbURL, options: .atomic)
+            if let error = Self.write(thumb.pngData(), to: thumbURL) { Log.error("Vorschaubild nicht geschrieben: \(error.localizedDescription)") }
             await MainActor.run {
                 ThumbnailCache.shared.seed(snapshot, image: thumb)
                 self.reservedNames.remove(output.path)
                 self.endWrite(id)
+                if let failure { self.reportWriteFailure(failure, "Aufnahme konnte nicht gespeichert werden") }
             }
         }
         return item
     }
 
+    /// Schreibt atomar und liefert den Fehler, statt ihn zu verschlucken (`nil` = geschrieben).
+    nonisolated static func write(_ data: Data?, to url: URL) -> Error? {
+        do {
+            guard let data else { throw StoreError.encode }
+            try data.write(to: url, options: .atomic)
+            return nil
+        } catch {
+            return error
+        }
+    }
+
+    /// JPEG schafft höchstens 65 535 px je Kante (darüber liefert ImageIO still keine Daten) → dann PNG.
+    nonisolated static let jpegMaxPixel = 65_535
+    nonisolated static func format(_ format: ImageFormat, width: Int, height: Int) -> ImageFormat {
+        format == .jpeg && max(width, height) > jpegMaxPixel ? .png : format
+    }
+
+    /// Schreibfehler nie verschlucken: Meldung (höchstens eine alle 10 s, sonst als Einblendung) und Protokoll.
+    func reportWriteFailure(_ error: Error, _ title: String) {
+        Log.error("\(title): \(error.localizedDescription)")
+        #if KNIPS_DEV
+        if Paths.testRoot != nil {
+            debugWriteFailures.append(title)
+            return
+        }
+        #endif
+        if let last = lastWriteAlert, Date().timeIntervalSince(last) < 10 {
+            HUD.show(title, symbol: "exclamationmark.triangle.fill")
+            return
+        }
+        lastWriteAlert = Date()
+        Task { @MainActor in Alerts.error(title, error) }
+    }
+
+    #if KNIPS_DEV
+    /// Nur Test-Sandbox: gemeldete Schreibfehler statt Dialog.
+    var debugWriteFailures: [String] = []
+    #endif
+
     /// Wartet, bis alle Schreibvorgänge dieser Aufnahme auf der Platte sind.
     func waitUntilWritten(_ id: UUID) async {
         await writes[id]?.value
     }
+
+    /// Wartet auf alle laufenden Schreibvorgänge (Beenden der App).
+    func waitForAllWrites() async {
+        for task in Array(writes.values) { await task.value }
+    }
+
+    var hasPendingWrites: Bool { !pendingCount.isEmpty }
 
     func memoryImage(for id: UUID) -> CGImage? { memory.first { $0.0 == id }?.1 }
 
@@ -194,14 +253,29 @@ struct VideoDocument: Codable {
     func addVideo(from tempURL: URL, scale: CGFloat) async throws -> CaptureItem {
         let id = UUID()
         let output = try uniqueOutputURL(base: "Knips Aufnahme \(Format.fileDate.string(from: Date()))", ext: "mp4")
+        reservedNames.insert(output.path)
+        defer { reservedNames.remove(output.path) }
         let asset = AVURLAsset(url: tempURL)
         let duration = try await asset.load(.duration).seconds
         let size = try await VideoInfo.pixelSize(of: asset)
         var item = CaptureItem(id: id, kind: .video, createdAt: Date(), fileURL: output,
                                pixelWidth: Int(size.width), pixelHeight: Int(size.height), scale: Double(scale), duration: duration)
-        Paths.ensure(directory(for: item))
-        try FileManager.default.moveItem(at: tempURL, to: originalURL(for: item))
-        try linkOrCopy(originalURL(for: item), to: output)
+        let dir = directory(for: item), original = originalURL(for: item)
+        // Auf ein anderes Laufwerk wird echt kopiert — das dauert bei langen Videos und darf nie den
+        // Hauptthread aufhalten. Schlägt es fehl, kommt die Aufnahme zurück an ihren alten Platz.
+        try await Task.detached(priority: .userInitiated) {
+            let fm = FileManager.default
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            try fm.moveItem(at: tempURL, to: original)
+            do {
+                try Self.linkOrCopy(original, to: output)
+            } catch {
+                try? fm.removeItem(at: output)
+                try? fm.moveItem(at: original, to: tempURL)
+                try? fm.removeItem(at: dir)
+                throw StoreError.videoCopy(tempURL, error)
+            }
+        }.value
         if let thumb = await ImageIOHelper.videoThumbnail(output, maxPixel: 640) { writeThumbnail(thumb, for: item) }
         item.revision = 1
         persist(item)
@@ -264,17 +338,16 @@ struct VideoDocument: Codable {
         beginWrite(id)
         writes[item.id] = Task.detached(priority: .userInitiated) {
             await previous?.value
-            try? docData?.write(to: docURL, options: .atomic)
-            if let data = await promise.value() { try? data.write(to: output, options: .atomic) }
-            guard let rendered = await promise.imageValue() else {
-                await MainActor.run { self.endWrite(id) }
-                return
+            let docError = Self.write(docData, to: docURL)
+            let failure = Self.write(await promise.value(), to: output) ?? docError
+            let thumb = await promise.imageValue().map { ImageIOHelper.downscale($0, maxPixel: 640) }
+            if let thumb, let error = Self.write(thumb.pngData(), to: thumbURL) {
+                Log.error("Vorschaubild nicht geschrieben: \(error.localizedDescription)")
             }
-            let thumb = ImageIOHelper.downscale(rendered, maxPixel: 640)
-            try? thumb.pngData()?.write(to: thumbURL, options: .atomic)
             await MainActor.run {
-                ThumbnailCache.shared.seed(updated, image: thumb)
+                if let thumb { ThumbnailCache.shared.seed(updated, image: thumb) }
                 self.endWrite(id)
+                if let failure { self.reportWriteFailure(failure, "Änderungen konnten nicht gespeichert werden") }
             }
         }
         return updated
@@ -282,16 +355,20 @@ struct VideoDocument: Codable {
 
     @discardableResult
     func saveVideo(exported url: URL?, document: VideoDocument, for item: CaptureItem) async throws -> CaptureItem {
-        try JSONEncoder().encode(document).write(to: documentURL(for: item), options: .atomic)
-        let fm = FileManager.default
-        if let url {
-            if fm.fileExists(atPath: item.fileURL.path) { try fm.removeItem(at: item.fileURL) }
-            try fm.moveItem(at: url, to: item.fileURL)
-        } else {
-            // Keine Änderungen: Ablage wieder auf das Original zeigen lassen.
-            if fm.fileExists(atPath: item.fileURL.path) { try fm.removeItem(at: item.fileURL) }
-            try linkOrCopy(originalURL(for: item), to: item.fileURL)
-        }
+        let docData = try JSONEncoder().encode(document)
+        let docURL = documentURL(for: item), fileURL = item.fileURL, original = originalURL(for: item)
+        // Verschieben bzw. Kopieren (anderes Laufwerk) im Hintergrund, nie im Hauptthread.
+        try await Task.detached(priority: .userInitiated) {
+            try docData.write(to: docURL, options: .atomic)
+            let fm = FileManager.default
+            if fm.fileExists(atPath: fileURL.path) { try fm.removeItem(at: fileURL) }
+            if let url {
+                try fm.moveItem(at: url, to: fileURL)
+            } else {
+                // Keine Änderungen: Ablage wieder auf das Original zeigen lassen.
+                try Self.linkOrCopy(original, to: fileURL)
+            }
+        }.value
         let duration = try? await AVURLAsset(url: item.fileURL).load(.duration).seconds
         if let thumb = await ImageIOHelper.videoThumbnail(item.fileURL, maxPixel: 640) { writeThumbnail(thumb, for: item) }
         return bump(item) { $0.duration = duration ?? $0.duration }
@@ -348,7 +425,41 @@ struct VideoDocument: Codable {
     }
 
     private func writeThumbnail(_ image: CGImage, for item: CaptureItem) {
-        try? image.pngData()?.write(to: thumbnailURL(for: item), options: .atomic)
+        if let error = Self.write(image.pngData(), to: thumbnailURL(for: item)) {
+            Log.error("Vorschaubild nicht geschrieben: \(error.localizedDescription)")
+        }
+    }
+
+    /// Originale + Bearbeitungsstand, die älter als die eingestellte Frist sind, entfernen (beim Start und
+    /// alle 6 h). Die Dateien im Ablageordner bleiben; was gerade geschrieben wird, kommt beim nächsten Mal dran.
+    func purgeExpired(now: Date = Date(), days: Int? = nil) {
+        let days = days ?? AppSettings.shared.retentionDays
+        Task.detached(priority: .utility) { Self.cleanTemp() }
+        guard days > 0 else { return }
+        let cutoff = now.addingTimeInterval(-Double(days) * 24 * 3600)
+        let expired = items.filter { $0.createdAt < cutoff && !isWriting($0.id) }
+        guard !expired.isEmpty else { return }
+        let ids = Set(expired.map(\.id))
+        items.removeAll { ids.contains($0.id) }
+        memory.removeAll { ids.contains($0.0) }
+        for id in ids { writes[id] = nil }
+        let dirs = expired.map { directory(for: $0) }
+        Task.detached(priority: .utility) { for dir in dirs { try? FileManager.default.removeItem(at: dir) } }
+    }
+
+    /// Reste in `$TMPDIR/Knips` (Aufnahmen und Exporte, etwa nach einem Absturz): alles, woran seit einer
+    /// Stunde nicht mehr geschrieben wurde. Eine laufende Aufnahme schreibt ständig und bleibt unberührt.
+    /// In der Test-Sandbox nur mit eigenem Ordner — `$TMPDIR/Knips` gehört dann der installierten App.
+    nonisolated static func cleanTemp(olderThan age: TimeInterval = 3600, in folder: URL? = nil) {
+        guard folder != nil || Paths.testRoot == nil else { return }
+        let folder = folder ?? Paths.temp
+        let fm = FileManager.default
+        let cutoff = Date().addingTimeInterval(-age)
+        guard let entries = try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
+        for url in entries {
+            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            if modified < cutoff { try? fm.removeItem(at: url) }
+        }
     }
 
     private func load() {
@@ -374,8 +485,12 @@ struct VideoDocument: Codable {
     }
 
     private func uniqueOutputURL(base: String, ext: String) throws -> URL {
-        let folder = AppSettings.shared.saveFolder
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let preferred = AppSettings.shared.saveFolder
+        let (folder, fellBack) = try Self.usableFolder(preferred, fallback: Self.defaultFolder)
+        if fellBack {
+            Log.error("Ablageordner nicht erreichbar: \(preferred.path) – gespeichert in \(folder.path)")
+            HUD.show("Ablageordner nicht erreichbar – gespeichert in „Bilder/Knips“", symbol: "exclamationmark.triangle.fill")
+        }
         var url = folder.appendingPathComponent("\(base).\(ext)")
         var n = 2
         while FileManager.default.fileExists(atPath: url.path) || reservedNames.contains(url.path) {
@@ -385,18 +500,48 @@ struct VideoDocument: Codable {
         return url
     }
 
+    /// Standard-Ablage `~/Pictures/Knips` — Ausweichziel, wenn der eingestellte Ordner nicht erreichbar ist.
+    static var defaultFolder: URL? {
+        if Paths.testRoot != nil { return nil }
+        return FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first?.appendingPathComponent("Knips", isDirectory: true)
+    }
+
+    /// Ablageordner anlegen und prüfen. Ist er nicht erreichbar (Netzlaufwerk nicht eingehängt, keine
+    /// Schreibrechte), kommt `fallback` zum Zug; `true` = ausgewichen.
+    nonisolated static func usableFolder(_ preferred: URL, fallback: URL?) throws -> (URL, Bool) {
+        let fm = FileManager.default
+        func prepare(_ folder: URL) throws {
+            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            guard fm.isWritableFile(atPath: folder.path) else {
+                throw CocoaError(.fileWriteNoPermission, userInfo: [NSFilePathErrorKey: folder.path])
+            }
+        }
+        do {
+            try prepare(preferred)
+            return (preferred, false)
+        } catch {
+            guard let fallback, fallback.standardizedFileURL.path != preferred.standardizedFileURL.path else { throw error }
+            try prepare(fallback)
+            return (fallback, true)
+        }
+    }
+
     /// Hardlink spart bei Videos den doppelten Platz; beim Speichern wird die Ablage atomar ersetzt,
     /// das Original bleibt dadurch unberührt.
-    private func linkOrCopy(_ src: URL, to dst: URL) throws {
+    nonisolated private static func linkOrCopy(_ src: URL, to dst: URL) throws {
         do { try FileManager.default.linkItem(at: src, to: dst) } catch { try FileManager.default.copyItem(at: src, to: dst) }
     }
 
     enum StoreError: LocalizedError {
         case encode, read
+        case videoCopy(URL, Error)
         var errorDescription: String? {
             switch self {
             case .encode: "Das Bild konnte nicht als PNG gespeichert werden."
             case .read: "Die Datei konnte nicht gelesen werden."
+            case .videoCopy(let temp, let error):
+                "Das Video konnte nicht in den Ablageordner kopiert werden (\(error.localizedDescription)). "
+                    + "Die Aufnahme liegt vorerst unter \(temp.path) – bitte gleich sichern, Knips räumt den Ordner nach einer Stunde auf."
             }
         }
     }

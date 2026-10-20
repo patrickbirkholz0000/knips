@@ -152,6 +152,8 @@ Oberfläche im Browser gegen die Mac-Referenzbilder, Ablage-Selbsttest mit Attra
 Auswahl-Overlays mit simulierter Maus. Fenster-Bilder aus der CI gegen die Mac-Referenzen durchgesehen.
 CI 20.10.2026 (Version 1.0.0): alle 15 Selbsttests grün, auch `links` (Rückfrage per Link) und alle Fenster
 unter der neuen CSP (Editor, Video-Editor, Verlauf, Karten laden Bilder/Videos über das Asset-Protokoll).
+CI 20.10.2026 abends: alle 15 grün mit Capabilities je Fenster (alle Fenster-Bilder vollständig), Links genau
+einmal (zweiter Start und Erststart), gehärteter Rückfrage und Layout-Prüfung (deutsch/US) in `hotkeys`.
 Noch am Gerät zu testen: Tastendrücke auf echter Tastatur (Hook neben anderen Tools), Mikrofon,
 Ziehen aus den Karten in andere Apps, Einfügen in fremde Apps, mehrere Monitore mit gemischter Skalierung.
 

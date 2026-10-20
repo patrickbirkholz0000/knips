@@ -157,7 +157,8 @@ notarize() {
   echo "→ Notarisierung bei Apple: $label (meist 1–10 Minuten, höchstens 30)…"
   xcrun notarytool submit "$file" --keychain-profile "$PROFILE" --wait --timeout 30m \
     --output-format json >"$out" 2>"$err" || true
-  id=$(plutil -extract id raw -o - "$out" 2>/dev/null || true)
+  # Beim Zeitlimit steht das JSON (mit der ID) auf stderr statt stdout.
+  id=$(plutil -extract id raw -o - "$out" 2>/dev/null || plutil -extract id raw -o - "$err" 2>/dev/null || true)
   status=$(plutil -extract status raw -o - "$out" 2>/dev/null || true)
   if [[ "$status" != "Accepted" ]]; then
     cat "$out" "$err" >&2

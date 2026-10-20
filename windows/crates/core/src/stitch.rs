@@ -1,6 +1,7 @@
 //! Scroll-Screenshots zusammensetzen (ScrollCapture.swift: `ScrollStitcher`, `RowProfile`).
 //! Jedes neue Bild wird gegen das vorige verschoben verglichen (Zeilenprofile); nur die neu
-//! sichtbaren Zeilen unten werden angehängt.
+//! sichtbaren Zeilen unten werden angehängt — und nur sie bleiben im Speicher. Höchstens
+//! `MAX_HEIGHT` Pixel hoch.
 
 use crate::imageops::resample_gray;
 use crate::RgbaImage;
@@ -87,52 +88,86 @@ impl RowProfile {
     }
 }
 
+/// Höchste Höhe eines Scroll-Screenshots in Pixeln. Darüber kann der Editor das Bild nicht mehr
+/// darstellen (Canvas höchstens ~32 767 px), und der Speicher wüchse mit jeder Seite weiter.
+/// Ist sie erreicht, endet die Aufnahme von selbst (`is_full`).
+pub const MAX_HEIGHT: u32 = 30_000;
+
 pub struct ScrollStitcher {
-    /// (Bild, Zeilenbereich daraus, der angehängt wird)
-    pub pieces: Vec<(RgbaImage, std::ops::Range<u32>)>,
+    /// Das Ergebnis, Zeile für Zeile von oben (RGBA): zuerst das ganze erste Bild, danach nur die
+    /// jeweils neu sichtbaren Zeilen. Ganze Einzelbilder werden nicht aufgehoben.
+    data: Vec<u8>,
+    sections: usize,
     previous: Option<RowProfile>,
     pub height: u32,
     pub width: u32,
+    max_height: u32,
 }
 
 impl ScrollStitcher {
     pub fn new(first: RgbaImage) -> Self {
-        let width = first.width();
-        let height = first.height();
-        let previous = Some(RowProfile::new(&first));
-        Self { pieces: vec![(first, 0..height)], previous, height, width }
+        Self::with_max_height(first, MAX_HEIGHT)
     }
 
-    /// `true`, wenn das Bild neue Zeilen beigetragen hat.
+    /// Wie `new`, mit eigener Höchsthöhe (Tests).
+    pub fn with_max_height(first: RgbaImage, max_height: u32) -> Self {
+        let max_height = max_height.max(1);
+        let width = first.width();
+        let height = first.height().min(max_height);
+        let previous = Some(RowProfile::new(&first));
+        let row = width as usize * 4;
+        let data = first.as_raw()[..height as usize * row].to_vec();
+        Self { data, sections: 1, previous, height, width, max_height }
+    }
+
+    /// `true`, wenn das Bild neue Zeilen beigetragen hat. Ist die Höchsthöhe erreicht, kommt nichts
+    /// mehr dazu (`is_full`).
     pub fn add(&mut self, frame: RgbaImage) -> bool {
-        if frame.width() != self.width {
+        if self.is_full() || frame.width() != self.width {
             return false;
         }
         let Some(prev) = &self.previous else { return false };
         let current = RowProfile::new(&frame);
         let Some(shift) = prev.shift(&current).filter(|&s| s > 0) else { return false };
         let shift = (shift as u32).min(frame.height());
-        self.pieces.push((frame.clone(), (frame.height() - shift)..frame.height()));
-        self.height += shift;
+        // Neu sichtbar sind die unteren `shift` Zeilen; bei erreichter Höchsthöhe nur deren Anfang,
+        // damit das Bild lückenlos bleibt.
+        let take = shift.min(self.max_height - self.height);
+        let row = self.width as usize * 4;
+        let start = (frame.height() - shift) as usize;
+        self.data.extend_from_slice(&frame.as_raw()[start * row..(start + take as usize) * row]);
+        self.height += take;
+        self.sections += 1;
         self.previous = Some(current);
         true
     }
 
-    pub fn sections(&self) -> usize {
-        self.pieces.len()
+    /// Höchsthöhe erreicht — die Aufnahme sollte enden.
+    pub fn is_full(&self) -> bool {
+        self.height >= self.max_height
     }
 
+    pub fn max_height(&self) -> u32 {
+        self.max_height
+    }
+
+    pub fn sections(&self) -> usize {
+        self.sections
+    }
+
+    /// Belegter Speicher für die Bilddaten (Bytes) — wächst nur mit dem Ergebnis, nicht je Einzelbild.
+    pub fn memory_bytes(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Das zusammengesetzte Bild (Kopie; `into_image` ohne).
     pub fn assemble(&self) -> RgbaImage {
-        let w = self.width as usize;
-        let mut out = vec![0u8; w * self.height as usize * 4];
-        let mut y = 0usize; // von oben
-        for (img, rows) in &self.pieces {
-            let n = (rows.end - rows.start) as usize;
-            let src = &img.as_raw()[rows.start as usize * w * 4..rows.end as usize * w * 4];
-            out[y * w * 4..(y + n) * w * 4].copy_from_slice(src);
-            y += n;
-        }
-        RgbaImage::from_raw(self.width, self.height, out).expect("Größe stimmt")
+        RgbaImage::from_raw(self.width, self.height, self.data.clone()).expect("Größe stimmt")
+    }
+
+    /// Das zusammengesetzte Bild ohne zweite Kopie im Speicher.
+    pub fn into_image(self) -> RgbaImage {
+        RgbaImage::from_raw(self.width, self.height, self.data).expect("Größe stimmt")
     }
 }
 
@@ -259,6 +294,56 @@ mod tests {
         });
         let mut st = ScrollStitcher::new(slice(&a, 0, 500));
         assert!(!st.add(noise));
+    }
+
+    #[test]
+    fn keeps_only_new_rows_in_memory() {
+        let (w, h, view) = (800, 6000, 700);
+        let tall = tall_image(w, h);
+        let mut st = ScrollStitcher::new(slice(&tall, 0, view));
+        let mut o = 0;
+        for _ in 0..40 {
+            o += 130;
+            if o + view > h {
+                break;
+            }
+            assert!(st.add(slice(&tall, o, view)));
+        }
+        // Speicher = genau das Ergebnis; früher je Abschnitt ein ganzes Einzelbild (hier ~5× so viel).
+        assert_eq!(st.memory_bytes(), (w * st.height * 4) as usize);
+        let whole_frames = st.sections() * (w * view * 4) as usize;
+        assert!(st.memory_bytes() * 4 < whole_frames, "{} vs. {whole_frames}", st.memory_bytes());
+        assert_eq!(st.into_image(), slice(&tall, 0, o + view));
+    }
+
+    #[test]
+    fn stops_at_max_height() {
+        let (w, h, view) = (600, 5000, 500);
+        let tall = tall_image(w, h);
+        let max = 1234;
+        let mut st = ScrollStitcher::with_max_height(slice(&tall, 0, view), max);
+        let mut o = 0;
+        let mut full_after = None;
+        for i in 0..8 {
+            o += 180;
+            st.add(slice(&tall, o, view));
+            if st.is_full() && full_after.is_none() {
+                full_after = Some(i);
+            }
+        }
+        assert!(st.is_full());
+        assert_eq!(st.height, max, "genau auf die Höchsthöhe begrenzt");
+        assert!(!st.add(slice(&tall, o + 200, view)), "danach kommt nichts mehr dazu");
+        let img = st.assemble();
+        assert_eq!((img.width(), img.height()), (w, max));
+        // Lückenlos: der Anfang des Originals bis zur Höchsthöhe.
+        assert_eq!(img, slice(&tall, 0, max));
+        assert_eq!(full_after, Some(4), "500 + 4 × 180 = 1220, das 5. Bild füllt die letzten 14 Zeilen");
+        // Erstes Bild höher als die Grenze: abgeschnitten, sofort voll.
+        let st = ScrollStitcher::with_max_height(slice(&tall, 0, view), 300);
+        assert!(st.is_full());
+        assert_eq!(st.assemble(), slice(&tall, 0, 300));
+        assert_eq!(MAX_HEIGHT, 30_000);
     }
 
     #[test]

@@ -57,6 +57,10 @@ struct Formats {
     png: u32,
     jfif: u32,
     drop_effect: u32,
+    /// Verlauf/Cloud ausschließen (https://learn.microsoft.com/windows/win32/dataxchg/clipboard-formats#cloud-clipboard-and-clipboard-history-formats).
+    exclude_monitor: u32,
+    can_include_history: u32,
+    can_upload_cloud: u32,
 }
 
 fn formats() -> &'static Formats {
@@ -67,6 +71,9 @@ fn formats() -> &'static Formats {
             png: RegisterClipboardFormatW(w!("PNG")),
             jfif: RegisterClipboardFormatW(w!("JFIF")),
             drop_effect: RegisterClipboardFormatW(w!("Preferred DropEffect")),
+            exclude_monitor: RegisterClipboardFormatW(w!("ExcludeClipboardContentFromMonitorProcessing")),
+            can_include_history: RegisterClipboardFormatW(w!("CanIncludeInClipboardHistory")),
+            can_upload_cloud: RegisterClipboardFormatW(w!("CanUploadToCloudClipboard")),
         }
     })
 }
@@ -310,7 +317,8 @@ fn is_image_file(p: &Path) -> bool {
 // ---------------------------------------------------------------- Clipboard-Thread
 
 enum Req {
-    Image(Arc<dyn ImageProvider>),
+    /// Bild; `true` = privat (nicht in den Zwischenablageverlauf, nicht in die Cloud).
+    Image(Arc<dyn ImageProvider>, bool),
     Text(String),
     Files(Vec<PathBuf>),
 }
@@ -376,7 +384,7 @@ fn handle(hwnd: HWND, req: &Req) -> Result<()> {
     // SAFETY: Zwischenablage ist geöffnet, wir sind Besitzer-Fenster.
     unsafe { EmptyClipboard() }?;
     match req {
-        Req::Image(p) => {
+        Req::Image(p, private) => {
             RENDERED.store(0, Ordering::SeqCst);
             *CURRENT.lock() = Some(p.clone());
             // NULL = „später liefern“. Der Rückgabewert ist dafür NULL und kein Fehler.
@@ -387,6 +395,13 @@ fn handle(hwnd: HWND, req: &Req) -> Result<()> {
                 if p.format() == ImageFormat::Jpeg {
                     let _ = SetClipboardData(f.jfif, None);
                 }
+            }
+            if *private {
+                // Windows-Zwischenablageverlauf (Win+V), Cloud-Synchronisierung und Verlaufsprogramme
+                // lassen den Inhalt dann aus — und fordern das Bild auch nicht vorab an.
+                put(f.exclude_monitor, &[0])?;
+                put(f.can_include_history, &0u32.to_le_bytes())?;
+                put(f.can_upload_cloud, &0u32.to_le_bytes())?;
             }
         }
         Req::Text(t) => {
@@ -551,7 +566,25 @@ fn call(req: Req) -> Result<()> {
 /// (verzögertes Rendern, `WM_RENDERFORMAT`). Bleibt auch nach Programmende gültig
 /// (`WM_RENDERALLFORMATS`).
 pub fn set_image(provider: Arc<dyn ImageProvider>) -> Result<()> {
-    call(Req::Image(provider))
+    call(Req::Image(provider, false))
+}
+
+/// Wie `set_image`, aber privat: nicht im Zwischenablageverlauf (Win+V), nicht in der Cloud-
+/// Zwischenablage, von Verlaufsprogrammen übergangen. Für das automatische Kopieren direkt nach der
+/// Aufnahme — das Bild ist dann noch unzensiert.
+pub fn set_image_private(provider: Arc<dyn ImageProvider>) -> Result<()> {
+    call(Req::Image(provider, true))
+}
+
+/// Ist der aktuelle Inhalt vom Verlauf und der Cloud ausgeschlossen? (Selbsttest `clipboard`)
+pub fn is_private() -> bool {
+    if DISABLED.load(Ordering::SeqCst) {
+        return false;
+    }
+    let f = formats();
+    let Ok(_open) = open(None) else { return false };
+    let dword = |format: u32| get(format).and_then(|b| b.get(..4).map(|d| u32::from_le_bytes([d[0], d[1], d[2], d[3]])));
+    get(f.exclude_monitor).is_some() && dword(f.can_include_history) == Some(0) && dword(f.can_upload_cloud) == Some(0)
 }
 
 pub fn set_text(text: &str) -> Result<()> {

@@ -1,6 +1,9 @@
 //! Aufnahmen verwalten (`CaptureStore.swift`). Sichtbare Datei im Ablageordner = immer die
 //! gerenderte (zensierte) Fassung; Original, Bearbeitungsstand und Vorschaubild liegen in
 //! `<items>\<id>\`. Kodieren und Schreiben laufen im Hintergrund, je Aufnahme in Reihe.
+//! Schreibfehler bleiben nicht stumm: Der Editor wartet auf das Ergebnis (`Written`), alles andere
+//! meldet `set_on_error`. Originale verfallen nach der eingestellten Frist (`expire`, beim Start und
+//! regelmäßig).
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -18,22 +21,43 @@ use crate::paths;
 use crate::promise::{output_promise, ImagePromise};
 use crate::settings::SettingsStore;
 
-/// Ende eines Schreibvorgangs — `wait` blockiert, bis er fertig ist.
+#[derive(Default)]
+struct DoneState {
+    finished: bool,
+    error: Option<String>,
+}
+
+/// Ende eines Schreibvorgangs — `wait` blockiert, bis er fertig ist, und liefert einen Fehler beim
+/// Schreiben der sichtbaren Datei.
 #[derive(Clone, Default)]
-struct Done(Arc<(Mutex<bool>, Condvar)>);
+struct Done(Arc<(Mutex<DoneState>, Condvar)>);
 
 impl Done {
-    fn finish(&self) {
+    fn finish(&self, error: Option<String>) {
         let (lock, cv) = &*self.0;
-        *lock.lock() = true;
+        let mut s = lock.lock();
+        s.finished = true;
+        s.error = error;
         cv.notify_all();
     }
-    fn wait(&self) {
+    fn wait(&self) -> Result<(), String> {
         let (lock, cv) = &*self.0;
-        let mut done = lock.lock();
-        while !*done {
-            cv.wait(&mut done);
+        let mut s = lock.lock();
+        while !s.finished {
+            cv.wait(&mut s);
         }
+        s.error.clone().map_or(Ok(()), Err)
+    }
+}
+
+/// Ergebnis eines Speicherns im Hintergrund (`save_image`).
+pub struct Written(Done);
+
+impl Written {
+    /// Wartet, bis die Datei im Ablageordner geschrieben ist. `Err`: Sie ist es nicht — sie zeigt
+    /// noch den alten Stand.
+    pub fn wait(&self) -> Result<(), String> {
+        self.0.wait()
     }
 }
 
@@ -54,12 +78,13 @@ pub struct Store {
     settings: Arc<SettingsStore>,
     inner: Mutex<Inner>,
     on_change: Mutex<Option<Box<dyn Fn(Vec<CaptureItem>) + Send + Sync>>>,
+    on_error: Mutex<Option<Box<dyn Fn(&str, String) + Send + Sync>>>,
 }
 
 impl Store {
     pub fn new(settings: Arc<SettingsStore>) -> Self {
         paths::ensure(&paths::items_dir());
-        let store = Self { settings, inner: Mutex::new(Inner::default()), on_change: Mutex::new(None) };
+        let store = Self { settings, inner: Mutex::new(Inner::default()), on_change: Mutex::new(None), on_error: Mutex::new(None) };
         store.load();
         store
     }
@@ -67,6 +92,18 @@ impl Store {
     /// Wird nach jeder Änderung der Liste aufgerufen (App sendet `items-changed`).
     pub fn set_on_change(&self, f: impl Fn(Vec<CaptureItem>) + Send + Sync + 'static) {
         *self.on_change.lock() = Some(Box::new(f));
+    }
+
+    /// Fehler, auf die niemand wartet (Speichern nach der Aufnahme, Papierkorb): App zeigt sie an.
+    pub fn set_on_error(&self, f: impl Fn(&str, String) + Send + Sync + 'static) {
+        *self.on_error.lock() = Some(Box::new(f));
+    }
+
+    fn report(&self, title: &str, message: String) {
+        log::error!("{message}");
+        if let Some(f) = self.on_error.lock().as_ref() {
+            f(title, message);
+        }
     }
 
     fn changed(&self) {
@@ -149,14 +186,25 @@ impl Store {
         let done = self.begin_write(id);
         let this = self.clone();
         std::thread::spawn(move || {
-            if let Some(data) = original.data() {
-                write_atomic(&original_path, &data);
+            let mut errors = vec![];
+            match original.data() {
+                Some(data) => {
+                    if let Err(err) = write_atomic(&original_path, &data) {
+                        errors.push(err);
+                    }
+                }
+                None => errors.push("Das Original konnte nicht kodiert werden.".into()),
             }
-            if let Some(data) = promise.data() {
-                write_atomic(&output_path, &data);
-            }
+            let output_error = match promise.data() {
+                Some(data) => write_atomic(&output_path, &data).err(),
+                None => Some(format!("„{}“ konnte nicht kodiert werden.", display_name(&output_path))),
+            };
+            errors.extend(output_error.clone());
             this.inner.lock().reserved.remove(&output_path);
-            this.end_write(id, &done);
+            this.end_write(id, &done, output_error);
+            if !errors.is_empty() {
+                this.report("Aufnahme nicht gespeichert", format!("Die Aufnahme wurde nicht vollständig gespeichert.\n\n{}", errors.join("\n")));
+            }
         });
         self.changed();
         Ok(item)
@@ -231,8 +279,8 @@ impl Store {
         (previous, done)
     }
 
-    fn end_write(&self, id: Id, (_, done): &(Option<Done>, Done)) {
-        done.finish();
+    fn end_write(&self, id: Id, (_, done): &(Option<Done>, Done), error: Option<String>) {
+        done.finish(error);
         let mut inner = self.inner.lock();
         if let Some(n) = inner.pending.get_mut(&id) {
             *n -= 1;
@@ -246,7 +294,7 @@ impl Store {
     pub fn wait_until_written(&self, id: Id) {
         let last = self.inner.lock().writes.get(&id).cloned();
         if let Some(done) = last {
-            done.wait();
+            let _ = done.wait();
         }
     }
 
@@ -282,7 +330,8 @@ impl Store {
 
     /// Schreibt die gerenderte Fassung in den Ablageordner und merkt sich den Bearbeitungsstand.
     /// Kehrt sofort zurück; geschrieben wird im Hintergrund, in Reihe nach früheren Schreibvorgängen.
-    pub fn save_image(self: &Arc<Self>, promise: ImagePromise, document: &ImageDocument, item: &CaptureItem, size: (u32, u32), output_scale: f64) -> CaptureItem {
+    /// `Written::wait` liefert, ob die sichtbare Datei wirklich ersetzt wurde.
+    pub fn save_image(self: &Arc<Self>, promise: ImagePromise, document: &ImageDocument, item: &CaptureItem, size: (u32, u32), output_scale: f64) -> (CaptureItem, Written) {
         let updated = self
             .bump(item.id, |i| {
                 i.pixel_width = size.0;
@@ -296,32 +345,40 @@ impl Store {
         let output = PathBuf::from(&item.file_path);
         let thumb_path = self.thumbnail_path(id);
         let handles = self.begin_write(id);
+        let written = Written(handles.1.clone());
         let this = self.clone();
         std::thread::spawn(move || {
             if let Some(prev) = &handles.0 {
-                prev.wait();
+                let _ = prev.wait();
             }
+            // Bearbeitungsstand: Fehlt er, lässt sich die Zensur nur nicht mehr aufheben — Protokoll genügt.
             if let Some(doc) = doc {
-                write_atomic(&doc_path, &doc);
+                if let Err(err) = write_atomic(&doc_path, &doc) {
+                    log::error!("Bearbeitungsstand nicht gespeichert: {err}");
+                }
             }
-            if let Some(data) = promise.data() {
-                write_atomic(&output, &data);
+            // Die sichtbare Datei ist, was zählt: Schlägt sie fehl, zeigt sie noch den alten Stand.
+            let error = match promise.data() {
+                Some(data) => write_atomic(&output, &data).err(),
+                None => Some(format!("„{}“ konnte nicht kodiert werden.", display_name(&output))),
+            };
+            if error.is_none() {
+                if let Some(rendered) = promise.image() {
+                    write_thumbnail(&rendered, &thumb_path);
+                    // Neues Vorschaubild → Oberfläche neu laden lassen.
+                    this.bump(id, |_| {});
+                    this.changed();
+                }
             }
-            if let Some(rendered) = promise.image() {
-                write_thumbnail(&rendered, &thumb_path);
-                // Neues Vorschaubild → Oberfläche neu laden lassen.
-                this.bump(id, |_| {});
-                this.changed();
-            }
-            this.end_write(id, &handles);
+            this.end_write(id, &handles, error);
         });
         self.changed();
-        updated
+        (updated, written)
     }
 
     /// Video speichern: exportierte Fassung (oder wieder das Original) in den Ablageordner.
     pub fn save_video(&self, exported: Option<&Path>, document: &VideoDocument, item: &CaptureItem) -> Result<CaptureItem> {
-        write_atomic(&self.document_path(item.id), &serde_json::to_vec(document)?);
+        write_atomic(&self.document_path(item.id), &serde_json::to_vec(document)?).map_err(|e| anyhow!(e))?;
         let file = PathBuf::from(&item.file_path);
         if file.exists() {
             std::fs::remove_file(&file)?;
@@ -346,7 +403,25 @@ impl Store {
         Ok(updated)
     }
 
-    pub fn delete(&self, item: &CaptureItem) {
+    /// Landet die Datei im Ablageordner beim Löschen im Papierkorb? Nein auf Netzlaufwerken,
+    /// Wechseldatenträgern und Laufwerken ohne Papierkorb — dann vorher fragen (`delete_permanently`).
+    pub fn can_trash(&self, item: &CaptureItem) -> bool {
+        let file = Path::new(&item.file_path);
+        !file.exists() || knips_platform::shell::can_trash(file)
+    }
+
+    /// Löschen: Datei im Ablageordner in den Papierkorb, Original + Bearbeitungsstand + Vorschaubilder weg.
+    /// Klappt der Papierkorb nicht, bleibt die Datei liegen (nie stillschweigend endgültig löschen).
+    pub fn delete(self: &Arc<Self>, item: &CaptureItem) {
+        self.remove(item, false);
+    }
+
+    /// Wie `delete`, aber die Datei im Ablageordner endgültig — nur nach Rückfrage.
+    pub fn delete_permanently(self: &Arc<Self>, item: &CaptureItem) {
+        self.remove(item, true);
+    }
+
+    fn remove(self: &Arc<Self>, item: &CaptureItem, permanently: bool) {
         let pending = {
             let mut inner = self.inner.lock();
             inner.items.retain(|i| i.id != item.id);
@@ -355,18 +430,21 @@ impl Store {
         };
         let dir = self.directory(item.id);
         let file = PathBuf::from(&item.file_path);
+        let id = item.id.to_string();
+        let this = self.clone();
         // Erst nach dem letzten Schreibvorgang löschen, sonst legt er die Datei wieder an.
         std::thread::spawn(move || {
             if let Some(done) = pending {
-                done.wait();
+                let _ = done.wait();
             }
             if file.exists() {
-                if let Err(err) = knips_platform::shell::trash(&file) {
-                    log::warn!("Papierkorb fehlgeschlagen ({err:#}), lösche direkt");
-                    let _ = std::fs::remove_file(&file);
+                let result = if permanently { std::fs::remove_file(&file).map_err(anyhow::Error::from) } else { knips_platform::shell::trash(&file) };
+                if let Err(err) = result {
+                    this.report("Nicht gelöscht", format!("„{}“ konnte nicht gelöscht werden und liegt weiter im Ablageordner.\n\n{err:#}", display_name(&file)));
                 }
             }
             let _ = std::fs::remove_dir_all(&dir);
+            paths::remove_video_thumbs(&id, &[]);
         });
         self.changed();
     }
@@ -387,9 +465,11 @@ impl Store {
         walk(&paths::items_dir())
     }
 
-    /// Entfernt alle Originale (Bearbeitung danach nicht mehr umkehrbar). Dateien im Ablageordner bleiben.
+    /// Entfernt alle Originale (Bearbeitung danach nicht mehr umkehrbar) und die Vorschaubilder des
+    /// Video-Editors. Dateien im Ablageordner bleiben.
     pub fn purge_originals(&self) {
         let _ = std::fs::remove_dir_all(paths::items_dir());
+        let _ = std::fs::remove_dir_all(paths::video_thumbs_dir());
         paths::ensure(&paths::items_dir());
         {
             let mut inner = self.inner.lock();
@@ -417,15 +497,54 @@ impl Store {
 
     fn persist(&self, item: &CaptureItem) {
         if let Ok(data) = serde_json::to_vec(item) {
-            write_atomic(&self.meta_path(item.id), &data);
+            if let Err(err) = write_atomic(&self.meta_path(item.id), &data) {
+                log::error!("{err}");
+            }
         }
+    }
+
+    /// Älteste noch gültige Aufnahmezeit (ms); `i64::MIN`, wenn nichts verfällt.
+    fn cutoff(&self) -> i64 {
+        let days = self.settings.get().retention_days;
+        if days > 0 {
+            chrono::Utc::now().timestamp_millis() - days as i64 * 86_400_000
+        } else {
+            i64::MIN
+        }
+    }
+
+    /// Originale + Bearbeitungsstand (und Vorschaubilder) abgelaufener Aufnahmen entfernen — läuft beim
+    /// Start und regelmäßig (`app::setup`), nicht nur beim Start. `keep`: gerade geöffnete Aufnahmen.
+    /// Dateien im Ablageordner bleiben. Liefert die Zahl der entfernten Aufnahmen.
+    pub fn expire(&self, keep: &HashSet<Id>) -> usize {
+        let cutoff = self.cutoff();
+        let expired: Vec<Id> = {
+            let mut inner = self.inner.lock();
+            let busy: HashSet<Id> = inner.pending.keys().copied().collect();
+            let ids: Vec<Id> =
+                inner.items.iter().filter(|i| i.created_at < cutoff && !keep.contains(&i.id) && !busy.contains(&i.id)).map(|i| i.id).collect();
+            inner.items.retain(|i| !ids.contains(&i.id));
+            inner.memory.retain(|(i, _)| !ids.contains(i));
+            for id in &ids {
+                inner.writes.remove(id);
+            }
+            ids
+        };
+        for id in &expired {
+            let _ = std::fs::remove_dir_all(self.directory(*id));
+            paths::remove_video_thumbs(&id.to_string(), &[]);
+        }
+        if !expired.is_empty() {
+            log::info!("{} abgelaufene Originale entfernt", expired.len());
+            self.changed();
+        }
+        expired.len()
     }
 
     fn load(&self) {
         let Ok(dirs) = std::fs::read_dir(paths::items_dir()) else { return };
         // Originale + Bearbeitungsstand verfallen nach der eingestellten Frist; die Dateien im Ablageordner bleiben.
-        let days = self.settings.get().retention_days;
-        let cutoff = if days > 0 { chrono::Utc::now().timestamp_millis() - days as i64 * 86_400_000 } else { i64::MIN };
+        let cutoff = self.cutoff();
         let mut loaded = vec![];
         for dir in dirs.flatten().map(|e| e.path()).filter(|p| p.is_dir()) {
             let item: Option<CaptureItem> =
@@ -463,19 +582,30 @@ fn remember(inner: &mut Inner, id: Id, image: Arc<RgbaImage>) {
     inner.memory_until = Some(Instant::now() + Duration::from_secs(60));
 }
 
-fn write_atomic(path: &Path, data: &[u8]) {
+fn display_name(path: &Path) -> String {
+    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string())
+}
+
+/// Erst in eine Zwischendatei, dann ersetzen. Fehlermeldung mit Dateiname, Ordner und Grund (z. B.
+/// „wird von einem anderen Prozess verwendet“ — die alte Datei bleibt dann unverändert).
+fn write_atomic(path: &Path, data: &[u8]) -> Result<(), String> {
     let tmp = path.with_extension(format!("{}.tmp", path.extension().and_then(|e| e.to_str()).unwrap_or("")));
     let result = std::fs::write(&tmp, data).and_then(|_| std::fs::rename(&tmp, path));
-    if let Err(err) = result {
-        log::error!("Schreiben fehlgeschlagen ({}): {err}", path.display());
+    result.map_err(|err| {
         let _ = std::fs::remove_file(&tmp);
-    }
+        let folder = path.parent().map(|p| p.display().to_string()).unwrap_or_default();
+        format!("„{}“ konnte nicht geschrieben werden (Ordner {folder}): {err}", display_name(path))
+    })
 }
 
 pub fn write_thumbnail(image: &RgbaImage, path: &Path) {
     let thumb = imageops::downscale(image, 640);
     match imageops::encode(&thumb, ImageFormat::Png) {
-        Ok(data) => write_atomic(path, &data),
+        Ok(data) => {
+            if let Err(err) = write_atomic(path, &data) {
+                log::error!("Vorschaubild: {err}");
+            }
+        }
         Err(err) => log::error!("Vorschaubild fehlgeschlagen: {err:#}"),
     }
 }
@@ -495,4 +625,37 @@ fn link_or_copy(src: &Path, dst: &Path) -> Result<()> {
         std::fs::copy(src, dst)?;
     }
     Ok(())
+}
+
+/// Löschen aus Karte oder Verlauf. Liegt die Datei auf einem Laufwerk ohne Papierkorb (Netzlaufwerk,
+/// USB-Stick, „sofort löschen“ eingestellt), fragt Knips vorher — sonst wäre sie ohne Rückfrage weg.
+pub fn delete_item(item: CaptureItem) {
+    let k = crate::app::knips();
+    if k.store.can_trash(&item) {
+        k.cards.dismiss(item.id);
+        k.store.delete(&item);
+        return;
+    }
+    // Rückfrage nicht im Haupt-Thread (der Dialog blockiert, bis geantwortet ist).
+    std::thread::spawn(move || {
+        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+        let k = crate::app::knips();
+        let file = PathBuf::from(&item.file_path);
+        let folder = file.parent().map(|p| p.display().to_string()).unwrap_or_default();
+        let confirmed = k
+            .app
+            .dialog()
+            .message(format!(
+                "„{}“ liegt in {folder} – dort gibt es keinen Papierkorb. Die Datei wird endgültig gelöscht und lässt sich nicht wiederherstellen.",
+                display_name(&file)
+            ))
+            .title("Endgültig löschen?")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom("Endgültig löschen".into(), "Abbrechen".into()))
+            .blocking_show();
+        if confirmed {
+            k.cards.dismiss(item.id);
+            k.store.delete_permanently(&item);
+        }
+    });
 }

@@ -104,8 +104,9 @@ function EditorView({ model, settings }: { model: EditorModel; settings: Setting
       try {
         await commit(action);
       } catch (e) {
+        // Rust zeigt den Grund in einem Dialog; die Datei im Ablageordner hat noch den alten Stand.
         model.dirty = was;
-        model.showToast("Speichern fehlgeschlagen");
+        model.showToast("Nicht gespeichert – Datei im Ablageordner unverändert");
         throw e;
       }
     },
@@ -130,9 +131,10 @@ function EditorView({ model, settings }: { model: EditorModel; settings: Setting
       model.dirty = false;
       commit("copy").then(
         () => model.showToast("In die Zwischenablage kopiert"),
-        () => {
+        (e) => {
           model.dirty = was;
-          model.showToast("Kopieren fehlgeschlagen");
+          // „Nicht gespeichert“: kopiert ist das Bild trotzdem, nur die Datei ist nicht aktualisiert.
+          model.showToast(String(e).includes("Nicht gespeichert") ? "Kopiert, aber nicht gespeichert" : "Kopieren fehlgeschlagen");
         },
       );
     },

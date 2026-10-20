@@ -46,8 +46,8 @@ Alle zusammen: `scripts/selftest.ps1` (macht die CI).
 
 | Test | prüft |
 |---|---|
-| `detect` | Texterkennung + Auto-Zensur am Testbild (E-Mail, IBAN, Telefon, Schlüssel) |
-| `output` | Ausgabe 1× PNG/JPEG, Original in voller Auflösung, Editor-Speichern, „Text kopieren“ ohne Zensiertes |
+| `detect` | Texterkennung + Auto-Zensur am Testbild (E-Mail, IBAN, Telefon, Schlüssel); dazu ein hohes (1×6) und ein breites (4×1) Bild aus Kopien des Testbilds: jede Kopie muss alle vier Arten liefern, keine doppelten Funde (Kacheln statt Verkleinern, `detect-hoch/breit-funde.png`) |
+| `output` | Ausgabe 1× PNG/JPEG, Original in voller Auflösung, Editor-Speichern, „Text kopieren“ ohne Zensiertes (Karte) und ohne Zensiertes/Weggeschnittenes (Editor-Regel `visible_text`); Speichern in eine blockierte Datei meldet einen Fehler und lässt sie unverändert |
 | `selection` | Auswahl-Overlay offscreen (Bereich, Fenstermodus, Aufnahme) |
 | `capture` | echte Standbilder aller Monitore, Fensterliste, Fensteraufnahme, Bereichsaufnahme (nur Maße) |
 | `record [s]` | echte Bildschirmaufnahme mit kreisender Maus, Dauer und Größe; Export der Aufnahme ≥ 24 fps (Datei wird gelöscht) |
@@ -56,13 +56,18 @@ Alle zusammen: `scripts/selftest.ps1` (macht die CI).
 | `perf` | Zeiten: Standbild, 1×+PNG, Texterkennung |
 | `hotkeys` | Kürzel über RegisterHotKey und Tastatur-Hook mit simulierten Tastendrücken (auch Druck, Win-Kombination); Tastennamen und AltGr-Erkennung auf dem deutschen und US-Layout (`probe_layout` lädt sie kurz) |
 | `overlay` | das echte Auswahl-Overlay mit simulierter Maus/Tastatur: Ziehen, Umschalt-Quadrat, Esc, Eingabe, Leertaste + Fensterklick — nur auf Rechnern ohne Nutzer (CI) |
-| `clipboard` | echte Zwischenablage: Bild verzögert anbieten (PNG/JPEG) und zurücklesen — nur für die CI |
+| `clipboard` | echte Zwischenablage: Bild verzögert anbieten (PNG/JPEG) und zurücklesen; privates Kopieren (nach der Aufnahme) vom Verlauf/Cloud ausgeschlossen und trotzdem einfügbar — nur für die CI |
 | `telemetry` | Nutzungsstatistik gegen einen lokalen Server (127.0.0.1): in Sandbox/CI aus, ohne Zustimmung nichts, Zustimmung → Ereignisse → Senden (Nutzlast, Erlaubt-Liste, Deckel 10000) → Zähler zurückgesetzt, Fehler behält Zähler, Widerruf löscht Kennung + Zähler; Nutzlast als `telemetry-payload.json` |
-| `render` | Renderer der Oberfläche — gleiche Dokumente wie `SelfTest.render` auf dem Mac (Vergleich: `tests/reference/mac-render-*.png`) |
-| `ui` | alle Fenster mit Beispieldaten, je ein Bild (Vergleich: `tests/reference/mac-ui/`), auch `einwilligung.png`, `link-rueckfrage.png` und Allgemein/Datenschutz/Über Knips nach unten gescrollt (`…-unten.png`) |
+| `render` | Renderer der Oberfläche — gleiche Dokumente wie `SelfTest.render` auf dem Mac (Vergleich: `tests/reference/mac-render-*.png`); „Text kopieren“ der Seite (`src/editor/text.ts`) = `textlayout::visible_text` (feste Fälle + erkannte Zeilen des Testbilds) |
+| `ui` | alle Fenster mit Beispieldaten, je ein Bild (Vergleich: `tests/reference/mac-ui/`), auch `einwilligung.png`, `link-rueckfrage.png` und Allgemein/Datenschutz/Über Knips nach unten gescrollt (`…-unten.png`); danach keine der gezeigten Aufnahmen im WebView2-Profil (`EBWebView`), Diagnose mit einem Fenster ohne InPrivate |
 | `links` | Rückfrage vor knips://fullscreen/last/record (wie `links` auf dem Mac): ohne Einstellung erst Rückfrage, weiterer Link verfällt, Esc/Schließen/Abbrechen = nichts, Aufnehmen erst nach der Schutzzeit (Rust und Oberfläche), gehaltene ⏎ / Wiederholungen / ⏎ ohne Loslassen / ⏎ direkt nach Tippen bestätigen nichts, „Nicht mehr fragen“ vor der Schutzzeit gesperrt und nur mit Aufnehmen, Stoppen und eigener Weg direkt; zweiter Start (`app::second_instance` → Deep-Link-Plugin) und Erststart mit `knips://pin` (Kindprozess) je genau ein Aufruf; mit Einstellung direkt; Schalter in Allgemein. Ausführen ist durch eine Liste ersetzt, nimmt nie auf. Bilder: `link-rueckfrage-*.png`, `link-einstellung-allgemein.png` |
 | `nomedia` | Windows N/KN ohne Media Feature Pack (simuliert, `KNIPS_TEST_NO_MEDIA`): Importtabelle der knips.exe (mfplat/mfreadwrite/mf nur verzögert), alle Videofunktionen melden den Hinweis statt abzustürzen, Video-Kürzel zeigt Hinweis statt Auswahl, Screenshot geht; Bilder `einstellungen-aufnahme-ohne-media.png`, `menu-ohne-media.png` |
 | `oldwin` | Windows vor 10 2004 (simuliert, `KNIPS_TEST_OLD_WINDOWS`): kein `WDA_EXCLUDEFROMCAPTURE`, eigene Fenster für das Standbild ausgeblendet und danach wieder sichtbar, Aufnahmerahmen ohne Ausschluss |
+| `storage` | Umzug aus dem Installationsordner (bis 1.0.0) an den Ort der App-Kennung, Zwischendateien (Start: alles, regelmäßig: nur Altes, Pins bleiben), Video-Vorschaubilder gehen mit Löschen/„Originale löschen“, Ablauf nach der Frist (geöffnete bleiben), Papierkorb-Erkennung (lokal ja, `\\localhost\C$` nein); in der CI der Druck-Tasten-Vermerk in `HKCU\Software\Knips` |
+
+Deinstallation: `scripts/uninstall-test.ps1 -Setup <…-setup.exe>` (nur CI, verändert das Benutzerprofil) —
+installiert still, startet einmal (Umzug, Aufräumen), deinstalliert ohne und mit „App-Daten löschen“
+(`/S`, `/S /DELETEAPPDATA`) und prüft Ordner, Registry und Druck-Taste. Ergebnis `<Out>\ergebnis.txt`.
 
 ## Nutzungsstatistik und Lizenz
 
@@ -159,11 +164,45 @@ Ereignis `hotkey-recorded` mit `result: "rejected"`). Schon gespeicherte Kürzel
 „Ü“), Buchstaben/Ziffern nach dem Virtual-Key, Sondertasten deutsch; die Attrappe nimmt die deutschen Namen
 aus `knips_core::settings::key_name`.
 
-## Ablage
+## Ablage, Datenschutz, Deinstallation
 
-Wie auf dem Mac: Ablage `Bilder\Knips` (immer die gerenderte, zensierte Fassung, standardmäßig 1×),
-Originale + Bearbeitungsstand in `%LOCALAPPDATA%\Knips\items\<id>\` (30 Tage), Einstellungen in
-`%APPDATA%\Knips\settings.json`, Logs in `%LOCALAPPDATA%\de.birkgroup.knips\logs\`.
+Wie auf dem Mac: Ablage `Bilder\Knips` (immer die gerenderte, zensierte Fassung, standardmäßig 1×).
+Alles andere liegt in den Ordnern der App-Kennung (`paths.rs`), nie im Installationsordner
+(`%LOCALAPPDATA%\Knips`): Originale + Bearbeitungsstand in `%LOCALAPPDATA%\de.birkgroup.knips\items\<id>\`,
+daneben `EBWebView\` (WebView2) und `logs\`; Einstellungen in `%APPDATA%\de.birkgroup.knips\settings.json`.
+Bis 1.0.0 lagen die Originale im Installationsordner und die Einstellungen in `%APPDATA%\Knips` —
+`paths::migrate_legacy` holt sie beim Start (vor dem Laden) an den neuen Ort.
+
+- **Ablauf:** Originale verfallen nach der Frist (Standard 30 Tage) beim Start und alle 6 h
+  (`app::housekeeping`, offene Editoren ausgenommen). Dateien im Ablageordner bleiben.
+- **Zwischendateien** `%TEMP%\Knips` (unzensierte Video-Einzelbilder `video-thumbs\<id>-<rev>-<i>.jpg`,
+  laufende Aufnahmen/Exporte, Pins): beim Start ganz geleert, alle 6 h, was einen Tag unverändert ist
+  (Pins und offene Video-Editoren ausgenommen). Ältere Vorschaubilder einer Aufnahme fallen beim Erzeugen
+  neuer weg; Löschen und „Originale löschen“ nehmen sie mit.
+- **Speichern:** Fehler bleiben nicht stumm. Der Editor wartet, bis die Datei im Ablageordner ersetzt
+  ist (`store::Written`); sonst Dialog „Nicht gespeichert“ (Grund; die Datei hat noch den alten Stand),
+  „Fertig“ schließt nur nach Erfolg. Fehler beim Speichern nach der Aufnahme und beim Löschen meldet
+  `Store::set_on_error` als Dialog.
+- **Löschen:** in den Papierkorb (`FOF_WANTNUKEWARNING` als Netz). Laufwerke ohne Papierkorb
+  (`shell::can_trash`: Netzlaufwerk, Wechseldatenträger, „sofort löschen“, Richtlinie) → erst Rückfrage
+  „Endgültig löschen?“ (`store::delete_item`). Klappt der Papierkorb nicht, bleibt die Datei liegen.
+- **Zwischenablage:** Das automatische Kopieren nach der Aufnahme (noch unzensiert) ist privat
+  (`clipboard::set_image_private`: `ExcludeClipboardContentFromMonitorProcessing`,
+  `CanIncludeInClipboardHistory = 0`, `CanUploadToCloudClipboard = 0`) — nicht in Win+V, nicht in der
+  Cloud. Kopieren aus Karte, Editor und Pin bleibt normal.
+- **WebView2:** Alle Fenster laufen InPrivate (`wm::Spec::incognito`) — Originale, Vorschaubilder und
+  Videos, die über das Asset-Protokoll geladen werden (Tauri schickt kein `Cache-Control`), landen nicht
+  im Festplatten-Cache von `EBWebView`. Folge: `localStorage` gilt nur bis zum Beenden.
+- **Text kopieren:** Karte = Texterkennung auf der gespeicherten (zensierten) Datei; Editor = erkannte
+  Zeilen des Originals, gefiltert nach `src/editor/text.ts` (gleiche Regel wie `textlayout::visible_text`):
+  jede Überschneidung mit einer Zensur → „████“, Wörter außerhalb des Zuschnitts fallen weg,
+  angeschnittene → „████“, Zeilen ohne Wortboxen fallen bei Berührung weg.
+- **Deinstallation** (`src-tauri/installer-hooks.nsh` über `bundle.windows.nsis.installerHooks`): gibt
+  die Druck-Taste immer an Windows zurück, wenn Knips sie übernommen hat (Vermerk `HKCU\Software\Knips`:
+  `PrintScreenKeyTaken`, `PrintScreenKeyOriginal`, geschrieben von `hotkeys::set_snipping_key`; für
+  Übernahmen aus 1.0.0 beim Start nachgeholt). Mit „App-Daten löschen“ entfernt Tauri
+  `%APPDATA%`/`%LOCALAPPDATA%\de.birkgroup.knips`, der Hook zusätzlich die Orte bis 1.0.0 und `%TEMP%\Knips`.
+  Still: `uninstall.exe /S /DELETEAPPDATA`. Beim Aktualisieren (`/UPDATE`) passiert nichts davon.
 
 ## Stand
 
@@ -180,6 +219,12 @@ Aufnahme mit bewegter Maus wirksam 30 fps (vorher als 2,4 fps exportiert), VFR-T
 Nicht in der CI prüfbar: echte N-Edition, echtes Windows vor 2004, Mikrofon ohne Freigabe.
 CI 20.10.2026 abends: alle 15 grün mit Capabilities je Fenster (alle Fenster-Bilder vollständig), Links genau
 einmal (zweiter Start und Erststart), gehärteter Rückfrage und Layout-Prüfung (deutsch/US) in `hotkeys`.
+CI 20.10.2026 (Daten/Datenschutz): alle 16 Selbsttests grün, neu `storage`; Auto-Zensur auf hohem Bild
+(1400×5965) 24 statt 9 Funde, auf breitem (6011×880) 16 statt 1; „Text kopieren“ Seite = Rust in allen
+Fällen; blockierte Datei → „Zugriff verweigert“ statt stillem Erfolg; Druck-Tasten-Vermerk in der Registry.
+WebView2-Cache geprüft: Auch ohne InPrivate landeten per Asset-Protokoll geladenes Bild und Video (Range)
+nicht im Cache — InPrivate bleibt als Absicherung. `scripts/uninstall-test.ps1` läuft erst, wenn der
+Workflow es aufruft; den stillen Deinstaller mit Hook (`/S`) prüft bereits `scripts/test-install.ps1`.
 Noch am Gerät zu testen: Tastendrücke auf echter Tastatur (Hook neben anderen Tools), Mikrofon,
 Ziehen aus den Karten in andere Apps, Einfügen in fremde Apps, mehrere Monitore mit gemischter Skalierung.
 
@@ -209,6 +254,13 @@ Ziehen aus den Karten in andere Apps, Einfügen in fremde Apps, mehrere Monitore
   „Overlay aktiv“, „Overlay wird vorbereitet“ und den Aufnahme-Zustand auch nach einem Panic zurück.
 
 ## Windows-Eigenheiten (gefunden in der CI)
+
+- Texterkennung: Bildschirmfotos wie auf dem Mac als Ganzes auf ≤ 2048 px. Hohe/breite Bilder
+  (Scroll-Screenshots) würden dabei unlesbar klein — `knips_core::ocrtiles` zerlegt sie in überlappende
+  Kacheln (≤ 2048 px, nie stärker als 0,5 verkleinert, Überlappung 384 px); jedes Wort zählt in der
+  Kachel seiner Mitte, über Kachelgrenzen laufende Zeilen werden wieder eine.
+- Scroll-Screenshots höchstens `stitch::MAX_HEIGHT` = 30 000 px (Canvas des Editors); dann endet die
+  Aufnahme von selbst mit Hinweis. Behalten werden nur die neuen Zeilen, nicht jedes Einzelbild.
 
 - Media-Foundation-H.264 schreibt sonst B-Bilder ohne Edit-Liste → alle Zeitstempel ein Bild zu spät.
   Encoder deshalb mit `CODECAPI_AVEncMPVDefaultBPictureCount = 0`; der Leser zählt das erste Bild als 0.

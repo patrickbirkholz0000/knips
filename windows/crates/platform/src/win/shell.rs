@@ -10,9 +10,11 @@ use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     keybd_event, KEYEVENTF_KEYUP, VK_MENU,
 };
+use windows::Win32::Storage::FileSystem::{GetDriveTypeW, GetVolumeNameForVolumeMountPointW, GetVolumePathNameW};
+use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 use windows::Win32::UI::Shell::{
-    ILCreateFromPathW, ILFree, SHFileOperationW, SHOpenFolderAndSelectItems, ShellExecuteW, FOF_ALLOWUNDO,
-    FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FO_DELETE, SHFILEOPSTRUCTW,
+    ILCreateFromPathW, ILFree, SHFileOperationW, SHOpenFolderAndSelectItems, SHQueryRecycleBinW, ShellExecuteW, FOF_ALLOWUNDO,
+    FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FOF_WANTNUKEWARNING, FO_DELETE, SHFILEOPSTRUCTW, SHQUERYRBINFO,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic,
@@ -80,7 +82,59 @@ pub fn reveal(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// In den Papierkorb.
+fn hkcu_dword(key: &str, value: &str) -> Option<u32> {
+    let (key, value) = (wide(key), wide(value));
+    let mut data = 0u32;
+    let mut len = 4u32;
+    // SAFETY: null-terminierte Zeichenketten, data/len passen zu einem DWORD.
+    let err = unsafe {
+        RegGetValueW(HKEY_CURRENT_USER, PCWSTR(key.as_ptr()), PCWSTR(value.as_ptr()), RRF_RT_REG_DWORD, None, Some(&mut data as *mut u32 as *mut _), Some(&mut len))
+    };
+    (err.0 == 0).then_some(data)
+}
+
+/// Landet `path` beim Löschen im Papierkorb? Nein auf Netzlaufwerken, Wechseldatenträgern (USB-Sticks,
+/// Speicherkarten), CD/RAM-Laufwerken, Laufwerken ohne Papierkorb und wenn für das Laufwerk
+/// „Dateien sofort löschen“ (bzw. die Richtlinie „Keine Dateien in den Papierkorb“) eingestellt ist.
+pub fn can_trash(path: &Path) -> bool {
+    let abs = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().unwrap_or_default().join(path) };
+    let wp = wide_path(&abs);
+    let mut root = [0u16; 1024];
+    // SAFETY: wp ist null-terminiert, root ein beschreibbarer Puffer.
+    if unsafe { GetVolumePathNameW(PCWSTR(wp.as_ptr()), &mut root) }.is_err() {
+        return false;
+    }
+    // Nur feste Laufwerke (3 = DRIVE_FIXED) haben einen Papierkorb.
+    // SAFETY: root ist null-terminiert.
+    if unsafe { GetDriveTypeW(PCWSTR(root.as_ptr())) } != 3 {
+        return false;
+    }
+    let mut info = SHQUERYRBINFO { cbSize: std::mem::size_of::<SHQUERYRBINFO>() as u32, ..Default::default() };
+    // SAFETY: root ist null-terminiert, info hat die richtige Größe.
+    if unsafe { SHQueryRecycleBinW(PCWSTR(root.as_ptr()), &mut info) }.is_err() {
+        return false;
+    }
+    if hkcu_dword("Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer", "NoRecycleFiles") == Some(1) {
+        return false;
+    }
+    // „Dateien sofort löschen“ je Laufwerk: Explorer\BitBucket\Volume\{GUID}\NukeOnDelete.
+    let mut volume = [0u16; 64];
+    // SAFETY: root ist null-terminiert, volume ein beschreibbarer Puffer (≥ 50 Zeichen).
+    if unsafe { GetVolumeNameForVolumeMountPointW(PCWSTR(root.as_ptr()), &mut volume) }.is_ok() {
+        let name = super::util::from_wide(&volume);
+        if let Some(guid) = name.find('{').and_then(|a| name[a..].find('}').map(|b| &name[a..=a + b])) {
+            let key = format!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\BitBucket\\Volume\\{guid}");
+            if hkcu_dword(&key, "NukeOnDelete") == Some(1) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// In den Papierkorb. Würde Windows die Datei doch endgültig löschen (z. B. zu groß für den
+/// Papierkorb), fragt es vorher selbst nach (`FOF_WANTNUKEWARNING`); Laufwerke ohne Papierkorb
+/// erkennt `can_trash` vorab.
 pub fn trash(path: &Path) -> Result<()> {
     if !path.exists() {
         return Ok(());
@@ -94,7 +148,7 @@ pub fn trash(path: &Path) -> Result<()> {
         wFunc: FO_DELETE,
         pFrom: PCWSTR(from.as_ptr()),
         pTo: PCWSTR::null(),
-        fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI).0 as u16,
+        fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_WANTNUKEWARNING | FOF_SILENT | FOF_NOERRORUI).0 as u16,
         ..Default::default()
     };
     // SAFETY: `op` und `from` leben über den Aufruf.

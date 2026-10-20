@@ -100,6 +100,14 @@ jobs:
           if ($setup.Count -ne 1) { throw "Erwartet genau einen Installer, gefunden: $($setup.Count)" }
           ./scripts/test-install.ps1 -Installer $setup[0].FullName
 
+      # Still deinstallieren ohne und mit „App-Daten löschen“ (/DELETEAPPDATA): Ordner, Registry, Druck-Taste.
+      - name: Deinstallation (Daten, Druck-Taste)
+        if: always() && steps.installer.outcome == 'success'
+        run: |
+          $setup = @(Get-ChildItem target/release/bundle/nsis -Filter "*_x64-setup.exe")
+          if ($setup.Count -ne 1) { throw "Erwartet genau einen Installer, gefunden: $($setup.Count)" }
+          ./scripts/uninstall-test.ps1 -Setup $setup[0].FullName -Out shots/uninstall
+
       - name: Installer-Seiten fotografieren
         if: always() && steps.installer.outcome == 'success'
         continue-on-error: true

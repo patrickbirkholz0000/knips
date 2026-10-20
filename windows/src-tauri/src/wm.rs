@@ -23,6 +23,10 @@ pub struct Spec {
     /// Darf den Fokus bekommen. Karten, Einblendung und Leisten nicht — sonst verliert die App,
     /// in der gearbeitet wird, beim Erscheinen den Fokus.
     pub focusable: bool,
+    /// WebView2 im InPrivate-Modus: nichts landet im Festplatten-Cache (`EBWebView`) — dort lägen
+    /// sonst Originale, Vorschaubilder und Videos, die die Fenster über das Asset-Protokoll laden.
+    /// Immer an; nur der Selbsttest schaltet es zum Vergleich ab.
+    pub incognito: bool,
 }
 
 impl Spec {
@@ -39,6 +43,7 @@ impl Spec {
             dark: true,
             resizable: false,
             focusable: false,
+            incognito: true,
         }
     }
 
@@ -54,6 +59,7 @@ impl Spec {
             dark: false,
             resizable: true,
             focusable: true,
+            incognito: true,
         }
     }
 }
@@ -75,7 +81,8 @@ pub fn ensure(app: &AppHandle, spec: &Spec) -> Result<WebviewWindow> {
         .resizable(spec.resizable)
         .decorations(spec.decorated)
         // HTML-Ziehen startet natives Herausziehen (`item_start_drag`); Tauris Dateiablage würde stören.
-        .disable_drag_drop_handler();
+        .disable_drag_drop_handler()
+        .incognito(spec.incognito);
     if let Some((w, h)) = spec.min_size {
         b = b.min_inner_size(w, h);
     }

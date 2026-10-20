@@ -4,7 +4,8 @@
 //!
 //! Ohne Fenster: detect, output, selection, capture, record [s], track, video, perf, hotkeys
 //! (simulierte Tastendrücke), clipboard (echte Zwischenablage, nur für die CI), telemetry
-//! (Nutzungsstatistik gegen einen lokalen Server auf 127.0.0.1).
+//! (Nutzungsstatistik gegen einen lokalen Server auf 127.0.0.1), storage (Umzug alter Daten,
+//! Aufräumen, Ablauf, Papierkorb; in der CI auch der Druck-Tasten-Vermerk in der Registry).
 //! Mit Fenstern (startet die App unsichtbar für den Nutzer, fotografiert nur eigene Fenster): ui, render,
 //! links (Rückfrage vor knips://-Aufnahmen; Aufnahmen sind durch eine Liste ersetzt, nimmt nie auf),
 //! nomedia (Windows N/KN ohne Media Feature Pack) und oldwin (Windows vor 10 2004) — `selftest_media.rs`.
@@ -117,6 +118,7 @@ pub fn run(args: &[String]) -> Option<i32> {
         "overlay" => overlay_test(),
         "clipboard" => clipboard_test(),
         "telemetry" => telemetry_test(&out),
+        "storage" => storage(&out),
         other => {
             eprintln!("Unbekannter Test: {other}");
             return Some(2);
@@ -214,6 +216,73 @@ fn detect(out: &Path) -> Result<()> {
         bail!("Muster: E-Mail nicht erkannt");
     }
     println!("   ✓ Stripe-Key „{}“ verdeckt, Muster für Schlüssel und E-Mail greifen", sample::STRIPE_KEY);
+    detect_long(&img, &findings, out)
+}
+
+/// Hohe und breite Bilder (Scroll-Screenshots): Kopien des Testbilds unter- bzw. nebeneinander. Als
+/// Ganzes auf 2048 px verkleinert wäre die Schrift unlesbar; in Kacheln muss jede Kopie alle vier
+/// Arten liefern (E-Mail, IBAN, Telefon, Schlüssel) — auch Kopien, die über Kachelgrenzen laufen.
+fn overlapping_pairs(findings: &[knips_core::model::Finding]) -> usize {
+    let mut n = 0;
+    for (i, a) in findings.iter().enumerate() {
+        for b in &findings[i + 1..] {
+            if a.kind == b.kind && a.rect.intersection(&b.rect).area() > a.rect.area().min(b.rect.area()) * 0.5 {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+fn detect_long(sample_img: &RgbaImage, baseline: &[knips_core::model::Finding], out: &Path) -> Result<()> {
+    let required = [SensitiveKind::Email, SensitiveKind::Iban, SensitiveKind::Phone, SensitiveKind::Secret];
+    let baseline_pairs = overlapping_pairs(baseline);
+    let (tw, th) = (sample_img.width(), sample_img.height());
+    let gap = 137; // krumm, damit die Kopien quer über den Kachelgrenzen liegen
+    let mut failures = vec![];
+    for (name, cols, rows) in [("hoch", 1u32, 6u32), ("breit", 4, 1)] {
+        let (w, h) = (cols * tw + (cols - 1) * gap, rows * th + (rows - 1) * gap);
+        let mut big = RgbaImage::from_pixel(w, h, image::Rgba([237, 240, 245, 255]));
+        let mut regions = vec![];
+        for r in 0..rows {
+            for c in 0..cols {
+                let (x, y) = (c * (tw + gap), r * (th + gap));
+                image::imageops::replace(&mut big, sample_img, x as i64, y as i64);
+                regions.push(Rect::new(x as f64, y as f64, tw as f64, th as f64));
+            }
+        }
+        let tiles = knips_core::ocrtiles::plan(w, h, knips_core::OCR_MAX_PIXEL);
+        let t = Instant::now();
+        let lines = ocr::recognize(&big)?;
+        let ms = t.elapsed().as_millis();
+        let findings = sensitive::detect(&lines, &all_kinds());
+        // Zum Vergleich: wie bisher als Ganzes auf 2048 px verkleinert.
+        let old = sensitive::detect(&ocr::recognize(&imageops::downscale(&big, knips_core::OCR_MAX_PIXEL))?, &all_kinds()).len();
+        println!("{name} {w}×{h}: {} Kacheln, {} Zeilen, {} Funde in {ms} ms (als Ganzes verkleinert: {old} Funde)", tiles.len(), lines.len(), findings.len());
+        let mut marked = big.clone();
+        for f in &findings {
+            outline(&mut marked, &f.rect, [255, 40, 40, 255]);
+        }
+        write(&imageops::downscale(&marked, 3000), &out.join(format!("detect-{name}-funde.png")))?;
+        for (i, region) in regions.iter().enumerate() {
+            let kinds: BTreeSet<SensitiveKind> = findings.iter().filter(|f| region.contains(f.rect.center())).map(|f| f.kind).collect();
+            let missing: Vec<_> = required.iter().filter(|k| !kinds.contains(k)).collect();
+            if missing.is_empty() {
+                println!("   ✓ Kopie {}: {kinds:?}", i + 1);
+            } else {
+                println!("   FALSCH Kopie {}: fehlt {missing:?} (gefunden {kinds:?})", i + 1);
+                failures.push(format!("{name} Kopie {}: {missing:?}", i + 1));
+            }
+        }
+        // Keine doppelten Funde aus den Überlappungen (mehr sich deckende gleiche Funde als im Einzelbild).
+        let pairs = overlapping_pairs(&findings);
+        if pairs > baseline_pairs * regions.len() {
+            failures.push(format!("{name}: {pairs} doppelte Funde (Einzelbild: {baseline_pairs})"));
+        }
+    }
+    if !failures.is_empty() {
+        bail!("Auto-Zensur auf hohen/breiten Bildern unvollständig: {}", failures.join("; "));
+    }
     Ok(())
 }
 
@@ -270,9 +339,11 @@ fn output(out: &Path) -> Result<()> {
     knips_core::redact::apply(&mut rendered, &[(bar.rect(), RedactStyle::Solid)], 2.0);
     let factor = settings.get().output_factor(2.0);
     let size = ((rendered.width() as f64 * factor).round() as u32, (rendered.height() as f64 * factor).round() as u32);
-    let promise = output_promise(factor, ImageFormat::Png, move || Some(rendered));
-    let saved = store.save_image(promise, &doc, &item, size, 2.0 * factor);
-    store.wait_until_written(item.id);
+    let promise = output_promise(factor, ImageFormat::Png, move || Some(rendered.clone()));
+    let (saved, written) = store.save_image(promise, &doc, &item, size, 2.0 * factor);
+    if let Err(err) = written.wait() {
+        failures.push(format!("Editor-Speichern meldet Fehler: {err}"));
+    }
     let file = PathBuf::from(&saved.file_path);
     println!("Editor gespeichert: {} · Dokument {} Balken", describe(&file), store.load_image_document(item.id).annotations.len());
     let img = imageops::load(&file)?;
@@ -285,9 +356,222 @@ fn output(out: &Path) -> Result<()> {
         } else {
             println!("   ✓ keine E-Mail im kopierten Text");
         }
+        // „Text kopieren“ im Editor (Regel wie `src/editor/text.ts`): erkannt wird das Original; Zensur
+        // und Zuschnitt müssen draußen bleiben. Zuschnitt: nur die obere Hälfte, Balken über die E-Mail.
+        let lines = ocr::recognize(&image)?;
+        let crop = Rect::new(0.0, 0.0, image.width() as f64, image.height() as f64 * 0.5);
+        let editor_text = textlayout::visible_text(&lines, &[bar.rect()], Some(&crop));
+        println!("Text kopieren (Editor, obere Hälfte + Balken):\n{}", editor_text.lines().map(|l| format!("     | {l}")).collect::<Vec<_>>().join("\n"));
+        let outside: Vec<&str> = lines
+            .iter()
+            .flat_map(|l| &l.words)
+            .filter(|w| w.rect.min_y() >= crop.max_y() && w.text.chars().count() >= 4)
+            .map(|w| w.text.as_str())
+            .filter(|t| editor_text.split_whitespace().any(|x| x == *t))
+            .collect();
+        let hidden_words: Vec<&str> = lines.iter().flat_map(|l| &l.words).filter(|w| w.rect.intersects(&bar.rect())).map(|w| w.text.as_str()).collect();
+        if editor_text.contains('@') || hidden_words.iter().any(|w| editor_text.split_whitespace().any(|x| x == *w)) {
+            failures.push(format!("Editor-Text enthält Zensiertes ({hidden_words:?})"));
+        } else if !outside.is_empty() {
+            failures.push(format!("Editor-Text enthält Weggeschnittenes: {outside:?}"));
+        } else if editor_text.is_empty() {
+            failures.push("Editor-Text leer".into());
+        } else {
+            println!("   ✓ Editor-Text ohne Zensiertes ({} Wörter verdeckt) und ohne Weggeschnittenes", hidden_words.len());
+        }
+    }
+
+    // Schreibfehler bleiben nicht stumm: Ist die Datei im Ablageordner blockiert, meldet das Speichern
+    // einen Fehler — und die Datei bleibt, wie sie war.
+    let before = std::fs::read(&file)?;
+    let locked_result = {
+        #[cfg(windows)]
+        let _lock = {
+            // Wie eine Bildanzeige, die die Datei ohne Freigabe offen hält.
+            use std::os::windows::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new().read(true).share_mode(0).open(&file)?
+        };
+        #[cfg(not(windows))]
+        let _lock = {
+            // Attrappe: Ein Ordner unter dem Dateinamen verhindert das Ersetzen genauso.
+            std::fs::rename(&file, file.with_extension("bak"))?;
+            std::fs::create_dir(&file)?;
+        };
+        let promise = output_promise(factor, ImageFormat::Png, move || Some(image.clone()));
+        let (_, written) = store.save_image(promise, &ImageDocument::default(), &saved, size, 2.0 * factor);
+        written.wait()
+    };
+    #[cfg(not(windows))]
+    {
+        std::fs::remove_dir(&file)?;
+        std::fs::rename(file.with_extension("bak"), &file)?;
+    }
+    match locked_result {
+        Ok(()) => failures.push("Speichern in eine blockierte Datei meldet Erfolg".into()),
+        Err(err) => {
+            println!("   ✓ blockierte Datei: „{err}“");
+            if std::fs::read(&file)? != before {
+                failures.push("blockierte Datei wurde trotzdem verändert".into());
+            }
+        }
     }
     if !failures.is_empty() {
         bail!(failures.join("; "));
+    }
+    Ok(())
+}
+
+// ------------------------------------------------------------------ storage
+
+/// Wartet bis zu `secs` Sekunden, bis `ok` gilt (Löschen läuft im Hintergrund).
+fn eventually(secs: u64, ok: impl Fn() -> bool) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < deadline {
+        if ok() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    ok()
+}
+
+/// Ablage und Datenschutz: Umzug aus dem Installationsordner älterer Versionen, Zwischendateien,
+/// Vorschaubilder des Video-Editors, Ablauf der Originale, Papierkorb-Erkennung, Vermerk der
+/// Druck-Tasten-Übernahme fürs Deinstallieren (nur CI: schreibt in die echte Registry).
+fn storage(out: &Path) -> Result<()> {
+    let _ = out;
+    let mut failures: Vec<String> = vec![];
+    let mut check = |name: &str, ok: bool, detail: String| {
+        if ok {
+            println!("   ✓ {name}{}", if detail.is_empty() { String::new() } else { format!(" ({detail})") });
+        } else {
+            println!("   FALSCH {name}: {detail}");
+            failures.push(name.to_string());
+        }
+    };
+
+    // 1. Umzug: Einstellungen aus %APPDATA%\Knips, Originale aus %LOCALAPPDATA%\Knips\items
+    //    (= Installationsordner bis 1.0.0) an den Ort der App-Kennung.
+    let (old_config, old_data) = crate::paths::legacy_dirs();
+    let old_id = uuid::Uuid::new_v4();
+    let old_item_dir = old_data.join("items").join(old_id.to_string());
+    std::fs::create_dir_all(&old_item_dir)?;
+    std::fs::create_dir_all(&old_config)?;
+    std::fs::write(old_config.join("settings.json"), br#"{"retentionDays": 30, "telemetryInstallId": "alt-kennung"}"#)?;
+    std::fs::write(old_data.join("knips.exe"), b"Programm")?;
+    let old_file = crate::paths::default_save_folder().join("Alt.png");
+    crate::paths::ensure(&crate::paths::default_save_folder());
+    write(&RgbaImage::from_pixel(40, 30, image::Rgba([200, 30, 30, 255])), &old_file)?;
+    std::fs::write(old_item_dir.join("original.png"), std::fs::read(&old_file)?)?;
+    let old_item = knips_core::model::CaptureItem {
+        id: old_id,
+        kind: knips_core::model::CaptureKind::Image,
+        created_at: chrono::Utc::now().timestamp_millis(),
+        file_path: old_file.to_string_lossy().into_owned(),
+        pixel_width: 40,
+        pixel_height: 30,
+        scale: 1.0,
+        duration: None,
+        revision: 1,
+        output_scale: Some(1.0),
+    };
+    std::fs::write(old_item_dir.join("item.json"), serde_json::to_vec(&old_item)?)?;
+    let migration = crate::paths::migrate_legacy();
+    let new_dir = crate::paths::items_dir().join(old_id.to_string());
+    check("Umzug Originale", migration.items == 1 && new_dir.join("original.png").is_file() && !old_item_dir.exists(), format!("{migration:?}"));
+    let moved_settings = std::fs::read_to_string(crate::paths::config_dir().join("settings.json")).unwrap_or_default();
+    check("Umzug Einstellungen", migration.settings && moved_settings.contains("alt-kennung") && !old_config.exists(), String::new());
+    check("Installationsordner bleibt (nur Programm)", old_data.join("knips.exe").is_file() && !old_data.join("items").exists(), String::new());
+    check("zweiter Start ändert nichts", crate::paths::migrate_legacy() == crate::paths::Migration::default(), String::new());
+
+    let settings = Arc::new(SettingsStore::load());
+    let store = Arc::new(Store::new(settings.clone()));
+    check("übernommene Aufnahme geladen", store.item(old_id).is_some(), String::new());
+
+    // 2. Zwischendateien: beim Start alles weg, regelmäßig nur Altes, Gebrauchtes bleibt.
+    let tmp = crate::paths::temp_dir();
+    let thumbs = crate::paths::video_thumbs_dir();
+    crate::paths::ensure(&thumbs);
+    let leftovers = [thumbs.join(format!("{old_id}-1-0.jpg")), tmp.join("aufnahme-abgestuerzt.mp4"), tmp.join("export-abgestuerzt.mp4"), tmp.join("pin-7.png")];
+    for f in &leftovers {
+        std::fs::write(f, b"unzensiert")?;
+    }
+    let kept = crate::paths::clean_temp(Some(Duration::from_secs(3600)), &|_| false);
+    check("frische Zwischendateien bleiben beim regelmäßigen Aufräumen", kept == 0 && leftovers.iter().all(|f| f.exists()), format!("{kept} entfernt"));
+    let pin = leftovers[3].clone();
+    let removed = crate::paths::clean_temp(None, &|p| p == pin.as_path());
+    check("Start räumt Zwischendateien weg (Pin in Gebrauch bleibt)", removed == 3 && leftovers[..3].iter().all(|f| !f.exists()) && pin.exists(), format!("{removed} entfernt"));
+    let _ = std::fs::remove_file(&pin);
+
+    // 3. Vorschaubilder des Video-Editors gehen mit der Aufnahme.
+    let item = store.add_image(sample::sample_image(600, 400, 1.0), 1.0, None, None)?;
+    store.wait_until_written(item.id);
+    crate::paths::ensure(&thumbs);
+    let thumb_files: Vec<PathBuf> = (0..3).map(|i| thumbs.join(format!("{}-1-{i}.jpg", item.id))).collect();
+    for f in &thumb_files {
+        std::fs::write(f, b"bild")?;
+    }
+    let other = thumbs.join(format!("{}-1-0.jpg", uuid::Uuid::new_v4()));
+    std::fs::write(&other, b"bild")?;
+    crate::paths::remove_video_thumbs(&item.id.to_string(), &thumb_files[2..]);
+    check("alte Vorschaubilder einer Aufnahme weg, neue bleiben", !thumb_files[0].exists() && !thumb_files[1].exists() && thumb_files[2].exists() && other.exists(), String::new());
+    let item_dir = store.directory(item.id);
+    let item_file = PathBuf::from(&item.file_path);
+    store.delete(&item);
+    let gone = eventually(10, || !item_dir.exists() && !thumb_files[2].exists() && !item_file.exists());
+    check("Löschen: Original, Vorschaubilder und Datei (Papierkorb) weg", gone && other.exists(), String::new());
+    store.purge_originals();
+    check("„Originale löschen“ nimmt alle Video-Vorschaubilder mit", !thumbs.exists(), String::new());
+
+    // 4. Ablauf nach der Frist — regelmäßig, nicht nur beim Start; offene Aufnahmen bleiben.
+    settings.update(|s| s.retention_days = 30);
+    let a = store.add_image(sample::sample_image(300, 200, 1.0), 1.0, None, None)?;
+    let b = store.add_image(sample::sample_image(300, 200, 1.0), 1.0, None, None)?;
+    let c = store.add_image(sample::sample_image(300, 200, 1.0), 1.0, None, None)?;
+    for i in [&a, &b, &c] {
+        store.wait_until_written(i.id);
+    }
+    let old = chrono::Utc::now().timestamp_millis() - 31 * 86_400_000;
+    store.bump(a.id, |i| i.created_at = old);
+    store.bump(b.id, |i| i.created_at = old);
+    let keep: std::collections::HashSet<_> = [b.id].into_iter().collect();
+    let n = store.expire(&keep);
+    check(
+        "abgelaufenes Original entfernt, geöffnetes und neues bleiben, Ablage bleibt",
+        n == 1 && !store.directory(a.id).exists() && store.item(a.id).is_none() && store.item(b.id).is_some() && store.item(c.id).is_some() && Path::new(&a.file_path).exists(),
+        format!("{n} entfernt"),
+    );
+
+    // 5. Papierkorb: lokal ja, Netzlaufwerk nein (dort fragt Knips vorher).
+    let local = knips_platform::shell::can_trash(Path::new(&c.file_path));
+    check("lokale Ablage hat Papierkorb", local, String::new());
+    if knips_platform::IS_REAL {
+        let unc = knips_platform::shell::can_trash(Path::new(r"\\localhost\C$\Windows\win.ini"));
+        check("Netzlaufwerk ohne Papierkorb erkannt", !unc, String::new());
+    }
+
+    // 6. Druck-Taste: Übernahme wird fürs Deinstallieren vermerkt, Zurückgeben löscht den Vermerk.
+    //    Schreibt in die echte Registry — nur in der CI.
+    if knips_platform::IS_REAL && std::env::var_os("CI").is_some() {
+        use knips_platform::hotkeys;
+        let before = hotkeys::snipping_takeover_marker();
+        hotkeys::set_snipping_key(false)?;
+        let taken = hotkeys::snipping_takeover_marker();
+        hotkeys::set_snipping_key(false)?;
+        let again = hotkeys::snipping_takeover_marker();
+        hotkeys::set_snipping_key(true)?;
+        let after = hotkeys::snipping_takeover_marker();
+        check(
+            "Druck-Taste: Übernahme vermerkt (mit Wert davor), zurückgegeben = kein Vermerk",
+            before.is_none() && taken.is_some() && again == taken && after.is_none(),
+            format!("vorher {before:?}, übernommen {taken:?}, nochmal {again:?}, zurück {after:?}"),
+        );
+    } else {
+        println!("   (Druck-Tasten-Vermerk nur in der CI)");
+    }
+
+    if !failures.is_empty() {
+        bail!("{}", failures.join(", "));
     }
     Ok(())
 }
@@ -618,6 +902,21 @@ fn clipboard_test() -> Result<()> {
             Some(back) => failures.push(format!("{format:?}: {}×{} statt 800×500", back.width(), back.height())),
             None => failures.push(format!("{format:?}: kein Bild in der Zwischenablage")),
         }
+    }
+    // Automatisches Kopieren nach der Aufnahme (noch unzensiert): nicht in Verlauf (Win+V) und Cloud —
+    // einfügen lässt es sich trotzdem. Normales Kopieren bleibt im Verlauf.
+    let img = sample::sample_image(640, 400, 1.0);
+    clipboard::set_image_private(Arc::new(crate::promise::ImagePromise::of(img, ImageFormat::Png)))?;
+    std::thread::sleep(Duration::from_millis(200));
+    let private = clipboard::is_private();
+    let pasted = clipboard::get_image().map(|b| (b.width(), b.height()));
+    println!("   privat kopiert: vom Verlauf ausgeschlossen = {private}, einfügbar = {pasted:?}");
+    if !private || pasted != Some((640, 400)) {
+        failures.push(format!("privates Kopieren: ausgeschlossen {private}, eingefügt {pasted:?}"));
+    }
+    clipboard::set_image(Arc::new(crate::promise::ImagePromise::of(sample::sample_image(320, 200, 1.0), ImageFormat::Png)))?;
+    if clipboard::is_private() {
+        failures.push("normales Kopieren ist vom Verlauf ausgeschlossen".into());
     }
     clipboard::set_text("Knips Selbsttest äöü")?;
     clipboard::set_files(&[std::env::temp_dir()])?;
@@ -1174,6 +1473,10 @@ fn ui(app: &AppHandle, out: &Path) -> Result<()> {
         check("pin", shoot(app, &label, out, "pin.png"));
     }
 
+    // WebView2: Die Fenster laufen InPrivate — keine Spur der Aufnahmen im Profil auf der Platte.
+    let shown: Vec<String> = items.iter().chain(video.as_ref()).map(|i| i.id.to_string()).collect();
+    check("webview-cache", webview_cache(app, &shown));
+
     // Leisten (Aufnahme, Countdown, Scroll) mit Platzhalter-Zustand
     for (label, route, size) in [("rec-controls", "rec-controls", (246.0, 44.0)), ("rec-countdown", "rec-countdown", (150.0, 176.0)), ("scroll-controls", "scroll-controls", (380.0, 48.0))] {
         if let Ok(w) = wm::ensure(app, &wm::Spec::floating(label, route, size)) {
@@ -1187,6 +1490,71 @@ fn ui(app: &AppHandle, out: &Path) -> Result<()> {
     if !failures.is_empty() {
         bail!("Fenster ohne Bild: {}", failures.join(", "));
     }
+    Ok(())
+}
+
+/// Dateien unter `dir`, die einen der Texte enthalten (Kennungen der Aufnahmen).
+fn files_containing(dir: &Path, needles: &[String], only_cache: bool) -> Vec<(String, PathBuf)> {
+    let mut hits = vec![];
+    let Ok(entries) = std::fs::read_dir(dir) else { return hits };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(meta) = entry.metadata() else { continue };
+        if meta.is_dir() {
+            hits.extend(files_containing(&path, needles, only_cache));
+            continue;
+        }
+        let in_cache = path.components().any(|c| c.as_os_str().to_string_lossy().contains("Cache"));
+        if (only_cache && !in_cache) || meta.len() > 64 << 20 {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&path) else { continue };
+        for n in needles {
+            if bytes.windows(n.len()).any(|w| w == n.as_bytes()) {
+                hits.push((n.clone(), path.clone()));
+            }
+        }
+    }
+    hits
+}
+
+/// Landen Originale/Vorschaubilder, die die Fenster über das Asset-Protokoll laden, im
+/// WebView2-Profil (`%LOCALAPPDATA%\de.birkgroup.knips\EBWebView`)? Zum Vergleich lädt ein Fenster
+/// ohne InPrivate ein eigenes Original (nur Ausgabe); die gezeigten Aufnahmen dürfen nirgends stehen.
+fn webview_cache(app: &AppHandle, shown: &[String]) -> Result<()> {
+    let profile = app.path().app_local_data_dir()?.join("EBWebView");
+    let k = crate::app::knips();
+    // Eigene Aufnahmen für die Fenster ohne InPrivate: ein Bild (Editor) und ein Video (Video-Editor,
+    // lädt mit Range-Anfragen).
+    let image_item = k.store.add_image(sample::sample_image(900, 600, 1.0), 1.0, None, None)?;
+    k.store.wait_until_written(image_item.id);
+    let mut probes = vec![("Original (Bild)", format!("editor/{}", image_item.id), image_item.id.to_string())];
+    let content = pattern(640, 900, 9);
+    let path = crate::paths::temp_dir().join("cache-probe.mp4");
+    match media::write_test_video(&path, 640, 360, 30, 45, false, &mut |i| scrolling_frame(&content, 640, 360, i as u32 * 4)).and_then(|_| k.store.add_video(&path, 1.0)) {
+        Ok(v) => probes.push(("Original (Video)", format!("video/{}", v.id), v.id.to_string())),
+        Err(e) => println!("   Diagnose Video übersprungen: {e:#}"),
+    }
+    for (i, (what, route, id)) in probes.iter().enumerate() {
+        let mut spec = wm::Spec::window(&format!("cache-probe-{i}"), route, "Knips – Cache-Probe", (900.0, 650.0));
+        spec.incognito = false;
+        let window = wm::ensure(app, &spec)?;
+        let _ = window.show();
+        std::thread::sleep(Duration::from_secs(5));
+        let _ = window.destroy();
+        std::thread::sleep(Duration::from_secs(3));
+        let hits = files_containing(&profile, std::slice::from_ref(id), true);
+        println!(
+            "   Diagnose ohne InPrivate: {what} {} im WebView2-Cache{}",
+            if hits.is_empty() { "liegt nicht" } else { "liegt" },
+            hits.iter().map(|(_, p)| format!("\n      {}", p.display())).collect::<String>()
+        );
+    }
+    let hits = files_containing(&profile, shown, false);
+    if !hits.is_empty() {
+        bail!("Aufnahmen im WebView2-Profil: {}", hits.iter().map(|(id, p)| format!("{id} in {}", p.display())).collect::<Vec<_>>().join(", "));
+    }
+    println!("   ✓ keine der {} gezeigten Aufnahmen im WebView2-Profil ({})", shown.len(), profile.display());
     Ok(())
 }
 
@@ -1533,10 +1901,73 @@ fn render(app: &AppHandle, out: &Path) -> Result<()> {
             if n < 3 {
                 bail!("nur {n} Bilder gerendert");
             }
-            return Ok(());
+            return visible_text_matches(&window);
         }
     }
     bail!("Renderer hat nicht geantwortet")
+}
+
+/// „Text kopieren“ im Editor (`src/editor/text.ts`) muss dieselbe Regel haben wie
+/// `textlayout::visible_text`: gleiche Eingaben → gleicher Text. Auf Windows zusätzlich mit den
+/// erkannten Zeilen des Testbilds.
+fn visible_text_matches(window: &WebviewWindow) -> Result<()> {
+    use knips_core::model::{TextLine, TextWord};
+    let line = |x: f64, y: f64, words: &[&str]| {
+        let mut cx = x;
+        TextLine::from_words(
+            words
+                .iter()
+                .map(|t| {
+                    let w = t.chars().count() as f64 * 8.0;
+                    let r = TextWord { text: t.to_string(), rect: Rect::new(cx, y, w, 16.0) };
+                    cx += w + 8.0;
+                    r
+                })
+                .collect(),
+        )
+    };
+    let lines = vec![
+        line(10.0, 10.0, &["oben", "geheim"]),
+        line(10.0, 60.0, &["Name:", "Erika", "Mustermann"]),
+        line(300.0, 61.0, &["rechts"]),
+        line(10.0, 110.0, &["Passwort:", "hunter22"]),
+        TextLine { text: "ohne Wörter".into(), rect: Rect::new(10.0, 160.0, 100.0, 16.0), words: vec![] },
+    ];
+    let mut cases: Vec<(Vec<TextLine>, Vec<Rect>, Option<Rect>)> = vec![
+        (lines.clone(), vec![], None),
+        (lines.clone(), vec![Rect::new(120.0, 108.0, 2.0, 2.0)], None),
+        (lines.clone(), vec![Rect::new(105.0, 175.0, 10.0, 10.0)], None),
+        (lines.clone(), vec![], Some(Rect::new(0.0, 50.0, 150.0, 40.0))),
+        (lines.clone(), vec![Rect::new(58.0, 62.0, 4.0, 4.0)], Some(Rect::new(0.0, 0.0, 400.0, 130.0))),
+        (lines.clone(), vec![], Some(Rect::new(500.0, 500.0, 10.0, 10.0))),
+    ];
+    if ocr::available() {
+        let img = sample::sample_image(1400, 880, 2.0);
+        let real = ocr::recognize(&img)?;
+        cases.push((real.clone(), vec![Rect::new(380.0, 235.0, 620.0, 50.0)], Some(Rect::new(0.0, 0.0, 1400.0, 440.0))));
+        cases.push((real, vec![], Some(Rect::new(500.0, 0.0, 400.0, 880.0))));
+    }
+    let mut failures = vec![];
+    for (i, (lines, hidden, crop)) in cases.iter().enumerate() {
+        let want = textlayout::visible_text(lines, hidden, crop.as_ref());
+        let expr = format!(
+            "JSON.stringify(window.__knipsVisibleText({}, {}, {}))",
+            serde_json::to_string(lines)?,
+            serde_json::to_string(hidden)?,
+            serde_json::to_string(crop)?
+        );
+        let got: String = serde_json::from_str(&probe(window, &expr, Duration::from_secs(5))?).context("Antwort der Seite")?;
+        if got == want {
+            println!("   ✓ Text kopieren, Fall {}: {:?}", i + 1, want.replace('\n', " ⏎ "));
+        } else {
+            println!("   FALSCH Text kopieren, Fall {}:\n      Rust: {want:?}\n      Seite: {got:?}", i + 1);
+            failures.push(i + 1);
+        }
+    }
+    if !failures.is_empty() {
+        bail!("„Text kopieren“ weicht zwischen Editor und Rust ab: Fälle {failures:?}");
+    }
+    Ok(())
 }
 
 #[tauri::command]

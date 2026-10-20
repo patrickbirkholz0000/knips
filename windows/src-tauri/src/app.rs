@@ -1,6 +1,6 @@
 //! Zentraler Zustand und Start (`AppDelegate.swift`). Alle Teile erreichen die App über `knips()`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
 use knips_core::settings::{HotkeyAction, Settings};
@@ -187,6 +187,14 @@ pub fn setup(app: &AppHandle) -> anyhow::Result<()> {
     if paths::test_root().is_some() {
         knips_platform::clipboard::set_disabled(true);
     }
+    // Vor dem Laden: Daten älterer Versionen aus dem Installationsordner holen, Zwischendateien
+    // (unzensierte Video-Einzelbilder, Reste abgestürzter Aufnahmen/Exporte, Pins) entfernen —
+    // es läuft noch nichts, das sie braucht (zweite Instanzen beendet das Single-Instance-Plugin vorher).
+    paths::migrate_legacy();
+    let removed = paths::clean_temp(None, &|_| false);
+    if removed > 0 {
+        log::info!("{removed} Zwischendateien entfernt");
+    }
     let settings = Arc::new(SettingsStore::load());
     let store = Arc::new(Store::new(settings.clone()));
     let telemetry = Arc::new(Telemetry::from_env(settings.clone(), &app.package_info().version.to_string()));
@@ -218,6 +226,8 @@ pub fn setup(app: &AppHandle) -> anyhow::Result<()> {
         k.emit("items-changed", items.clone());
         k.cards.sync(&items);
     });
+    store.set_on_error(|title, message| knips().alert(title, &message));
+    start_housekeeping();
     state.allow_asset_dirs();
     // Fähigkeiten des Systems im Hintergrund prüfen (WinRT/Media Foundation nie im UI-Thread).
     std::thread::spawn(|| {
@@ -245,6 +255,17 @@ pub fn setup(app: &AppHandle) -> anyhow::Result<()> {
 
     hotkeys::start();
     hotkeys::apply();
+    // Bis 1.0.0 übernahm Knips die Druck-Taste ohne Vermerk fürs Deinstallieren: einmal nachholen.
+    // Der Wert davor ist unbekannt — zurückgeben und neu übernehmen vermerkt „an“ (wie Windows 11
+    // ohne Eintrag), damit das Deinstallieren die Taste wieder an Windows gibt.
+    {
+        use knips_platform::hotkeys as hk;
+        if knips_platform::IS_REAL && paths::test_root().is_none() && settings.get().took_snipping_key && hk::snipping_takeover_marker().is_none() && !hk::snipping_key_enabled() {
+            if let Err(err) = hk::set_snipping_key(true).and_then(|_| hk::set_snipping_key(false)) {
+                log::warn!("Vermerk der Druck-Tasten-Übernahme nicht nachgeholt: {err:#}");
+            }
+        }
+    }
 
     // Erster Start einer installierten App: mit Windows starten.
     let s = settings.get();
@@ -288,6 +309,48 @@ pub fn first_start(args: &[String]) {
     for arg in args.iter().skip(1).filter(|a| a.starts_with("knips://")) {
         handle_url(arg);
     }
+}
+
+/// Aufnahmen, die gerade in einem Editor oder Video-Editor offen sind.
+fn open_item_ids() -> HashSet<knips_core::model::Id> {
+    knips()
+        .app
+        .webview_windows()
+        .keys()
+        .filter_map(|label| label.strip_prefix("editor-").or_else(|| label.strip_prefix("video-")))
+        .filter_map(|id| id.parse().ok())
+        .collect()
+}
+
+/// Alle 6 Stunden aufräumen, nicht nur beim Start (Knips läuft oft wochenlang durch): abgelaufene
+/// Originale (Frist aus den Einstellungen) und Zwischendateien, die seit einem Tag niemand braucht.
+fn start_housekeeping() {
+    const EVERY: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
+    let spawned = std::thread::Builder::new().name("knips-housekeeping".into()).spawn(|| loop {
+        std::thread::sleep(EVERY);
+        housekeeping();
+    });
+    if let Err(err) = spawned {
+        log::error!("Aufräumen nicht gestartet: {err}");
+    }
+}
+
+/// Ein Durchgang des regelmäßigen Aufräumens. Liefert (abgelaufene Aufnahmen, Zwischendateien).
+fn housekeeping() -> (usize, usize) {
+    let k = knips();
+    let open = open_item_ids();
+    let expired = k.store.expire(&open);
+    let pins = k.pins.paths();
+    let open_prefixes: Vec<String> = open.iter().map(|id| format!("{id}-")).collect();
+    let keep = |path: &std::path::Path| {
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        pins.iter().any(|p| p == path) || open_prefixes.iter().any(|p| name.starts_with(p.as_str()))
+    };
+    let removed = paths::clean_temp(Some(std::time::Duration::from_secs(24 * 3600)), &keep);
+    if expired + removed > 0 {
+        log::info!("Aufgeräumt: {expired} abgelaufene Aufnahmen, {removed} Zwischendateien");
+    }
+    (expired, removed)
 }
 
 /// URL-Befehle `knips://area|window|fullscreen|record|last|text|scroll|pin|menu|history|settings` — immer

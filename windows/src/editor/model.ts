@@ -2,8 +2,9 @@
 import { useSyncExternalStore } from "react";
 import { api } from "../shared/ipc";
 import type { Annotation, AnnotationKind, EditorSession, EditorTool, FrameStyle, ImageDocument, Point, Rect, RedactStyle, Rgba, Settings, StrokeSize, TextLine } from "../shared/types";
-import { area, contains, insetBy, integral, intersection, intersects, maxX, maxY, midY, rectEq, union } from "./geometry";
+import { area, contains, insetBy, integral, intersection, intersects, maxX, maxY, rectEq, union } from "./geometry";
 import { COLORS, DEFAULT_FRAME, EffectsCache, imageSize, sameColor, type BaseImage } from "./renderer";
+import { visibleText } from "./text";
 
 export const TOOLS: EditorTool[] = ["select", "arrow", "rectangle", "ellipse", "line", "text", "counter", "highlight", "redact", "crop"];
 export const TOOL_TITLE: Record<EditorTool, string> = {
@@ -27,28 +28,6 @@ interface Snapshot {
 }
 
 export const newId = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
-
-/** Erkannter Text in Lesereihenfolge; Wörter unter einer Zensur werden durch █ ersetzt (TextLayout.plainText). */
-export function plainText(lines: TextLine[], hidden: Rect[]): string {
-  const out: string[] = [];
-  let lastMidY: number | null = null;
-  let current = "";
-  const isHidden = (r: Rect) => hidden.some((h) => area(intersection(h, r)) > area(r) * 0.15);
-  for (const line of lines) {
-    if (line.words.length === 0 && isHidden(line.rect)) continue;
-    const words = line.words.map((w) => (isHidden(w.rect) ? "████" : w.text));
-    if (words.length > 0 && words.every((w) => w === "████")) continue;
-    const text = line.words.length === 0 ? line.text : words.join(" ");
-    if (lastMidY !== null && Math.abs(midY(line.rect) - lastMidY) < line.rect.height * 0.5) current += "  " + text;
-    else {
-      if (current) out.push(current);
-      current = text;
-    }
-    lastMidY = midY(line.rect);
-  }
-  if (current) out.push(current);
-  return out.join("\n");
-}
 
 export class EditorModel {
   readonly item;
@@ -166,8 +145,10 @@ export class EditorModel {
     return intersection(insetBy(line.rect, -pad, -pad * 0.7), this.fullRect);
   }
 
+  /** Text, wie er im gespeicherten Bild steht: ohne Zensiertes und ohne Weggeschnittenes. */
   visibleText(): string {
-    return plainText(this.textLines, this.annotations.filter((a) => a.kind === "redact").map((a) => annotationRect(a)));
+    const hidden = this.annotations.filter((a) => a.kind === "redact").map((a) => annotationRect(a));
+    return visibleText(this.textLines, hidden, this.crop);
   }
 
   get fullRect(): Rect {

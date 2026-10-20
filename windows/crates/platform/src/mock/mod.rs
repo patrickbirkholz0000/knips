@@ -204,8 +204,10 @@ pub mod ocr {
     use knips_core::model::TextLine;
     use knips_core::RgbaImage;
 
-    /// Texterkennung (lokal). Verkleinert intern auf ≤ 2048 px und rechnet zurück; Zeilen in
-    /// Lesereihenfolge, `TextLine.text` = Wörter mit Leerzeichen.
+    /// Texterkennung (lokal). Bildschirmfotos werden als Ganzes auf ≤ 2048 px verkleinert; hohe oder
+    /// breite Bilder in überlappenden Kacheln erkannt (nie stärker als auf die Hälfte verkleinert,
+    /// `knips_core::ocrtiles`). Zeilen in Bildpixeln und Lesereihenfolge, `TextLine.text` = Wörter
+    /// mit Leerzeichen.
     pub fn recognize(img: &RgbaImage) -> Result<Vec<TextLine>> {
         let _ = img;
         Ok(vec![])
@@ -239,6 +241,19 @@ pub mod clipboard {
     pub fn set_image(provider: Arc<dyn ImageProvider>) -> Result<()> {
         let _ = provider;
         Ok(())
+    }
+
+    /// Wie `set_image`, aber privat: nicht im Zwischenablageverlauf (Win+V), nicht in der Cloud-
+    /// Zwischenablage, von Verlaufsprogrammen übergangen. Für das automatische Kopieren direkt nach
+    /// der Aufnahme — das Bild ist dann noch unzensiert.
+    pub fn set_image_private(provider: Arc<dyn ImageProvider>) -> Result<()> {
+        let _ = provider;
+        Ok(())
+    }
+
+    /// Ist der aktuelle Inhalt vom Verlauf und der Cloud ausgeschlossen? (Selbsttest `clipboard`)
+    pub fn is_private() -> bool {
+        false
     }
 
     pub fn set_text(text: &str) -> Result<()> {
@@ -342,10 +357,17 @@ pub mod hotkeys {
         false
     }
 
-    /// Schreibt `HKCU\Control Panel\Keyboard\PrintScreenKeyForSnippingEnabled`.
+    /// Schreibt `HKCU\Control Panel\Keyboard\PrintScreenKeyForSnippingEnabled` und vermerkt eine
+    /// Übernahme für das Deinstallationsprogramm (`HKCU\Software\Knips`).
     pub fn set_snipping_key(enabled: bool) -> Result<()> {
         let _ = enabled;
         Ok(())
+    }
+
+    /// Vermerk der Übernahme (Selbsttest `storage`): `None` = nicht übernommen, sonst der Wert von
+    /// davor (`Some(None)`: es gab keinen).
+    pub fn snipping_takeover_marker() -> Option<Option<u32>> {
+        None
     }
 }
 
@@ -375,7 +397,14 @@ pub mod shell {
         Ok(())
     }
 
-    /// In den Papierkorb.
+    /// Landet `path` beim Löschen im Papierkorb? Nein auf Netzlaufwerken, Wechseldatenträgern,
+    /// Laufwerken ohne Papierkorb und bei „Dateien sofort löschen“ — dann fragt die App vorher.
+    pub fn can_trash(path: &Path) -> bool {
+        let _ = path;
+        true
+    }
+
+    /// In den Papierkorb. Würde Windows die Datei doch endgültig löschen, fragt es vorher selbst nach.
     pub fn trash(path: &Path) -> Result<()> {
         if path.exists() {
             std::fs::remove_file(path)?;

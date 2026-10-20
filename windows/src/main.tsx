@@ -16,6 +16,7 @@ const views: Record<string, React.LazyExoticComponent<React.ComponentType<{ para
   history: lazy(() => import("./history/History")),
   settings: lazy(() => import("./settings/Settings")),
   consent: lazy(() => import("./consent/Consent")),
+  "link-confirm": lazy(() => import("./links/LinkConfirm")),
   editor: lazy(() => import("./editor/Editor")),
   video: lazy(() => import("./video/VideoEditor")),
   "selftest-render": lazy(() => import("./editor/SelftestRender")),

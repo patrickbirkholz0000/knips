@@ -42,14 +42,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          # Ganze Historie: die Build-Nummer ist wie auf dem Mac (scripts/build.sh) die Zahl der Commits.
+          fetch-depth: 0
 
-      - name: Version aus dem Tag
+      - name: Version aus dem Tag, Build-Nummer aus der Historie
         id: version
         run: |
           if ($env:TAG -match '^v(\d+\.\d+\.\d+)$') { $version = $Matches[1] }
           else { throw "Tag '$env:TAG' hat nicht die Form vX.Y.Z." }
+          $build = (git rev-list --count HEAD).Trim()
+          if (-not ($build -match '^\d+$')) { throw "Build-Nummer nicht ermittelbar: '$build'" }
           "version=$version" >> $env:GITHUB_OUTPUT
-          Write-Host "Knips $version"
+          "build=$build" >> $env:GITHUB_OUTPUT
+          Write-Host "Knips $version (Build $build)"
 
       - uses: pnpm/action-setup@v4
         with:
@@ -69,7 +74,7 @@ jobs:
           workspaces: windows
           save-if: false
 
-      # Nur für diesen Build, wird nicht eingecheckt: im Repo bleibt 0.1.0 stehen.
+      # Nur für diesen Build, wird nicht eingecheckt (im Repo steht die zuletzt eingecheckte Version).
       - name: Version in package.json, tauri.conf.json und Cargo.toml setzen
         shell: bash
         env:
@@ -138,6 +143,8 @@ jobs:
         env:
           SIGNING: ${{ steps.signing.outputs.enabled }}
           VERSION: ${{ steps.version.outputs.version }}
+          # Fest einkompiliert (option_env!), z. B. für die Nutzungsstatistik — sonst meldet Windows Build 0.
+          KNIPS_BUILD: ${{ steps.version.outputs.build }}
           AZURE_CLIENT_ID: ${{ steps.signing.outputs.enabled == 'true' && secrets.AZURE_CLIENT_ID || '' }}
           AZURE_CLIENT_SECRET: ${{ steps.signing.outputs.enabled == 'true' && secrets.AZURE_CLIENT_SECRET || '' }}
           AZURE_TENANT_ID: ${{ steps.signing.outputs.enabled == 'true' && secrets.AZURE_TENANT_ID || '' }}

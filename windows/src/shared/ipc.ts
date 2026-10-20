@@ -206,6 +206,13 @@ export const api = {
   telemetrySetConsent: (consent: boolean) => call<void>("telemetry_set_consent", { consent }),
   /** Ereignis zählen, das nur die Oberfläche sieht. Rust nimmt nur Namen aus der Erlaubt-Liste an. */
   telemetryCount: (event: "censor_manual" | "censor_smart") => call<void>("telemetry_count", { event }),
+
+  // Rückfrage vor Aufnahmen per knips://-Link (`#/link-confirm/<befehl>`)
+  /**
+   * „Aufnehmen“ (`approved`) oder „Abbrechen“; „Nicht mehr fragen“ zählt nur mit „Aufnehmen“. Gilt nur aus dem
+   * Fenster der Rückfrage. Liefert false, wenn nichts passiert ist (Schutzzeit läuft noch). Schließt das Fenster.
+   */
+  linkConfirmDecide: (approved: boolean, dontAskAgain: boolean) => call<boolean>("link_confirm_decide", { approved, dontAskAgain }),
 };
 
 // ---------------------------------------------------------------- Ereignisse

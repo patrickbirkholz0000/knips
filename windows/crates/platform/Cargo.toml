@@ -15,6 +15,12 @@ log.workspace = true
 parking_lot.workspace = true
 image.workspace = true
 
+[features]
+default = []
+# Testbild und simulierte Eingaben (`sample`, `testinput`) unter Windows — nur für Selbsttests
+# (Feature `dev` der App). Die Attrappe für andere Systeme hat beide immer.
+dev = []
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
     "Foundation",

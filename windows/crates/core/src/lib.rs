@@ -6,6 +6,7 @@ pub mod format;
 pub mod geometry;
 pub mod gifenc;
 pub mod imageops;
+pub mod links;
 pub mod model;
 pub mod redact;
 pub mod sensitive;

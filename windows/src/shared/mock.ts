@@ -35,6 +35,7 @@ export const mockSettings: Settings = {
     toggleRecording: { vk: 0x2c, mods: 4 },
   },
   launchAtLogin: true,
+  linkCaptureWithoutConfirm: false,
   editor: { tool: null, color: null, size: null, lastFrameStyle: null },
   didFirstLaunch: true,
   askedShortcutTakeover: true,
@@ -58,7 +59,7 @@ export const mockBootstrap: Bootstrap = {
     defaultSaveFolder: "C:\\Users\\Nutzer\\Pictures\\Knips",
   },
   platform: "mock",
-  version: "0.1.0",
+  version: "1.0.0",
   ocrAvailable: true,
   hevcAvailable: true,
   telemetryConsent: null,
@@ -93,6 +94,7 @@ if (!inTauri) {
     mockEmit("bootstrap-changed", { ...mockBootstrap, settings, telemetryConsent });
   });
   registerMock("telemetry_count", () => {});
+  registerMock("link_confirm_decide", () => true);
   registerMock("set_settings", ({ patch }) => {
     settings = { ...settings, ...patch };
     mockEmit("bootstrap-changed", { ...mockBootstrap, settings });

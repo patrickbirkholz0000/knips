@@ -171,6 +171,8 @@ export interface Settings {
   disabledHotkeys: HotkeyAction[];
   hotkeys: Partial<Record<HotkeyAction, KeyCombo>>;
   launchAtLogin: boolean;
+  /** knips://fullscreen, knips://last und knips://record (Start) ohne Rückfrage ausführen (Standard: aus). */
+  linkCaptureWithoutConfirm: boolean;
   editor: EditorPrefs;
   didFirstLaunch: boolean;
   askedShortcutTakeover: boolean;

@@ -20,7 +20,10 @@ mod mock;
 #[cfg(not(windows))]
 use mock as imp;
 
-pub use imp::{capture, clipboard, hotkeys, media, monitors, ocr, overlay, sample, shell, sound, system, testinput};
+pub use imp::{capture, clipboard, hotkeys, media, monitors, ocr, overlay, shell, sound, system};
+/// Testbild und simulierte Eingaben: unter Windows nur mit Feature `dev` (Selbsttests).
+#[cfg(any(feature = "dev", not(windows)))]
+pub use imp::{sample, testinput};
 pub use types::*;
 
 /// `true` unter Windows, `false` in der Attrappe.

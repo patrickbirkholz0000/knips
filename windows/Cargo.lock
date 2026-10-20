@@ -2088,7 +2088,7 @@ dependencies = [
 
 [[package]]
 name = "knips"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2115,7 +2115,7 @@ dependencies = [
 
 [[package]]
 name = "knips-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2131,7 +2131,7 @@ dependencies = [
 
 [[package]]
 name = "knips-platform"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "image",

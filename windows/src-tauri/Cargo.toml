@@ -45,4 +45,4 @@ default = []
 # bei `cargo build` angeben).
 custom-protocol = ["tauri/custom-protocol"]
 # Selbsttests und Test-Befehle (wie KNIPS_DEV auf dem Mac). Weitergabe-Builds ohne.
-dev = []
+dev = ["knips-platform/dev"]

@@ -65,7 +65,7 @@ export default function Settings({ params }: { params: string[]; query?: URLSear
             {(p.id === "shortcuts" || p.id === "export") && <div className="st-sep" />}
           </div>
         ))}
-        <div className="st-ver">Version {boot?.version ?? "0.1.0"}</div>
+        <div className="st-ver">Version {boot?.version ?? "1.0.0"}</div>
       </aside>
       <div className="st-page" ref={pageRef}>
         <div className="st-head">
@@ -120,6 +120,14 @@ function General({ boot: { settings: s } }: { boot: Bootstrap }) {
       </Card>
       <Card title="Start">
         <Row title="Mit Windows starten"><Switch on={s.launchAtLogin} onChange={(v) => set({ launchAtLogin: v })} /></Row>
+      </Card>
+      <Card
+        title="Befehle per Link"
+        footer="Sonst fragt Knips nach, bevor knips://fullscreen, knips://last oder knips://record aufnehmen – solche Links kann jede App und jede Webseite öffnen."
+      >
+        <Row title="Aufnahmen per Link ohne Rückfrage">
+          <Switch on={s.linkCaptureWithoutConfirm} onChange={(v) => set({ linkCaptureWithoutConfirm: v })} />
+        </Row>
       </Card>
     </>
   );
@@ -429,7 +437,7 @@ function About({ boot }: { boot: Bootstrap }) {
         <Info1 text="Bildschirmvideos als MP4 oder GIF" /><Div />
         <Info1 text="Text aus Screenshots kopieren" />
       </Card>
-      <Card title="Für Raycast & Co.">
+      <Card title="Für Raycast & Co." footer="Bildschirm, letzter Bereich und Videostart fragen vorher nach (Allgemein → Befehle per Link).">
         <Row title="Befehle"><span className="st-mono">knips://area · window · fullscreen · record · text · last · menu</span></Row>
       </Card>
       <Card title="Lizenz">

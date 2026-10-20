@@ -682,6 +682,7 @@ pub fn simulate(combo: KeyCombo) {
 }
 
 /// Umschalt drücken/loslassen wie von der Tastatur (Selbsttest: Quadrat beim Ziehen).
+#[cfg(feature = "dev")]
 pub(crate) fn press_modifier(down: bool) {
     let input = key_input_with(VK_SHIFT.0, !down, 0);
     // SAFETY: ein gültiges INPUT.

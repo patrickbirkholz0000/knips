@@ -8,6 +8,7 @@ mod coordinator;
 mod editor;
 mod hotkeys;
 mod hud;
+mod links;
 mod menu;
 mod paths;
 mod pins;
@@ -135,8 +136,11 @@ fn run(args: Vec<String>) {
             commands::video_cancel,
             commands::telemetry_set_consent,
             commands::telemetry_count,
+            commands::link_confirm_decide,
             #[cfg(feature = "dev")]
             selftest::selftest_report,
+            #[cfg(feature = "dev")]
+            selftest::selftest_probe,
         ])
         .build(tauri::generate_context!())
         .expect("Knips konnte nicht starten");

@@ -387,8 +387,14 @@ pub fn show_history(app: &AppHandle) {
     }
 }
 
+/// Nur die Projektseite, der Statistik-Server und Seiten der Windows-Einstellungen
+/// (`knips_core::links::allowed_external_url`) — nie beliebige Adressen oder Programme.
 #[tauri::command]
 pub fn open_url(url: String) -> Res<()> {
+    if !knips_core::links::allowed_external_url(&url) {
+        log::warn!("Adresse nicht erlaubt: {url}");
+        return Err("Diese Adresse öffnet Knips nicht.".into());
+    }
     knips_platform::shell::open_url(&url).map_err(err)
 }
 
@@ -645,4 +651,13 @@ pub fn telemetry_set_consent(app: AppHandle, consent: bool) {
 #[tauri::command]
 pub fn telemetry_count(event: String) {
     count(&event);
+}
+
+// ------------------------------------------------------------------ knips://-Links
+
+/// Antwort aus dem Fenster „Aufnahme per Link?“. Zählt nur aus genau diesem Fenster; `false`, wenn
+/// nichts passiert ist (Schutzzeit läuft noch).
+#[tauri::command]
+pub fn link_confirm_decide(window: WebviewWindow, approved: bool, dont_ask_again: bool) -> bool {
+    knips().links.decide(window.label(), approved, dont_ask_again)
 }

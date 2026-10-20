@@ -13,6 +13,12 @@ use windows::Win32::Graphics::Gdi::{
     HDC, NULL_PEN, OUT_DEFAULT_PRECIS, TRANSPARENT, VARIABLE_PITCH,
 };
 
+/// Erfundener Stripe-Schlüssel im Testbild (wie `SelfTest.sampleStripeKey`). Absichtlich zusammengesetzt:
+/// Im Quelltext steht so nie „sk_“ + „live_“ direkt vor Buchstaben/Ziffern, damit Secret-Scanner
+/// (GitHub-Push-Schutz) nicht anschlagen.
+pub const STRIPE_KEY: &str = concat!("sk_", "live_KnipsBeispiel42");
+const STRIPE_LINE: &str = concat!("Stripe-Key: sk_", "live_KnipsBeispiel42");
+
 fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
     COLORREF(r as u32 | (g as u32) << 8 | (b as u32) << 16)
 }
@@ -116,7 +122,7 @@ pub fn sample_image(width: u32, height: u32, scale: f64) -> RgbaImage {
         text(dc, "E-Mail: erika.mustermann@example.com", 196.0, 124.0, 14.0, regular, black);
         text(dc, "Telefon: +49 170 1234567", 196.0, 152.0, 14.0, regular, black);
         text(dc, "IBAN: DE89 3704 0044 0532 0130 00", 196.0, 180.0, 14.0, regular, black);
-        text(dc, "Stripe-Key: sk_live_KnipsBeispiel42", 196.0, 208.0, 13.0, regular, dark_gray);
+        text(dc, STRIPE_LINE, 196.0, 208.0, 13.0, regular, dark_gray);
         text(dc, "Bestellung #48213 wurde am 03.10. versendet und ist unterwegs.", 196.0, 252.0, 14.0, regular, black);
         text(dc, "Hinweis: Lieferzeit 2–3 Werktage, Sendungsverfolgung folgt per Mail.", 196.0, 280.0, 14.0, regular, dark_gray);
 

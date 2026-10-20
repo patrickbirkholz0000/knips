@@ -221,6 +221,9 @@ pub struct Settings {
     pub disabled_hotkeys: BTreeSet<HotkeyAction>,
     pub hotkeys: BTreeMap<HotkeyAction, KeyCombo>,
     pub launch_at_login: bool,
+    /// knips://fullscreen, knips://last und knips://record (Start) ohne Rückfrage ausführen (standardmäßig
+    /// aus, weil jede App und jede Webseite solche Links öffnen kann — siehe `links`).
+    pub link_capture_without_confirm: bool,
     pub editor: EditorPrefs,
     // Interne Merker (Mac: einzelne UserDefaults-Schlüssel).
     pub did_first_launch: bool,
@@ -303,6 +306,7 @@ impl Default for Settings {
             disabled_hotkeys: BTreeSet::new(),
             hotkeys: Settings::default_hotkeys(),
             launch_at_login: false,
+            link_capture_without_confirm: false,
             editor: EditorPrefs::default(),
             did_first_launch: false,
             asked_shortcut_takeover: false,
@@ -331,5 +335,8 @@ mod tests {
         // Fehlende Felder → Standardwerte
         let partial: Settings = serde_json::from_str(r#"{"playSound": false}"#).unwrap();
         assert!(!partial.play_sound && partial.copy_to_clipboard);
+        // Links nehmen ohne Einstellung nie ohne Rückfrage auf, auch mit alter settings.json ohne das Feld.
+        assert!(!s.link_capture_without_confirm && !partial.link_capture_without_confirm);
+        assert!(json.contains(r#""linkCaptureWithoutConfirm":false"#));
     }
 }

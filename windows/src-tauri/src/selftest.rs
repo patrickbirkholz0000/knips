@@ -5,30 +5,33 @@
 //! Ohne Fenster: detect, output, selection, capture, record [s], track, video, perf, hotkeys
 //! (simulierte Tastendrücke), clipboard (echte Zwischenablage, nur für die CI), telemetry
 //! (Nutzungsstatistik gegen einen lokalen Server auf 127.0.0.1).
-//! Mit Fenstern (startet die App unsichtbar für den Nutzer, fotografiert nur eigene Fenster): ui, render.
+//! Mit Fenstern (startet die App unsichtbar für den Nutzer, fotografiert nur eigene Fenster): ui, render,
+//! links (Rückfrage vor knips://-Aufnahmen; Aufnahmen sind durch eine Liste ersetzt, nimmt nie auf).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use knips_core::geometry::{IRect, Rect};
+use knips_core::links::Immediate;
 use knips_core::model::{Annotation, AnnotationKind, ImageDocument, ImageFormat, RedactStyle, SensitiveKind, VideoDocument, VideoRedaction};
+use knips_core::settings::HotkeyAction;
 use knips_core::{imageops, sensitive, textlayout, tracker, videodetect, RgbaImage};
 use knips_platform::media::{self, FrameReader};
 use knips_platform::overlay::{self, Purpose};
 use knips_platform::{capture, monitors, ocr, sample, Frozen, Monitor, WindowInfo};
 use serde::Deserialize;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, WebviewWindow};
 
 use crate::promise::output_promise;
 use crate::settings::SettingsStore;
 use crate::store::Store;
 use crate::wm;
 
-const WINDOW_TESTS: [&str; 2] = ["ui", "render"];
+const WINDOW_TESTS: [&str; 3] = ["ui", "render", "links"];
 
 /// `Some(code)`: Test ist durch. `None`: Fenstertest — die App startet normal und
 /// `after_setup` übernimmt.
@@ -135,16 +138,26 @@ fn detect(out: &Path) -> Result<()> {
             bail!("{want:?} nicht gefunden");
         }
     }
-    // Der ganze Schlüssel muss verdeckt sein — auch wenn die Texterkennung seinen Anfang verliert:
-    // vom Bezeichner „Stripe-Key:“ bis zum Zeilenende.
+    // Der ganze Schlüssel muss verdeckt sein — auch wenn die Texterkennung seinen Anfang verliert (dann
+    // hängt der Fund am Bezeichner „Stripe-Key:“): vom ersten Wort nach dem Bezeichner bis zum Zeilenende.
     let line = lines.iter().find(|l| l.text.contains("Stripe")).context("Zeile mit dem Stripe-Key fehlt")?;
-    let label_end = line.words.first().map(|w| w.rect.max_x()).unwrap_or(0.0);
+    let label = line.words.iter().position(|w| w.text.ends_with(':')).unwrap_or(0);
+    let key_start = line.words.get(label + 1).map(|w| w.rect.x).unwrap_or(line.rect.x);
     let covered = findings
         .iter()
-        .any(|f| f.kind == SensitiveKind::Secret && f.rect.x <= label_end + 1.0 && f.rect.max_x() >= line.rect.max_x() - 2.0);
+        .any(|f| f.kind == SensitiveKind::Secret && f.rect.x <= key_start + 1.0 && f.rect.max_x() >= line.rect.max_x() - 2.0);
     if !covered {
         bail!("Stripe-Key nicht vollständig verdeckt");
     }
+    // Muster ohne Texterkennung (wie `SelfTest.detect` auf dem Mac): erfundener Schlüssel und E-Mail.
+    let kinds_of = |s: &str| sensitive::matches(s, &all_kinds()).into_iter().map(|m| m.0).collect::<Vec<_>>();
+    if kinds_of(sample::STRIPE_KEY) != [SensitiveKind::Secret] {
+        bail!("Muster: Stripe-Key „{}“ nicht erkannt", sample::STRIPE_KEY);
+    }
+    if kinds_of("kontakt@example.com") != [SensitiveKind::Email] {
+        bail!("Muster: E-Mail nicht erkannt");
+    }
+    println!("   ✓ Stripe-Key „{}“ verdeckt, Muster für Schlüssel und E-Mail greifen", sample::STRIPE_KEY);
     Ok(())
 }
 
@@ -894,6 +907,7 @@ pub fn after_setup(app: &AppHandle) {
         let result = match test.as_str() {
             "ui" => ui(&app, &out),
             "render" => render(&app, &out),
+            "links" => links(&app, &out),
             _ => Ok(()),
         };
         let code = match result {
@@ -967,9 +981,9 @@ fn ui(app: &AppHandle, out: &Path) -> Result<()> {
         std::thread::sleep(Duration::from_millis(900));
         check(&format!("einstellungen-{pane}"), shoot(app, "settings", out, &format!("einstellungen-{pane}.png")));
     }
-    // Datenschutz und Über Knips zusätzlich nach unten gescrollt (Lizenz, „So arbeitet Knips“) —
-    // der CI-Bildschirm ist nur 1024×768, ein höheres Fenster ginge nicht.
-    for pane in ["privacy", "about"] {
+    // Allgemein, Datenschutz und Über Knips zusätzlich nach unten gescrollt („Befehle per Link“, Lizenz,
+    // „So arbeitet Knips“) — der CI-Bildschirm ist nur 1024×768, ein höheres Fenster ginge nicht.
+    for pane in ["general", "privacy", "about"] {
         crate::commands::show_settings(app, Some(pane.into()));
         std::thread::sleep(Duration::from_millis(900));
         if let Some(w) = app.get_webview_window("settings") {
@@ -991,6 +1005,24 @@ fn ui(app: &AppHandle, out: &Path) -> Result<()> {
         Ok(())
     };
     check("statistik-sandbox", sandbox_off);
+
+    // Rückfrage vor einer Aufnahme per knips://-Link. Ausführen ist ersetzt: nimmt nie auf.
+    k.links.set_test_hooks(Some((Arc::new(|_| {}), Arc::new(|| false))));
+    let saved = k.settings.get().link_capture_without_confirm;
+    k.settings.update(|s| s.link_capture_without_confirm = false);
+    crate::app::handle_url("knips://fullscreen");
+    let prompt = wait_prompt(app, Immediate::Fullscreen).and_then(|(label, _)| {
+        std::thread::sleep(Duration::from_millis(900)); // „Aufnehmen“ nach der Schutzzeit
+        shoot(app, &label, out, "link-rueckfrage.png").map(|_| label)
+    });
+    match prompt {
+        Ok(label) => {
+            k.links.decide(&label, false, false);
+        }
+        Err(err) => check("link-rueckfrage", Err(err)),
+    }
+    k.links.set_test_hooks(None);
+    k.settings.update(|s| s.link_capture_without_confirm = saved);
 
     // Verlauf
     crate::commands::show_history(app);
@@ -1027,6 +1059,249 @@ fn ui(app: &AppHandle, out: &Path) -> Result<()> {
     }
     if !failures.is_empty() {
         bail!("Fenster ohne Bild: {}", failures.join(", "));
+    }
+    Ok(())
+}
+
+// ------------------------------------------------------------------ knips://-Links (links)
+
+static PROBES: parking_lot::Mutex<BTreeMap<u32, String>> = parking_lot::Mutex::new(BTreeMap::new());
+static PROBE_ID: AtomicU32 = AtomicU32::new(1);
+
+/// Antwort auf `probe` aus einem Fenster.
+#[tauri::command]
+pub fn selftest_probe(id: u32, value: String) {
+    PROBES.lock().insert(id, value);
+}
+
+/// Wertet den JavaScript-Ausdruck `expr` im Fenster aus und liefert das Ergebnis als Text.
+fn probe(window: &WebviewWindow, expr: &str, timeout: Duration) -> Result<String> {
+    let id = PROBE_ID.fetch_add(1, Ordering::SeqCst);
+    let send = "window.__TAURI_INTERNALS__.invoke('selftest_probe'";
+    window.eval(format!(
+        "Promise.resolve().then(() => ({expr})).then(v => {send}, {{ id: {id}, value: String(v) }}), e => {send}, {{ id: {id}, value: 'Fehler: ' + e }}))"
+    ))?;
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if let Some(value) = PROBES.lock().remove(&id) {
+            return Ok(value);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    bail!("Fenster {} antwortet nicht", window.label())
+}
+
+/// Wartet, bis die Rückfrage für `kind` offen und ihre Oberfläche bereit ist.
+fn wait_prompt(app: &AppHandle, kind: Immediate) -> Result<(String, WebviewWindow)> {
+    let k = crate::app::knips();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        match k.links.pending() {
+            Some((label, open)) if open == kind => {
+                if let Some(window) = app.get_webview_window(&label) {
+                    let ready = probe(&window, "document.querySelector('[data-act=confirm]') ? 'bereit' : 'nein'", Duration::from_millis(400));
+                    if ready.ok().as_deref() == Some("bereit") {
+                        return Ok((label, window));
+                    }
+                }
+            }
+            Some((_, open)) => bail!("Rückfrage für knips://{} statt knips://{}", open.name(), kind.name()),
+            None => {}
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    bail!("keine Rückfrage für knips://{}", kind.name())
+}
+
+/// Wartet, bis die Rückfrage `label` erledigt ist.
+fn wait_resolved(label: &str) -> bool {
+    let k = crate::app::knips();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if k.links.pending().map(|(l, _)| l) != Some(label.to_string()) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    false
+}
+
+/// Rückfrage vor sofort aufnehmenden knips://-Links (Vollbild, letzter Bereich, Videostart) — wie
+/// `SelfTest.links` auf dem Mac: ohne Einstellung erst Rückfrage, Esc/Schließen/Abbrechen = nichts,
+/// Aufnehmen erst nach der Schutzzeit (in Rust und in der Oberfläche), „Nicht mehr fragen“ nur mit
+/// Aufnehmen, Stoppen und eigene Wege direkt; mit Einstellung direkt. Ausführen ist durch eine Liste
+/// ersetzt: Es wird nie aufgenommen und nie das Auswahl-Overlay geöffnet.
+fn links(app: &AppHandle, out: &Path) -> Result<()> {
+    let k = crate::app::knips();
+    let calls: Arc<parking_lot::Mutex<Vec<HotkeyAction>>> = Arc::default();
+    let recording = Arc::new(AtomicBool::new(false));
+    let (c, r) = (calls.clone(), recording.clone());
+    k.links.set_test_hooks(Some((Arc::new(move |a| c.lock().push(a)), Arc::new(move || r.load(Ordering::SeqCst)))));
+    let saved = k.settings.get().link_capture_without_confirm;
+    let result = links_steps(app, out, &calls, &recording);
+    k.links.set_test_hooks(None);
+    k.settings.update(|s| s.link_capture_without_confirm = saved);
+    result
+}
+
+fn links_steps(app: &AppHandle, out: &Path, calls: &parking_lot::Mutex<Vec<HotkeyAction>>, recording: &AtomicBool) -> Result<()> {
+    use HotkeyAction as A;
+    let k = crate::app::knips();
+    let link = |command: &str| crate::app::handle_url(&format!("knips://{command}"));
+    // Bestätigtes läuft 150 ms verzögert (Rückfrage erst ausblenden) — kurz warten, dann abholen.
+    let take = || {
+        std::thread::sleep(Duration::from_millis(400));
+        std::mem::take(&mut *calls.lock())
+    };
+    let setting = || k.settings.get().link_capture_without_confirm;
+    let armed = || std::thread::sleep(knips_core::links::ARM_DELAY + Duration::from_millis(300));
+    // Knöpfe und Tasten schließen das Fenster — erst antworten, dann (kurz danach) auslösen.
+    let click = |w: &WebviewWindow, act: &str| {
+        probe(w, &format!("(setTimeout(() => document.querySelector('[data-act={act}]').click(), 50), 'ok')"), Duration::from_secs(3))
+    };
+    let key = |w: &WebviewWindow, name: &str| {
+        probe(
+            w,
+            &format!("(setTimeout(() => window.dispatchEvent(new KeyboardEvent('keydown', {{ key: '{name}', bubbles: true }})), 50), 'ok')"),
+            Duration::from_secs(3),
+        )
+    };
+    // Häkchen „Nicht mehr fragen“ setzen; Zustand nach dem Neuzeichnen zurückmelden.
+    let tick = |w: &WebviewWindow| {
+        probe(
+            w,
+            "new Promise(r => { const c = document.querySelector('[data-act=dont-ask]'); c.click(); setTimeout(() => r(document.querySelector('[data-act=dont-ask]').checked), 100); })",
+            Duration::from_secs(3),
+        )
+    };
+    let mut failed: Vec<String> = vec![];
+    let mut check = |name: &str, ok: bool, seen: &[A]| {
+        let open = k.links.pending().map(|(_, kind)| format!(", Rückfrage {} offen", kind.name())).unwrap_or_default();
+        let seen = if seen.is_empty() { "nichts".to_string() } else { seen.iter().map(|a| format!("{a:?}")).collect::<Vec<_>>().join(", ") };
+        println!("   {} {name} → {seen}{open}", if ok { "ok    " } else { "FALSCH" });
+        if !ok {
+            failed.push(name.to_string());
+        }
+    };
+
+    k.settings.update(|s| s.link_capture_without_confirm = false);
+    println!("Einstellung aus (Standard):");
+    link("fullscreen");
+    let (full, full_w) = wait_prompt(app, Immediate::Fullscreen)?;
+    let seen = take();
+    check("fullscreen fragt nach, nimmt nichts auf", seen.is_empty(), &seen);
+    shoot(app, &full, out, "link-rueckfrage-fullscreen.png")?;
+    link("last");
+    let seen = take();
+    check("weiterer Link bei offener Rückfrage verfällt", seen.is_empty() && k.links.pending().map(|p| p.0) == Some(full.clone()), &seen);
+    key(&full_w, "Escape")?;
+    let resolved = wait_resolved(&full);
+    let seen = take();
+    check("Esc = Abbrechen", resolved && seen.is_empty() && k.links.pending().is_none(), &seen);
+
+    link("last");
+    let (last, _) = k.links.pending().context("keine Rückfrage für knips://last")?;
+    let early = k.links.decide(&last, true, false);
+    let seen = take();
+    check("Aufnehmen vor der Schutzzeit wirkt nicht (Rust)", !early && k.links.pending().map(|p| p.0) == Some(last.clone()) && seen.is_empty(), &seen);
+    let (_, last_w) = wait_prompt(app, Immediate::Last)?;
+    // Oberfläche: ⏎ sofort nach dem Öffnen — nur prüfbar, solange die Schutzzeit noch läuft.
+    let pressed = probe(
+        &last_w,
+        "(() => { const b = document.querySelector('[data-act=confirm]'); if (!b.disabled) return 'scharf'; \
+         window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); return 'gedrückt'; })()",
+        Duration::from_secs(3),
+    )?;
+    if pressed == "gedrückt" {
+        let seen = take();
+        check("⏎ vor der Schutzzeit bestätigt nichts (Oberfläche)", k.links.pending().map(|p| p.0) == Some(last.clone()) && seen.is_empty(), &seen);
+    } else {
+        println!("   (Schutzzeit schon abgelaufen, als die Oberfläche bereit war — ⏎-Prüfung der Oberfläche übersprungen)");
+    }
+    armed();
+    key(&last_w, "Enter")?;
+    let resolved = wait_resolved(&last);
+    let seen = take();
+    check("⏎ = Aufnehmen → letzter Bereich", resolved && seen == [A::CaptureLastArea] && !setting(), &seen);
+
+    link("record");
+    let (record, record_w) = wait_prompt(app, Immediate::Record)?;
+    armed();
+    shoot(app, &record, out, "link-rueckfrage-record.png")?;
+    let ticked = tick(&record_w)?;
+    click(&record_w, "cancel")?;
+    let resolved = wait_resolved(&record);
+    let seen = take();
+    check("Abbrechen mit „Nicht mehr fragen“ ändert nichts", ticked == "true" && resolved && seen.is_empty() && !setting(), &seen);
+
+    link("fullscreen");
+    let (closing, closing_w) = wait_prompt(app, Immediate::Fullscreen)?;
+    closing_w.close()?;
+    let resolved = wait_resolved(&closing);
+    let seen = take();
+    check("Fenster schließen = Abbrechen", resolved && seen.is_empty(), &seen);
+
+    recording.store(true, Ordering::SeqCst);
+    link("record");
+    let seen = take();
+    check("record stoppt laufende Aufnahme ohne Rückfrage", seen == [A::ToggleRecording] && k.links.pending().is_none(), &seen);
+    recording.store(false, Ordering::SeqCst);
+    link("record");
+    let (late, late_w) = wait_prompt(app, Immediate::Record)?;
+    recording.store(true, Ordering::SeqCst); // inzwischen per Kürzel gestartet
+    armed();
+    click(&late_w, "confirm")?;
+    let resolved = wait_resolved(&late);
+    let seen = take();
+    check("Bestätigen stoppt eine inzwischen gestartete Aufnahme nicht", resolved && seen.is_empty(), &seen);
+    recording.store(false, Ordering::SeqCst);
+
+    for (command, action) in [("area", A::CaptureArea), ("window", A::CaptureWindow), ("text", A::CaptureText), ("scroll", A::CaptureScrolling), ("pin", A::PinClipboard)] {
+        link(command);
+        let seen = take();
+        check(&format!("{command} direkt (nur Oberfläche)"), seen == [action] && k.links.pending().is_none(), &seen);
+    }
+    k.links.run("knips://fullscreen", false);
+    let seen = take();
+    check("eigener Weg (Selbsttest) ohne Rückfrage", seen == [A::CaptureFullscreen] && k.links.pending().is_none(), &seen);
+
+    link("fullscreen");
+    let (remember, remember_w) = wait_prompt(app, Immediate::Fullscreen)?;
+    let ticked = tick(&remember_w)?;
+    armed();
+    click(&remember_w, "confirm")?;
+    let resolved = wait_resolved(&remember);
+    let seen = take();
+    let stored = std::fs::read_to_string(k.settings.path()).unwrap_or_default().contains("\"linkCaptureWithoutConfirm\": true");
+    check("Aufnehmen mit „Nicht mehr fragen“ schaltet die Einstellung ein", ticked == "true" && resolved && seen == [A::CaptureFullscreen] && setting() && stored, &seen);
+
+    println!("Einstellung an:");
+    for (command, action) in [("fullscreen", A::CaptureFullscreen), ("last", A::CaptureLastArea), ("record", A::ToggleRecording)] {
+        link(command);
+        let seen = take();
+        check(&format!("{command} direkt"), seen == [action] && k.links.pending().is_none(), &seen);
+    }
+
+    // Schalter unter Einstellungen → Allgemein → „Befehle per Link“
+    k.settings.update(|s| s.link_capture_without_confirm = false);
+    k.broadcast_bootstrap();
+    crate::commands::show_settings(app, Some("general".into()));
+    std::thread::sleep(Duration::from_millis(1200));
+    let settings_w = app.get_webview_window("settings").context("Einstellungen fehlen")?;
+    let switch = "[...document.querySelectorAll('.st-row')].find(r => r.textContent.includes('Aufnahmen per Link ohne Rückfrage'))?.querySelector('[role=switch]')";
+    let found = probe(&settings_w, &format!("(() => {{ const s = {switch}; if (!s) return 'fehlt'; s.scrollIntoView({{ block: 'center' }}); return s.getAttribute('aria-checked'); }})()"), Duration::from_secs(3))?;
+    std::thread::sleep(Duration::from_millis(400));
+    shoot(app, "settings", out, "link-einstellung-allgemein.png")?;
+    probe(&settings_w, &format!("({switch}.click(), 'ok')"), Duration::from_secs(3))?;
+    std::thread::sleep(Duration::from_millis(500));
+    let on = setting();
+    probe(&settings_w, &format!("({switch}.click(), 'ok')"), Duration::from_secs(3))?;
+    std::thread::sleep(Duration::from_millis(500));
+    check("Schalter in Allgemein (aus → an → aus)", found == "false" && on && !setting(), &[]);
+    let _ = settings_w.hide();
+
+    if !failed.is_empty() {
+        bail!("Link-Rückfrage falsch: {}", failed.join(", "));
     }
     Ok(())
 }

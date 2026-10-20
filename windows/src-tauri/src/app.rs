@@ -12,6 +12,7 @@ use crate::cards::Cards;
 use crate::coordinator::Coordinator;
 use crate::editor::Editors;
 use crate::hud::Hud;
+use crate::links::Links;
 use crate::pins::Pins;
 use crate::recording::Recording;
 use crate::scroll::Scroll;
@@ -34,6 +35,8 @@ pub struct Knips {
     pub editors: Editors,
     pub video: VideoJobs,
     pub telemetry: Arc<Telemetry>,
+    /// knips://-Befehle mit Rückfrage vor sofortigen Aufnahmen.
+    pub links: Links,
     /// Kürzel, die nicht registriert werden konnten.
     pub hotkey_failures: Mutex<Vec<HotkeyAction>>,
     ocr_available: OnceLock<bool>,
@@ -155,6 +158,7 @@ pub fn setup(app: &AppHandle) -> anyhow::Result<()> {
         editors: Editors::default(),
         video: VideoJobs::default(),
         telemetry: telemetry.clone(),
+        links: Links::default(),
         hotkey_failures: Mutex::new(vec![]),
         ocr_available: OnceLock::new(),
         hevc_available: OnceLock::new(),
@@ -213,37 +217,22 @@ pub fn setup(app: &AppHandle) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// URL-Befehle `knips://area|window|fullscreen|record|last|text|scroll|pin|menu|history|settings`.
+/// URL-Befehle `knips://area|window|fullscreen|record|last|text|scroll|pin|menu|history|settings` — immer
+/// von außen (Deep Link, zweiter Start, Startargument). Sofort aufnehmende Befehle fragen vorher nach
+/// (`links.rs`).
 pub fn handle_url(url: &str) {
-    let command = url.trim_start_matches("knips://").trim_matches('/').split(['/', '?']).next().unwrap_or("");
     let k = knips();
-    let action = match command {
-        "area" => Some(HotkeyAction::CaptureArea),
-        "window" => Some(HotkeyAction::CaptureWindow),
-        "fullscreen" => Some(HotkeyAction::CaptureFullscreen),
-        "record" => Some(HotkeyAction::ToggleRecording),
-        "pin" => Some(HotkeyAction::PinClipboard),
-        "last" => Some(HotkeyAction::CaptureLastArea),
-        "text" => Some(HotkeyAction::CaptureText),
-        "scroll" => Some(HotkeyAction::CaptureScrolling),
-        _ => None,
-    };
-    if let Some(action) = action {
-        k.coordinator.perform(action);
+    if k.links.run(url, true) {
         return;
     }
-    match command {
-        "settings" => crate::commands::show_settings(&k.app, None),
-        "menu" => crate::menu::toggle(&k.app, None),
-        "history" => crate::commands::show_history(&k.app),
-        _ => {
-            #[cfg(feature = "dev")]
-            if crate::selftest::handle_debug_command(command) {
-                return;
-            }
-            log::info!("Unbekannter Befehl: {url}");
+    #[cfg(feature = "dev")]
+    {
+        let command = url.trim_start_matches("knips://").trim_matches('/').split(['/', '?']).next().unwrap_or("");
+        if crate::selftest::handle_debug_command(command) {
+            return;
         }
     }
+    log::info!("Unbekannter Befehl: {url}");
 }
 
 /// Fenster eines Editors/Videos usw. ist zu → Zustand aufräumen.
@@ -257,6 +246,9 @@ pub fn on_window_destroyed(label: &str) {
     }
     if let Some(id) = label.strip_prefix("video-") {
         k.video.cancel(id);
+    }
+    if label.starts_with(crate::links::LABEL_PREFIX) {
+        k.links.window_destroyed(label);
     }
 }
 

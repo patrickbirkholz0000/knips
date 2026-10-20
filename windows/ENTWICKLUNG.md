@@ -1,6 +1,6 @@
 # Knips für Windows
 
-Windows-Fassung von Knips, 1:1 nach der Mac-App in `../Sources/Knips/`.
+Windows-Fassung von Knips, 1:1 nach der Mac-App in `../Sources/Knips/`. Überblick und Mac-Fassung: `../docs/ENTWICKLUNG.md`.
 Begonnen 12.10.2026 auf dem Mac, ohne Windows-Rechner — geprüft wird auf echtem Windows über die
 GitHub-CI (`.github/workflows/windows.yml`, Artefakt „knips-windows“ mit Selbsttest-Bildern und Installer).
 
@@ -58,7 +58,8 @@ Alle zusammen: `scripts/selftest.ps1` (macht die CI).
 | `clipboard` | echte Zwischenablage: Bild verzögert anbieten (PNG/JPEG) und zurücklesen — nur für die CI |
 | `telemetry` | Nutzungsstatistik gegen einen lokalen Server (127.0.0.1): in Sandbox/CI aus, ohne Zustimmung nichts, Zustimmung → Ereignisse → Senden (Nutzlast, Erlaubt-Liste, Deckel 10000) → Zähler zurückgesetzt, Fehler behält Zähler, Widerruf löscht Kennung + Zähler; Nutzlast als `telemetry-payload.json` |
 | `render` | Renderer der Oberfläche — gleiche Dokumente wie `SelfTest.render` auf dem Mac (Vergleich: `tests/reference/mac-render-*.png`) |
-| `ui` | alle Fenster mit Beispieldaten, je ein Bild (Vergleich: `tests/reference/mac-ui/`), auch `einwilligung.png` und Datenschutz/Über Knips nach unten gescrollt (`…-unten.png`) |
+| `ui` | alle Fenster mit Beispieldaten, je ein Bild (Vergleich: `tests/reference/mac-ui/`), auch `einwilligung.png`, `link-rueckfrage.png` und Allgemein/Datenschutz/Über Knips nach unten gescrollt (`…-unten.png`) |
+| `links` | Rückfrage vor knips://fullscreen/last/record (wie `links` auf dem Mac): ohne Einstellung erst Rückfrage, weiterer Link verfällt, Esc/Schließen/Abbrechen = nichts, Aufnehmen erst nach der Schutzzeit (Rust und Oberfläche), „Nicht mehr fragen“ nur mit Aufnehmen, Stoppen und eigener Weg direkt; mit Einstellung direkt; Schalter in Allgemein. Ausführen ist durch eine Liste ersetzt, nimmt nie auf. Bilder: `link-rueckfrage-*.png`, `link-einstellung-allgemein.png` |
 
 ## Nutzungsstatistik und Lizenz
 
@@ -76,6 +77,23 @@ Gezählt wird, wo die Aktion fertig ist: `capture_*` (coordinator.rs, scroll.rs)
 (Editor über `telemetry_count`), `export_png/jpeg` (Speichern im Editor), `export_mp4` (Video-Export mit
 Änderungen), `export_gif`, `copy_image`/`copy_text`/`pin`/`drag_out` (Karten, Editor, Pins),
 `history_open`, `settings_open`, `app_launch`.
+
+## Befehle per Link und Sicherheit
+
+`knips://area|window|fullscreen|record|last|text|scroll|pin|menu|history|settings` kommen über Deep Link,
+zweiten Start oder Startargument immer als „von außen“ (`app::handle_url` → `links.rs`, Regeln in
+`knips_core::links`). Was sofort aufnimmt — `fullscreen`, `last`, `record` (nur Start) — fragt erst nach:
+Fenster „Aufnahme per Link?“ (`#/link-confirm/<befehl>`, Label `link-confirm-<n>`, schwebend, Texte wie auf
+dem Mac); „Aufnehmen“ (⏎) wirkt erst nach 0,6 s (Oberfläche und Rust prüfen), „Abbrechen“/Esc/Schließen
+verwirft, „Nicht mehr fragen“ gilt nur mit „Aufnehmen“. Höchstens eine Rückfrage zur Zeit, weitere Links
+verfallen solange. Einstellungen → Allgemein → „Aufnahmen per Link ohne Rückfrage“
+(`linkCaptureWithoutConfirm`, Standard aus). Kürzel, Menü-Panel, Taskleisten-Symbol und Selbsttests rufen
+`Coordinator::perform` direkt auf, ohne Rückfrage; Stoppen einer Aufnahme läuft auch per Link direkt.
+
+`open_url` öffnet nur `https://github.com/patrickbirkholz0000/knips…`, `https://knips.velno.ai…` und
+`ms-settings:…` (`knips_core::links::allowed_external_url`). CSP in `tauri.conf.json`: Skripte nur `'self'`,
+Bilder/Videos zusätzlich Asset-Protokoll, `data:`, `blob:`; Verbindungen nur IPC. Testbild und simulierte
+Eingaben (`sample`, `testinput`) gibt es unter Windows nur mit Feature `dev`.
 
 ## Kürzel (Windows-Standard)
 
@@ -106,7 +124,10 @@ Ziehen aus den Karten in andere Apps, Einfügen in fremde Apps, mehrere Monitore
   Encoder deshalb mit `CODECAPI_AVEncMPVDefaultBPictureCount = 0`; der Leser zählt das erste Bild als 0.
 - Graphics Capture lehnt die rahmenlosen, nicht aktivierbaren Leisten (`WS_EX_NOACTIVATE`) mit
   E_INVALIDARG ab — `capture::own_window_image` schneidet sie dann aus dem Bildschirmbild.
-- Windows-Texterkennung verliert bei „sk_live_51…“ den Anfang (erst 3× vergrößert vollständig);
+- Windows-Texterkennung verliert bei „sk_live_…“-Schlüsseln gern den Anfang (erst 3× vergrößert vollständig);
   „…-Key:“/„Schlüssel:“ zählen deshalb als Bezeichner, der Balken deckt den ganzen Schlüssel.
+  Testbild-Geheimnisse sind erfunden; den Stripe-Schlüssel (`sample::STRIPE_KEY`) nie als ein Literal
+  `sk_` + `live_…` schreiben, sondern zusammengesetzt (`concat!`, in TS `"sk_" + "live_…"`) — sonst schlagen
+  Secret-Scanner (GitHub-Push-Schutz) an.
 - Editor ist auf 90 % des Arbeitsbereichs begrenzt (Mac: ≥ 1140 pt) → Werkzeugleiste wird unter
   1180/1060/960/860 px schrittweise kompakter. Menü 360 statt 340 px breit (Kürzel sind Wörter).

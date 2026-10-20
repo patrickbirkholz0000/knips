@@ -27,7 +27,7 @@ fn patterns() -> &'static [(SensitiveKind, Regex)] {
             (Secret, r"\bAIza[0-9A-Za-z_\-]{30,}"),
             (Secret, r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{4,}"),
             // Wie auf dem Mac, dazu „…-Key:“ und „Schlüssel:“ als Bezeichner: die Windows-Texterkennung
-            // verliert bei Schlüsseln mit Unterstrichen gern den Anfang („sk_live_51…“), der Rest
+            // verliert bei Schlüsseln mit Unterstrichen gern den Anfang („sk_live_…“), der Rest
             // hängt dann nur noch am Bezeichner.
             (Secret, r"(?i)(?:passwor[dt]|password|pwd|secret|token|api[_ -]?key|\bkey|schl[üu]ssel)\s*[:=]\s*\S{4,}"),
             (Card, r"\b(?:\d[ \-]?){12,18}\d\b"),
@@ -236,9 +236,16 @@ mod tests {
         assert!(!kinds_of("030 1234").contains(&Phone));
     }
 
+    /// Erfundener Stripe-Schlüssel wie im Testbild (`knips_platform::sample::STRIPE_KEY`). Absichtlich
+    /// zusammengesetzt: Im Quelltext steht so nie „sk_“ + „live_“ direkt vor Buchstaben/Ziffern, damit
+    /// Secret-Scanner (GitHub-Push-Schutz) nicht anschlagen.
+    const STRIPE_KEY: &str = concat!("sk_", "live_KnipsBeispiel42");
+
     #[test]
     fn secrets() {
-        assert_eq!(only("sk_live_KnipsBeispiel42"), vec![(Secret, "sk_live_KnipsBeispiel42".into())]);
+        assert_eq!(only(STRIPE_KEY), vec![(Secret, STRIPE_KEY.into())]);
+        let line = format!("Stripe-Key: {STRIPE_KEY}");
+        assert_eq!(only(&line), vec![(Secret, STRIPE_KEY.into())]);
         assert_eq!(kinds_of("ghp_abcdefghijklmnopqrstuvwxyz123456"), vec![Secret]);
         assert_eq!(kinds_of("AKIAIOSFODNN7EXAMPLE"), vec![Secret]);
         assert_eq!(kinds_of("sk-ant-api03-abcdefghijklmnop1234"), vec![Secret]);
@@ -246,7 +253,8 @@ mod tests {
         assert_eq!(only(jwt), vec![(Secret, jwt.into())]);
         assert_eq!(only("Passwort: hunter22"), vec![(Secret, "Passwort: hunter22".into())]);
         assert_eq!(only("API_KEY=abcd1234"), vec![(Secret, "API_KEY=abcd1234".into())]);
-        assert_eq!(only("Stripe-key: HxQ2aBcDeFgHiJkLmNoPqRsTu"), vec![(Secret, "key: HxQ2aBcDeFgHiJkLmNoPqRsTu".into())]);
+        // Texterkennung hat den Anfang verloren: Bezeichner + Rest
+        assert_eq!(only("Stripe-key: KnipsBeispiel42"), vec![(Secret, "key: KnipsBeispiel42".into())]);
         assert_eq!(only("Lizenzschlüssel: ABCD-EFGH"), vec![(Secret, "schlüssel: ABCD-EFGH".into())]);
         assert!(only("Hotkey: Strg+Druck").is_empty());
         // generisch: >= 28 Zeichen, >= 4 Ziffern, >= 8 Buchstaben

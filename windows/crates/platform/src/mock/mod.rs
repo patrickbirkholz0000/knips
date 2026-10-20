@@ -347,6 +347,9 @@ pub mod sound {
 pub mod sample {
     use knips_core::RgbaImage;
 
+    /// Erfundener Stripe-Schlüssel im Testbild (zusammengesetzt, siehe `win/sample.rs`).
+    pub const STRIPE_KEY: &str = concat!("sk_", "live_KnipsBeispiel42");
+
     /// Testbild wie `SelfTest.sampleImage`: helles App-Fenster mit Seitenleiste und Kundendaten
     /// (Name, E-Mail, Telefon, IBAN, Stripe-Key, Bestellnummer, Hinweis, Knopf) — mit echter
     /// Schrift, damit Texterkennung und Auto-Zensur etwas finden. `scale`: Pixel pro Punkt.

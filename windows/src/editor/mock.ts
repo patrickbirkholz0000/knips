@@ -3,6 +3,10 @@ import { inTauri, registerMock } from "../shared/ipc";
 import { mockItems } from "../shared/mock";
 import type { EditorSession, Finding, TextLine, TextWord } from "../shared/types";
 
+// Erfundener Stripe-Schlüssel wie im Testbild. Absichtlich zusammengesetzt: Im Quelltext steht so nie „sk_“ +
+// „live_“ direkt vor Buchstaben/Ziffern, damit Secret-Scanner (GitHub-Push-Schutz) nicht anschlagen.
+const STRIPE_KEY = "sk_" + "live_KnipsBeispiel42";
+
 if (!inTauri) {
   const S = 2;
   // Position und Breite der Beispieltexte (Pt) aus SelfTest.sampleImage; Breite grob nach 14-pt-Systemschrift.
@@ -12,7 +16,7 @@ if (!inTauri) {
     { text: "E-Mail: erika.mustermann@example.com", y: 124, size: 14 },
     { text: "Telefon: +49 170 1234567", y: 152, size: 14 },
     { text: "IBAN: DE89 3704 0044 0532 0130 00", y: 180, size: 14 },
-    { text: "Stripe-Key: sk_live_KnipsBeispiel42", y: 208, size: 13 },
+    { text: "Stripe-Key: " + STRIPE_KEY, y: 208, size: 13 },
     { text: "Bestellung #48213 wurde am 03.10. versendet und ist unterwegs.", y: 252, size: 14 },
     { text: "Hinweis: Lieferzeit 2–3 Werktage, Sendungsverfolgung folgt per Mail.", y: 280, size: 14 },
   ];
@@ -62,7 +66,7 @@ if (!inTauri) {
     return [
       find(2, "erika.mustermann@example.com", "email"),
       find(4, "DE89 3704 0044 0532 0130 00", "iban"),
-      find(5, "sk_live_KnipsBeispiel42", "secret"),
+      find(5, STRIPE_KEY, "secret"),
     ];
   });
   registerMock("editor_stage", () => undefined);

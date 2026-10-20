@@ -207,7 +207,7 @@ private struct Sidebar: View {
 
     private var version: String {
         let info = Bundle.main.infoDictionary
-        return "Version \(info?["CFBundleShortVersionString"] as? String ?? "0.1.0") (\(info?["CFBundleVersion"] as? String ?? "1"))"
+        return "Version \(info?["CFBundleShortVersionString"] as? String ?? "1.0.0") (\(info?["CFBundleVersion"] as? String ?? "1"))"
     }
 
     private func row(_ pane: SettingsPane) -> some View {
@@ -892,7 +892,7 @@ private struct PrivacyPane: View {
 private struct AboutPane: View {
     private var version: String {
         let info = Bundle.main.infoDictionary
-        return "Version \(info?["CFBundleShortVersionString"] as? String ?? "0.1.0") (\(info?["CFBundleVersion"] as? String ?? "1"))"
+        return "Version \(info?["CFBundleShortVersionString"] as? String ?? "1.0.0") (\(info?["CFBundleVersion"] as? String ?? "1"))"
     }
 
     var body: some View {

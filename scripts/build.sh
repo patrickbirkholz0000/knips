@@ -19,7 +19,7 @@ APP=build/Knips.app
 BUNDLE_ID=de.birkgroup.knips
 ENTITLEMENTS=Resources/Knips.entitlements
 VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)
-VERSION=${VERSION:-0.1.0}
+VERSION=${VERSION:-$(plutil -extract CFBundleShortVersionString raw Resources/Info.plist 2>/dev/null || echo 1.0.0)}
 BUILD_NUMBER=$(git rev-list --count HEAD 2>/dev/null || echo 1)
 
 [[ -f Resources/AppIcon.icns ]] || swift scripts/make-icon.swift

@@ -92,7 +92,7 @@ struct TelemetryClientInfo: Equatable, Sendable {
         let arch = "x86_64"
         #endif
         return TelemetryClientInfo(channel: channel,
-                                   appVersion: info?["CFBundleShortVersionString"] as? String ?? "0.1.0",
+                                   appVersion: info?["CFBundleShortVersionString"] as? String ?? "1.0.0",
                                    build: info?["CFBundleVersion"] as? String ?? "1",
                                    osVersion: "\(os.majorVersion).\(os.minorVersion)",
                                    arch: arch,

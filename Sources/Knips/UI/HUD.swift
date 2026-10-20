@@ -8,6 +8,8 @@ import SwiftUI
     private static var hideWork: DispatchWorkItem?
 
     static func show(_ text: String, symbol: String = "checkmark.circle.fill", on screen: NSScreen? = nil) {
+        // Selbsttests zeigen nie etwas auf dem Bildschirm (Bilder der Pille macht `--selftest chrome` offscreen).
+        if CommandLine.arguments.dropFirst().first == "--selftest" { return }
         let screen = screen ?? NSScreen.withMouse
         let host = NSHostingView(rootView: HUDView(text: text, symbol: symbol))
         host.appearance = Brand.Dark.appearance

@@ -300,14 +300,14 @@ struct EditorToolbar: View {
                     Image(systemName: "text.viewfinder").font(.system(size: 13.5, weight: .medium))
                 }
             }
-            .buttonStyle(BrandButtonStyle(kind: .secondary))
+            .buttonStyle(ChromeButtonStyle(kind: .secondary))
             .help("Text kopieren — ohne Zensiertes und Weggeschnittenes")
             .accessibilityLabel("Text kopieren")
             Button { actions.copy() } label: { Label("Kopieren", systemImage: "doc.on.doc") }
-                .buttonStyle(BrandButtonStyle(kind: .secondary))
+                .buttonStyle(ChromeButtonStyle(kind: .secondary))
                 .help("Kopieren (⌘C)")
             Button("Fertig") { actions.done() }
-                .buttonStyle(BrandButtonStyle(kind: .primary))
+                .buttonStyle(ChromeButtonStyle(kind: .primary))
                 .help("Speichern und schließen (⌘⏎)")
         }
     }
@@ -322,9 +322,9 @@ struct EditorToolbar: View {
             .frame(height: EditorChrome.toolSize)
             .chromeGroup()
             Spacer(minLength: 12)
-            Button("Zurücksetzen") { model.resetCrop() }.buttonStyle(BrandButtonStyle(kind: .quiet))
-            Button("Abbrechen") { model.cancelCrop() }.buttonStyle(BrandButtonStyle(kind: .secondary))
-            Button("Übernehmen") { model.applyCrop() }.buttonStyle(BrandButtonStyle(kind: .primary))
+            Button("Zurücksetzen") { model.resetCrop() }.buttonStyle(ChromeButtonStyle(kind: .quiet))
+            Button("Abbrechen") { model.cancelCrop() }.buttonStyle(ChromeButtonStyle(kind: .secondary))
+            Button("Übernehmen") { model.applyCrop() }.buttonStyle(ChromeButtonStyle(kind: .primary))
         }
     }
 }
@@ -342,9 +342,9 @@ struct EditorPropertiesBar: View {
             if model.tool == .crop {
                 HStack(spacing: 6) {
                     Text("Rahmen ziehen ·")
-                    KeyCap(symbol: "return")
+                    ChromeKeyCap(symbol: "return")
                     Text("übernimmt ·")
-                    KeyCap(key: "Esc")
+                    ChromeKeyCap(key: "Esc")
                     Text("bricht ab")
                 }
                 .font(Brand.font(12.5))

@@ -301,17 +301,6 @@ private struct SettingsSidebar: View {
     }
 }
 
-private extension NSColor {
-    /// Dynamische Farbe in einer festen Darstellung auflösen (für immer dunkle Flächen).
-    func resolved(dark: Bool) -> NSColor {
-        var result = self
-        (NSAppearance(named: dark ? .darkAqua : .aqua) ?? NSAppearance.currentDrawing()).performAsCurrentDrawingAppearance {
-            result = NSColor(cgColor: self.cgColor) ?? self
-        }
-        return result
-    }
-}
-
 // MARK: - Bausteine der Seiten
 
 /// Zeile im Bereit-Check: Zustand, Titel, Beschreibung, Knopf rechts.

@@ -147,8 +147,8 @@ struct ChromeToolButton: View {
     }
 }
 
-/// Knöpfe mit Text: Primär (Tinte), Sekundär (weiß mit Linie), Leise (nur Text).
-struct BrandButtonStyle: ButtonStyle {
+/// Knöpfe der Editoren mit Text und Symbol: Primär (Tinte), Sekundär (weiß mit Linie), Leise (nur Text).
+struct ChromeButtonStyle: ButtonStyle {
     enum Kind { case primary, secondary, quiet }
     var kind: Kind
     var height: CGFloat = 32
@@ -161,7 +161,7 @@ struct BrandButtonStyle: ButtonStyle {
 private struct BrandButtonBody<Label: View>: View {
     let label: Label
     let pressed: Bool
-    let kind: BrandButtonStyle.Kind
+    let kind: ChromeButtonStyle.Kind
     let height: CGFloat
     @Environment(\.isEnabled) private var isEnabled
     @State private var hover = false
@@ -284,7 +284,7 @@ struct BrandSegment<Value: Hashable>: View {
 
 /// Tastenkappe für Kürzel in Hinweisen (weiße Kappe, Linie, Mono). `symbol` statt Text für Tasten wie ⏎,
 /// deren Zeichen in der Mono-Schrift zu klein gerät.
-struct KeyCap: View {
+struct ChromeKeyCap: View {
     var key: String = ""
     var symbol: String?
 

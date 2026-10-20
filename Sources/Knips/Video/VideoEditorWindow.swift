@@ -424,7 +424,7 @@ private struct VideoEditorToolbar: View {
                 Button { model.autoRedact() } label: {
                     if labels { Label("Auto-Zensur", systemImage: "wand.and.stars") } else { Image(systemName: "wand.and.stars") }
                 }
-                .buttonStyle(BrandButtonStyle(kind: .secondary))
+                .buttonStyle(ChromeButtonStyle(kind: .secondary))
                 .disabled(model.busy != nil)
                 .help("Erkennt E-Mails, IBANs, Telefonnummern, Schlüssel usw. in Einzelbildern (alle 0,5 s) und legt Zensurfelder an.")
                 .accessibilityLabel("Auto-Zensur")
@@ -435,15 +435,15 @@ private struct VideoEditorToolbar: View {
                 ChromeToolButton(symbol: "folder", help: "Im Finder zeigen", action: actions.reveal)
             }
             Button { model.exportGIF() } label: { Label("GIF", systemImage: "photo.stack") }
-                .buttonStyle(BrandButtonStyle(kind: .secondary))
+                .buttonStyle(ChromeButtonStyle(kind: .secondary))
                 .disabled(model.busy != nil)
                 .help("Als GIF exportieren (\(settings.gifFPS) fps, max. \(settings.gifWidth) px breit)")
             Button { actions.copy() } label: { Label("Kopieren", systemImage: "doc.on.doc") }
-                .buttonStyle(BrandButtonStyle(kind: .secondary))
+                .buttonStyle(ChromeButtonStyle(kind: .secondary))
                 .disabled(model.busy != nil)
                 .help("Videodatei kopieren")
             Button("Fertig") { actions.done() }
-                .buttonStyle(BrandButtonStyle(kind: .primary))
+                .buttonStyle(ChromeButtonStyle(kind: .primary))
                 .disabled(model.busy != nil)
                 .help("Als MP4 speichern und schließen (⌘⏎)")
         }
@@ -530,28 +530,28 @@ private struct VideoTimelineCard: View {
                     .fixedSize()
                     .padding(.trailing, 4)
                 Button("Ab hier") { model.selectedStartHere() }
-                    .buttonStyle(BrandButtonStyle(kind: .secondary, height: 28))
+                    .buttonStyle(ChromeButtonStyle(kind: .secondary, height: 28))
                     .help("Zensur beginnt an der aktuellen Abspielposition")
                 Button("Bis hier") { model.selectedEndHere() }
-                    .buttonStyle(BrandButtonStyle(kind: .secondary, height: 28))
+                    .buttonStyle(ChromeButtonStyle(kind: .secondary, height: 28))
                     .help("Zensur endet an der aktuellen Abspielposition")
                 Button("Ganze Länge") { model.selectedWholeClip() }
-                    .buttonStyle(BrandButtonStyle(kind: .secondary, height: 28))
+                    .buttonStyle(ChromeButtonStyle(kind: .secondary, height: 28))
                 if sel.track == nil {
                     Button { model.followSelected() } label: { label("Folgen", "scope", compact: compact) }
-                        .buttonStyle(BrandButtonStyle(kind: .secondary, height: 28))
+                        .buttonStyle(ChromeButtonStyle(kind: .secondary, height: 28))
                         .disabled(model.busy != nil)
                         .help("Balken folgt dem Inhalt darunter, z. B. beim Scrollen — ab der aktuellen Position vor und zurück.")
                         .accessibilityLabel("Folgen")
                 } else {
                     Button { model.unfollowSelected() } label: { label("Fest", "pin", compact: compact) }
-                        .buttonStyle(BrandButtonStyle(kind: .secondary, height: 28))
+                        .buttonStyle(ChromeButtonStyle(kind: .secondary, height: 28))
                         .help("Balken bleibt an der aktuellen Stelle stehen")
                         .accessibilityLabel("Fest")
                 }
                 Spacer(minLength: 8)
                 Button { model.deleteSelected() } label: { label("Löschen", "trash", compact: compact) }
-                    .buttonStyle(BrandButtonStyle(kind: .quiet, height: 28))
+                    .buttonStyle(ChromeButtonStyle(kind: .quiet, height: 28))
                     .help("Zensur löschen (⌫)")
                     .accessibilityLabel("Löschen")
             } else {

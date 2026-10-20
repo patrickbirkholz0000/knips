@@ -96,8 +96,39 @@ fn current_stride(reader: &IMFSourceReader) -> Option<i32> {
 }
 
 /// Höchstens so viele Zeitstempel für die wirksame Bildrate (Bildschirmaufnahmen: nur Bilder mit
-/// Änderungen, also selbst bei 60 fps mindestens 50 s Bewegung). Nur Entpacken, kein Dekodieren.
-const FPS_SCAN: usize = 3000;
+/// Änderungen, also selbst bei 60 fps mindestens 10 s Bewegung). Nur Entpacken, kein Dekodieren —
+/// liest aber die Bilddaten von der Platte, deshalb begrenzt und je Datei gemerkt.
+const FPS_SCAN: usize = 600;
+
+/// Wirksame Bildrate je Datei (Pfad, Größe, Änderungszeit) — `probe` läuft beim Öffnen, für
+/// Vorschaubilder, Erkennung und Export jeweils erneut.
+fn effective_fps_cached(path: &Path, nominal: f64) -> f64 {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    type Key = (std::path::PathBuf, u64, Option<std::time::SystemTime>);
+    static CACHE: Mutex<Option<HashMap<Key, f64>>> = Mutex::new(None);
+    let key: Option<Key> = std::fs::metadata(path).ok().map(|m| (path.to_path_buf(), m.len(), m.modified().ok()));
+    if let Some(k) = &key {
+        if let Some(fps) = CACHE.lock().ok().and_then(|c| c.as_ref().and_then(|c| c.get(k).copied())) {
+            return fps;
+        }
+    }
+    let fps = match sample_times(path, FPS_SCAN) {
+        Ok(times) => pure::effective_fps(nominal, &times),
+        Err(e) => {
+            log::debug!("Bildabstände nicht lesbar ({e:#}), nehme die Angabe {nominal:.2} fps");
+            return nominal;
+        }
+    };
+    if let (Some(k), Ok(mut c)) = (key, CACHE.lock()) {
+        let c = c.get_or_insert_with(HashMap::new);
+        if c.len() > 64 {
+            c.clear();
+        }
+        c.insert(k, fps);
+    }
+    fps
+}
 
 /// Zeitstempel der ersten `limit` Videoproben (komprimiert gelesen, ohne Decoder; 100 ns).
 fn sample_times(path: &Path, limit: usize) -> Result<Vec<i64>> {
@@ -131,13 +162,7 @@ fn sample_times(path: &Path, limit: usize) -> Result<Vec<i64>> {
 pub fn probe(path: &Path) -> Result<VideoInfo> {
     let _com = enter()?;
     let (_r, m) = open_rgb(path)?;
-    let fps = match sample_times(path, FPS_SCAN) {
-        Ok(times) => pure::effective_fps(m.fps, &times),
-        Err(e) => {
-            log::debug!("Bildabstände nicht lesbar ({e:#}), nehme die Angabe {:.2} fps", m.fps);
-            m.fps
-        }
-    };
+    let fps = effective_fps_cached(path, m.fps);
     Ok(VideoInfo { duration: m.duration, width: m.w, height: m.h, fps, hevc: m.hevc, has_audio: m.has_audio })
 }
 

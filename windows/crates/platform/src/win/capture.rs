@@ -11,7 +11,7 @@ use knips_core::RgbaImage;
 use windows::core::PWSTR;
 use windows::core::BOOL;
 use windows::Win32::Foundation::{CloseHandle, LPARAM, RECT};
-use windows::Win32::Graphics::Dwm::{DwmFlush, DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
+use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::System::Threading::{
     GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
     PROCESS_QUERY_LIMITED_INFORMATION,
@@ -390,13 +390,9 @@ pub fn hide_for_capture(handles: &[isize]) -> Vec<isize> {
         }
     }
     if !hidden.is_empty() {
-        // Zwei Bildwechsel des Desktop-Compositors abwarten (danach zeigt der Bildschirm sie nicht mehr).
-        for _ in 0..2 {
-            // SAFETY: keine Vorbedingungen; Fehler (Compositor aus) ist egal.
-            if unsafe { DwmFlush() }.is_err() {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        }
+        // Einige Bildwechsel abwarten, bis der Bildschirm ohne sie gezeichnet ist (DwmFlush kann bei
+        // ruhendem Desktop warten, bis sich etwas ändert — deshalb feste Zeit).
+        std::thread::sleep(Duration::from_millis(100));
     }
     hidden
 }

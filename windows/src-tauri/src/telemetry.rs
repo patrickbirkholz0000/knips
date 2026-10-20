@@ -19,7 +19,8 @@ use crate::settings::SettingsStore;
 use crate::wm;
 
 pub const CONSENT_LABEL: &str = "consent";
-const CONSENT_SIZE: (f64, f64) = (460.0, 296.0);
+/// Dialog-Karte mit drei Punkten (src/consent/Consent.tsx).
+const CONSENT_SIZE: (f64, f64) = (480.0, 400.0);
 
 /// Wohin und als was gesendet wird.
 #[derive(Clone, Debug)]

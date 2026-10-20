@@ -1,61 +1,8 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { Check, ChevronDown, ChevronUp } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
+import { cx, Keys } from "../shared/ui";
 
-// Bausteine der Einstellungen (Card, Row, Switch, Choice, SecondsField, Pill, Notice).
-
-export function Card({ title, footer, children }: { title?: string; footer?: string; children: ReactNode }) {
-  return (
-    <section className="st-card">
-      {title && <h3>{title}</h3>}
-      <div className="st-card-box">{children}</div>
-      {footer && <p>{footer}</p>}
-    </section>
-  );
-}
-
-export function Row({ title, subtitle, off, children }: { title: string; subtitle?: string; off?: boolean; children?: ReactNode }) {
-  return (
-    <div className={`st-row${off ? " off" : ""}`}>
-      <div className="tx">
-        <div className="t">{title}</div>
-        {subtitle && <div className="s">{subtitle}</div>}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-export const Div = () => <div className="st-div" />;
-
-export function Switch({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
-  return <button role="switch" aria-checked={on} className={`st-switch${on ? " on" : ""}`} disabled={disabled} onClick={() => onChange(!on)} />;
-}
-
-export function Checkbox({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
-  return (
-    <button role="checkbox" aria-checked={on} className={`st-check${on ? " on" : ""}`} disabled={disabled} onClick={() => onChange(!on)}>
-      {on && <Check size={12} strokeWidth={3.5} />}
-    </button>
-  );
-}
-
-export function Choice<T extends string | number | boolean>({ value, options, onChange }: { value: T; options: [T, string][]; onChange: (v: T) => void }) {
-  const idx = options.findIndex(([v]) => v === value);
-  return (
-    <span className="st-choice">
-      <select value={idx} onChange={(e) => onChange(options[Number(e.target.value)][0])}>
-        {options.map(([, label], i) => (
-          <option key={i} value={i}>{label}</option>
-        ))}
-      </select>
-      <ChevronDown size={13} />
-    </span>
-  );
-}
-
-export function Pill({ kind, onClick, children }: { kind?: "primary" | "danger"; onClick?: () => void; children: ReactNode }) {
-  return <button className={`st-pill${kind ? " " + kind : ""}`} onClick={onClick}>{children}</button>;
-}
+// Bausteine nur der Einstellungen. Allgemeine (Switch, Select, Row …) liegen in shared/ui.
 
 /** Zahl tippen (Enter übernimmt) oder mit den Pfeilen ändern; ungültig → letzter Wert. */
 export function SecondsField({ value, min, max, onChange }: { value: number; min: number; max: number; onChange: (n: number) => void }) {
@@ -73,6 +20,7 @@ export function SecondsField({ value, min, max, onChange }: { value: number; min
       <input
         value={text}
         inputMode="numeric"
+        aria-label="Sekunden"
         onChange={(e) => {
           setText(e.target.value);
           const n = parseInt(e.target.value.replace(/\D/g, ""), 10);
@@ -83,22 +31,27 @@ export function SecondsField({ value, min, max, onChange }: { value: number; min
       />
       <span>{value === 1 ? "Sekunde" : "Sekunden"}</span>
       <div className="st-step">
-        <button onClick={() => onChange(clamp(value + 1))}><ChevronUp size={10} strokeWidth={3} /></button>
-        <button onClick={() => onChange(clamp(value - 1))}><ChevronDown size={10} strokeWidth={3} /></button>
+        <button type="button" aria-label="Mehr" onClick={() => onChange(clamp(value + 1))}>
+          <ChevronUp size={11} strokeWidth={2.8} />
+        </button>
+        <button type="button" aria-label="Weniger" onClick={() => onChange(clamp(value - 1))}>
+          <ChevronDown size={11} strokeWidth={2.8} />
+        </button>
       </div>
     </div>
   );
 }
 
-export function Notice({ tone, icon, title, detail, children }: { tone: "orange" | "green"; icon: ReactNode; title: string; detail: string; children?: ReactNode }) {
+/** Kürzel als Tastenkappen; Klick nimmt eine neue Kombination auf. */
+export function KeyButton({ label, recording, dim, onClick }: { label?: string; recording: boolean; dim?: boolean; onClick: () => void }) {
   return (
-    <div className={`st-notice ${tone}`}>
-      <span className="ico">{icon}</span>
-      <div>
-        <div className="t">{title}</div>
-        <div className="d">{detail}</div>
-        {children && <div className="a">{children}</div>}
-      </div>
-    </div>
+    <button
+      type="button"
+      className={cx("st-keybtn", recording && "is-rec", !recording && !label && "is-empty", dim && "is-dim")}
+      title="Klicken und neue Tastenkombination drücken"
+      onClick={onClick}
+    >
+      {recording ? "Tasten drücken …" : label ? <Keys combo={label} /> : "Nicht belegt"}
+    </button>
   );
 }

@@ -1,20 +1,20 @@
-/* Grundstil aller Fenster. Farben aus der Mac-Fassung (Theme in SettingsWindow.swift, MenuPanel.swift). */
+/* Grundstil aller Fenster: Schrift, Fläche und Text aus den Tokens (tokens.css, docs/design.md).
+   Hell/Dunkel setzt appearance.ts über <html data-theme>. Bausteine: shared/ui (ui.css). */
 :root {
-  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
-  --mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
-  /* Dunkle Panels (Menü, Karten, Leisten) */
-  --panel: rgb(28, 28, 31);
-  --panel-line: rgba(255, 255, 255, 0.09);
-  /* Einstellungen (hell) */
-  --page: rgb(244, 244, 246);
-  --ink: rgb(20, 20, 23);
-  --muted: rgb(110, 112, 120);
-  --card: #fff;
-  --accent: rgb(0, 122, 255);
-  --green: rgb(51, 184, 102);
-  --red: rgb(255, 59, 48);
-  color-scheme: light;
+  /* Alte Namen aus der ersten Fassung — auf die neuen Tokens umgebogen, bis jede Ansicht --k-* nutzt.
+     Kein Systemblau mehr: --accent ist Königsblau. --panel und --red gehören zu den immer dunklen Flächen. */
+  --font: var(--k-font);
+  --font-display: var(--k-font);
+  --mono: var(--k-mono);
+  --panel: var(--k-dark);
+  --panel-line: var(--k-dark-line);
+  --page: var(--k-canvas);
+  --ink: var(--k-ink);
+  --muted: var(--k-ink-soft);
+  --card: var(--k-surface);
+  --accent: var(--k-accent);
+  --green: var(--k-success);
+  --red: var(--k-dark-record);
 }
 
 * {
@@ -27,12 +27,17 @@ body,
   margin: 0;
   padding: 0;
   height: 100%;
-  font-family: var(--font);
+  font-family: var(--k-font);
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
   user-select: none;
   -webkit-user-select: none;
   cursor: default;
+}
+
+body {
+  background: var(--k-canvas);
+  color: var(--k-ink);
 }
 
 /* Transparente Fenster (Menü, Karten, HUD, Leisten, Pins): kein Hintergrund. */
@@ -53,6 +58,7 @@ html[data-view="rec-controls"] body,
 html[data-view="rec-countdown"] body,
 html[data-view="scroll-controls"] body {
   background: transparent;
+  color: var(--k-dark-ink);
   overflow: hidden;
 }
 
@@ -69,4 +75,21 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+/* Tastaturfokus sichtbar, im Akzent (auf den immer dunklen Flächen das helle Königsblau). */
+:focus-visible {
+  outline: 2px solid var(--k-accent);
+  outline-offset: 2px;
+}
+html[data-view="menu"] :focus-visible,
+html[data-view="cards"] :focus-visible,
+html[data-view="pin"] :focus-visible,
+html[data-view="rec-controls"] :focus-visible,
+html[data-view="scroll-controls"] :focus-visible {
+  outline-color: var(--k-dark-accent);
+}
+
+::selection {
+  background: var(--k-accent-soft);
 }

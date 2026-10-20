@@ -37,6 +37,7 @@ const COMMANDS: &[&str] = &[
     "menu_close",
     "choose_save_folder",
     "storage_size",
+    "save_folder_ok",
     "purge_originals",
     "clipboard_text",
     "hud",

@@ -361,7 +361,7 @@ pub fn open_settings(app: AppHandle, pane: Option<String>) {
 
 /// Bereiche des Einstellungsfensters (`Pane` in src/settings/Settings.tsx). Andere Werte für `pane` werden
 /// ignoriert — sie landen sonst in der Adresse und im ausgeführten Skript.
-pub const SETTINGS_PANES: [&str; 8] = ["general", "shortcuts", "recording", "redaction", "export", "storage", "privacy", "about"];
+pub const SETTINGS_PANES: [&str; 9] = ["start", "general", "shortcuts", "recording", "redaction", "export", "storage", "privacy", "about"];
 
 pub fn show_settings(app: &AppHandle, pane: Option<String>) {
     count("settings_open");
@@ -453,6 +453,25 @@ pub async fn choose_save_folder(app: AppHandle) -> Res<Option<String>> {
 #[tauri::command]
 pub async fn storage_size() -> Res<u64> {
     blocking(|| Ok(knips().store.storage_size())).await
+}
+
+/// Bereit-Check (Einstellungen → Start): Ist der Ablageordner erreichbar? Im Hintergrund, weil ein getrenntes
+/// Netzlaufwerk Sekunden hängen kann.
+#[tauri::command]
+pub async fn save_folder_ok() -> Res<bool> {
+    blocking(|| Ok(folder_reachable(&knips().settings.save_folder()))).await
+}
+
+/// Ordner vorhanden — oder noch nicht angelegt (z. B. `Bilder\Knips` vor der ersten Aufnahme), aber der nächste
+/// vorhandene Ort darüber ist ein Ordner: Dann legt die Ablage ihn beim Speichern an. Schreibt nichts.
+pub fn folder_reachable(folder: &std::path::Path) -> bool {
+    if folder.is_dir() {
+        return true;
+    }
+    if folder.exists() {
+        return false; // eine Datei statt eines Ordners
+    }
+    folder.ancestors().skip(1).find(|p| p.exists()).is_some_and(|p| p.is_dir())
 }
 
 #[tauri::command]

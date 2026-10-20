@@ -39,6 +39,38 @@ anlegen. Liegt seit 20.10.2026 in `~/.knips-rust` (`RUSTUP_HOME=~/.knips-rust/ru
 `~/.knips-rust/cargo/bin`, Ziel installiert; `llvm-rc` aus `/opt/homebrew/opt/llvm@22/bin` in den PATH,
 eigenes `CARGO_TARGET_DIR`, damit sich Homebrew- und rustup-Compiler nicht gegenseitig neu bauen).
 
+## Oberfläche
+
+Gestaltung nach `../docs/design.md` (Markensprache der App-Familie): Werte nur aus
+`src/shared/tokens.css` (`--k-*`), Schriften Outfit und JetBrains Mono (`public/fonts`, SIL OFL 1.1). Hell/Dunkel:
+Einstellung `appearance` (System/Hell/Dunkel, Einstellungen → Allgemein → „Darstellung“), `src/shared/appearance.ts`
+setzt `<html data-theme>` in jedem Fenster — Fenster, die ihn beim Start lesen, brauchen `allow-get-bootstrap`
+(auch Einwilligung und Link-Rückfrage). `src/shared/theme.css`: Grundschrift, Papier, Tinte, Fokusrahmen; die alten
+Namen (`--ink`, `--accent`, `--panel` …) sind nur noch Aliase auf `--k-*`.
+
+Gemeinsame Bausteine in `src/shared/ui` (`index.tsx` + `ui.css`, Präfix `k-`): `Switch` (Königsblau), `Segmented`,
+`Select`, `Checkbox`, `Button` (`primary` Tinte / `secondary` / `text`), `KeyCap` und `Keys` (Kürzel-Text →
+Tastenkappen in Mono), `Overline` (Mono-Versalien), `Card`, `Section` (Titel 17 + Karte + Satz), `Row` (Titel,
+Beschreibung, Bedienelement rechts), `Notice` (`warn`/`success`), `StatusIcon` (Häkchen / roter Punkt / gestrichelt),
+`Dot`, `Badge`, `IconTile`, `Point`, `DialogCard` (Onboarding-Karte) und `.k-scrim` für Dialoge
+im Fenster.
+
+- **Einstellungen** (`src/settings`): dunkle Seitenleiste mit Zeichen + Wortmarke, Gruppen START · AUFNAHME ·
+  BEARBEITEN · APP, unten Bereit-Status und Version. Erste Seite **Start** (`Start.tsx`): Kürzel als
+  Tastenkappen, drei Schritte, **Bereit-Check** (`readiness.ts`) aus vorhandenen Daten — Video
+  (`mediaAvailable`), Kürzel registriert (`hotkeyFailures`), Druck-Taste (`snippingKeyEnabled`, nur wenn ein
+  Kürzel auf Druck liegt), Ablageordner (`save_folder_ok`, im Hintergrund, schreibt nichts), Mikrofon nur als
+  Hinweis (Windows meldet die Freigabe für Desktop-Apps nicht). Offene Schritte zählen in der Seitenleiste.
+  Bereiche: `SETTINGS_PANES` in `commands.rs` = `Pane` in `support.ts`.
+- **Dialoge** (Einwilligung `src/consent`, Link-Rückfrage `src/links`, „Alle Originale löschen?“): `DialogCard`
+  auf Papier. Die Rückfrage zeigt die Schutzzeit als leisen Fortschritt im Knopf „Aufnehmen“; Tastaturlogik,
+  Schutzzeit und `link_confirm_shown` sind davon unberührt. Größen: `CONSENT_SIZE` 480 × 400, Rückfrage 520 × 352.
+- Die Fragen „Druck-Taste übernehmen?“, „Endgültig löschen?“ und Fehlermeldungen sind noch native
+  Windows-Dialoge (`tauri_plugin_dialog`).
+- Im Browser prüfen: `pnpm dev`, `node scripts/shot.mjs "/settings/start" …`; Attrappen-Schalter in der Adresse:
+  `?fehlt` (Bereit-Check mit offenen Schritten), `?bereit` (alles erledigt), `nomedia`, `nohevc`, im Verlauf `?leer`.
+  Dunkel: Systemmodus des Browsers (die Attrappe steht auf „System“).
+
 ## Selbsttests
 
 `knips.exe --selftest <test> <ordner>` (Feature `dev`, läuft in `<ordner>\sandbox`, Zwischenablage tabu).
@@ -59,7 +91,7 @@ Alle zusammen: `scripts/selftest.ps1` (macht die CI).
 | `clipboard` | echte Zwischenablage: Bild verzögert anbieten (PNG/JPEG) und zurücklesen; privates Kopieren (nach der Aufnahme) vom Verlauf/Cloud ausgeschlossen und trotzdem einfügbar — nur für die CI |
 | `telemetry` | Nutzungsstatistik gegen einen lokalen Server (127.0.0.1): in Sandbox/CI aus, ohne Zustimmung nichts, Zustimmung → Ereignisse → Senden (Nutzlast, Erlaubt-Liste, Deckel 10000) → Zähler zurückgesetzt, Fehler behält Zähler, Widerruf löscht Kennung + Zähler; Nutzlast als `telemetry-payload.json` |
 | `render` | Renderer der Oberfläche — gleiche Dokumente wie `SelfTest.render` auf dem Mac (Vergleich: `tests/reference/mac-render-*.png`); „Text kopieren“ der Seite (`src/editor/text.ts`) = `textlayout::visible_text` (feste Fälle + erkannte Zeilen des Testbilds) |
-| `ui` | alle Fenster mit Beispieldaten, je ein Bild (Vergleich: `tests/reference/mac-ui/`), auch `einwilligung.png`, `link-rueckfrage.png` und Allgemein/Datenschutz/Über Knips nach unten gescrollt (`…-unten.png`); danach keine der gezeigten Aufnahmen im WebView2-Profil (`EBWebView`), Diagnose mit einem Fenster ohne InPrivate |
+| `ui` | alle Fenster mit Beispieldaten, je ein Bild, auch `einwilligung.png`, `link-rueckfrage.png` und Allgemein/Datenschutz/Über Knips nach unten gescrollt (`…-unten.png`); Einstellungen (alle 9 Bereiche, Start mit Bereit-Check), Einwilligung, Link-Rückfrage und Verlauf zusätzlich dunkel (`…-dunkel.png`), je Fenster `data-theme` passend zur Einstellung; danach keine der gezeigten Aufnahmen im WebView2-Profil (`EBWebView`), Diagnose mit einem Fenster ohne InPrivate. Maßstab ist `../docs/design.md` — die Mac-Bilder in `tests/reference/mac-ui/` zeigen noch die alte Gestaltung (vor 20.10.2026) und taugen nur noch für Inhalt und Aufteilung |
 | `links` | Rückfrage vor knips://fullscreen/last/record (wie `links` auf dem Mac): ohne Einstellung erst Rückfrage, weiterer Link verfällt, Esc/Schließen/Abbrechen = nichts, Aufnehmen erst nach der Schutzzeit (Rust und Oberfläche), gehaltene ⏎ / Wiederholungen / ⏎ ohne Loslassen / ⏎ direkt nach Tippen bestätigen nichts, „Nicht mehr fragen“ vor der Schutzzeit gesperrt und nur mit Aufnehmen, Stoppen und eigener Weg direkt; zweiter Start (`app::second_instance` → Deep-Link-Plugin) und Erststart mit `knips://pin` (Kindprozess) je genau ein Aufruf; mit Einstellung direkt; Schalter in Allgemein. Ausführen ist durch eine Liste ersetzt, nimmt nie auf. Bilder: `link-rueckfrage-*.png`, `link-einstellung-allgemein.png` |
 | `nomedia` | Windows N/KN ohne Media Feature Pack (simuliert, `KNIPS_TEST_NO_MEDIA`): Importtabelle der knips.exe (mfplat/mfreadwrite/mf nur verzögert), alle Videofunktionen melden den Hinweis statt abzustürzen, Video-Kürzel zeigt Hinweis statt Auswahl, Screenshot geht; Bilder `einstellungen-aufnahme-ohne-media.png`, `menu-ohne-media.png` |
 | `oldwin` | Windows vor 10 2004 (simuliert, `KNIPS_TEST_OLD_WINDOWS`): kein `WDA_EXCLUDEFROMCAPTURE`, eigene Fenster für das Standbild ausgeblendet und danach wieder sichtbar, Aufnahmerahmen ohne Ausschluss |

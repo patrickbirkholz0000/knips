@@ -145,6 +145,8 @@ export const api = {
   menuClose: () => call<void>("menu_close"),
   chooseSaveFolder: () => call<string | null>("choose_save_folder"),
   storageSize: () => call<number>("storage_size"),
+  /** Bereit-Check: Ablageordner vorhanden oder anlegbar (Ort darüber erreichbar)? */
+  saveFolderOk: () => call<boolean>("save_folder_ok"),
   purgeOriginals: () => call<void>("purge_originals"),
   clipboardText: (text: string) => call<void>("clipboard_text", { text }),
   hud: (message: HudMessage) => call<void>("hud", { message }),

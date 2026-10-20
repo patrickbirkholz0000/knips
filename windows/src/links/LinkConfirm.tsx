@@ -9,7 +9,9 @@
 // und war ⏎ schon vor Ablauf der Schutzzeit unten, muss die Taste erst einmal losgelassen werden. Rust prüft
 // die Schutzzeit noch einmal.
 import { useEffect, useRef, useState } from "react";
+import { Crop, Monitor, Video } from "lucide-react";
 import { api } from "../shared/ipc";
+import { Button, Checkbox, DialogCard, IconTile } from "../shared/ui";
 import "./link-confirm.css";
 
 /** Schutzzeit wie `LinkConfirmWindowController.armDelay` (0,6 s). */
@@ -21,12 +23,23 @@ const MESSAGES: Record<string, string> = {
   record: "Eine andere App oder Webseite möchte über einen knips://-Link eine Bildschirmaufnahme (Video) starten.",
 };
 
+/** Was der Link tun will — als Kachel über dem Text (nur Anzeige). */
+const ACTIONS: Record<string, { title: string; icon: JSX.Element }> = {
+  fullscreen: { title: "Ganzen Bildschirm aufnehmen", icon: <Monitor size={17} strokeWidth={2} /> },
+  last: { title: "Letzten Bereich wiederholen", icon: <Crop size={17} strokeWidth={2} /> },
+  record: { title: "Bildschirmaufnahme starten", icon: <Video size={17} strokeWidth={2} /> },
+};
+
 /** Tasten, die die Schutzzeit nicht neu starten (Bedienung der Rückfrage selbst, reine Umschalttasten). */
 const CONTROL_KEYS = new Set(["Enter", "Escape", "Tab", "Shift", "Control", "Alt", "AltGraph", "Meta", "CapsLock"]);
 
 export default function LinkConfirm({ params }: { params: string[]; query?: URLSearchParams }) {
-  const message = MESSAGES[params[0]] ?? MESSAGES.fullscreen;
+  const kind = Object.prototype.hasOwnProperty.call(MESSAGES, params[0] ?? "") ? params[0] : "fullscreen";
+  const message = MESSAGES[kind];
+  const action = ACTIONS[kind];
   const [armed, setArmed] = useState(false);
+  // Nur Anzeige: zählt jeden Start der Schutzzeit, damit der leise Fortschritt im Knopf von vorn beginnt.
+  const [armStart, setArmStart] = useState(0);
   const [dontAskAgain, setDontAskAgain] = useState(false);
   const busy = useRef(false);
   const state = useRef({ armed, dontAskAgain });
@@ -57,6 +70,7 @@ export default function LinkConfirm({ params }: { params: string[]; query?: URLS
       state.current.armed = false;
       setArmed(false);
       if (!visible) return;
+      setArmStart((n) => n + 1);
       armTimer = window.setTimeout(() => {
         state.current.armed = true;
         setArmed(true);
@@ -131,24 +145,36 @@ export default function LinkConfirm({ params }: { params: string[]; query?: URLS
 
   return (
     <div className="lc">
-      <div className="lc-head">
-        <img src="/icon.png" alt="" />
-        <h1>Aufnahme per Link?</h1>
-      </div>
-      <p className="lc-msg">{message}</p>
-      <p className="lc-hint">Hast du das nicht selbst ausgelöst, klicke auf „Abbrechen“.</p>
-      <div className="lc-row">
-        <label className={`lc-check${armed ? "" : " off"}`}>
-          <input type="checkbox" data-act="dont-ask" checked={dontAskAgain} disabled={!armed} onChange={(e) => setDontAskAgain(e.target.checked)} />
-          Nicht mehr fragen
-        </label>
-        <button className="lc-btn" data-act="cancel" onClick={() => decide(false)}>
-          Abbrechen
-        </button>
-        <button className="lc-btn primary" data-act="confirm" disabled={!armed} onClick={() => decide(true)}>
-          Aufnehmen
-        </button>
-      </div>
+      <DialogCard
+        overline="Link von außen"
+        title="Aufnahme per Link?"
+        footer={
+          <Checkbox data-act="dont-ask" checked={dontAskAgain} disabled={!armed} onChange={setDontAskAgain}>
+            Nicht mehr fragen
+          </Checkbox>
+        }
+        actions={
+          <>
+            <Button data-act="cancel" onClick={() => decide(false)}>
+              Abbrechen
+            </Button>
+            <Button variant="primary" className="lc-confirm" data-act="confirm" disabled={!armed} onClick={() => decide(true)}>
+              Aufnehmen
+              {!armed && armStart > 0 && <span key={armStart} className="lc-arm" style={{ animationDuration: `${ARM_DELAY_MS}ms` }} aria-hidden="true" />}
+            </Button>
+          </>
+        }
+      >
+        <div className="lc-action">
+          <IconTile>{action.icon}</IconTile>
+          <div>
+            <div className="lc-action__title">{action.title}</div>
+            <div className="lc-action__link">knips://{kind}</div>
+          </div>
+        </div>
+        <p>{message}</p>
+        <p className="lc-hint">Hast du das nicht selbst ausgelöst, klicke auf „Abbrechen“.</p>
+      </DialogCard>
     </div>
   );
 }

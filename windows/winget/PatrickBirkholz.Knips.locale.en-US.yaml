@@ -1,0 +1,44 @@
+# Vorlage für scripts/winget-manifest.sh — {{VERSION}} wird ersetzt.
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.locale.1.28.0.schema.json
+
+PackageIdentifier: PatrickBirkholz.Knips
+PackageVersion: {{VERSION}}
+PackageLocale: en-US
+Publisher: Patrick Birkholz
+PublisherUrl: https://github.com/patrickbirkholz0000
+PublisherSupportUrl: https://github.com/patrickbirkholz0000/knips/issues
+PrivacyUrl: https://github.com/patrickbirkholz0000/knips#privacy
+Author: Patrick Birkholz
+PackageName: Knips
+PackageUrl: https://github.com/patrickbirkholz0000/knips
+License: GPL-3.0-or-later
+LicenseUrl: https://github.com/patrickbirkholz0000/knips/blob/v{{VERSION}}/LICENSE
+Copyright: © 2026 Patrick Birkholz
+ShortDescription: Screenshots and screen recordings with censoring for images and videos. No account, everything stays on your PC.
+Description: |-
+  Knips captures an area, a window or the whole screen, scrolling screenshots and MP4 screen recordings. The
+  editor adds arrows, text, numbers and highlights and censors sensitive content with solid bars, pixelation
+  or blur, optionally automatically for e-mail addresses, IBANs, phone numbers and API keys (on-device text
+  recognition). This works in videos too, with bars that follow moving content. Saved and shared files are
+  always the censored version.
+
+  Free software (GPL-3.0-or-later), no account, no cloud. Anonymous usage statistics are only sent if you
+  agree on first launch. The user interface is in German.
+Tags:
+- screenshot
+- screen-capture
+- screen-recorder
+- screen-recording
+- censor
+- redaction
+- blur
+- pixelate
+- ocr
+- annotation
+- gif
+- mp4
+- privacy
+- open-source
+ReleaseNotesUrl: https://github.com/patrickbirkholz0000/knips/releases/tag/v{{VERSION}}
+ManifestType: locale
+ManifestVersion: 1.28.0

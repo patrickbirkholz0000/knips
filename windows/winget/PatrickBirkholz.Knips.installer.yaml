@@ -1,0 +1,34 @@
+# Vorlage für scripts/winget-manifest.sh — {{VERSION}}, {{SHA256}} und {{RELEASE_DATE}} werden ersetzt.
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.28.0.schema.json
+
+PackageIdentifier: PatrickBirkholz.Knips
+PackageVersion: {{VERSION}}
+InstallerLocale: de-DE
+Platform:
+- Windows.Desktop
+# Tauri-NSIS-Installer, Modus „nur für diesen Benutzer“: winget nimmt /S für die stille Installation.
+InstallerType: nullsoft
+Scope: user
+InstallModes:
+- interactive
+- silent
+- silentWithProgress
+UpgradeBehavior: install
+Protocols:
+- knips
+ReleaseDate: {{RELEASE_DATE}}
+# Eintrag unter HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Knips
+ProductCode: Knips
+AppsAndFeaturesEntries:
+- DisplayName: Knips
+  Publisher: Patrick Birkholz
+  DisplayVersion: {{VERSION}}
+  ProductCode: Knips
+InstallationMetadata:
+  DefaultInstallLocation: '%LocalAppData%\Knips'
+Installers:
+- Architecture: x64
+  InstallerUrl: https://github.com/patrickbirkholz0000/knips/releases/download/v{{VERSION}}/Knips_{{VERSION}}_x64-setup.exe
+  InstallerSha256: {{SHA256}}
+ManifestType: installer
+ManifestVersion: 1.28.0

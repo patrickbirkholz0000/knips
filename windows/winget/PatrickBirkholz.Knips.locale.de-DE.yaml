@@ -1,0 +1,44 @@
+# Vorlage für scripts/winget-manifest.sh — {{VERSION}} wird ersetzt.
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.28.0.schema.json
+
+PackageIdentifier: PatrickBirkholz.Knips
+PackageVersion: {{VERSION}}
+PackageLocale: de-DE
+Publisher: Patrick Birkholz
+PublisherUrl: https://github.com/patrickbirkholz0000
+PublisherSupportUrl: https://github.com/patrickbirkholz0000/knips/issues
+PrivacyUrl: https://github.com/patrickbirkholz0000/knips#datenschutz
+Author: Patrick Birkholz
+PackageName: Knips
+PackageUrl: https://github.com/patrickbirkholz0000/knips
+License: GPL-3.0-or-later
+LicenseUrl: https://github.com/patrickbirkholz0000/knips/blob/v{{VERSION}}/LICENSE
+Copyright: © 2026 Patrick Birkholz
+ShortDescription: Screenshots und Bildschirmvideos mit Zensur für Bilder und Videos. Ohne Konto, alles bleibt auf dem Rechner.
+Description: |-
+  Knips nimmt einen Bereich, ein Fenster oder den ganzen Bildschirm auf, auch als Scroll-Screenshot oder als
+  MP4-Video. Im Editor kommen Pfeile, Text, Nummern und Markierungen dazu, und sensible Stellen lassen sich
+  zensieren: als Balken, verpixelt oder unscharf, auf Wunsch automatisch für E-Mail-Adressen, IBANs,
+  Telefonnummern und API-Schlüssel (Texterkennung auf dem Gerät). Das geht auch in Videos, mit Balken, die
+  bewegtem Inhalt folgen. Gespeichert und geteilt wird immer die zensierte Fassung.
+
+  Freie Software (GPL-3.0-or-later), ohne Konto und ohne Cloud. Eine anonyme Nutzungsstatistik sendet Knips
+  nur, wenn man beim ersten Start zustimmt. Die Oberfläche ist auf Deutsch.
+Moniker: knips
+Tags:
+- screenshot
+- bildschirmfoto
+- bildschirmaufnahme
+- screen-recorder
+- zensur
+- schwaerzen
+- verpixeln
+- texterkennung
+- ocr
+- gif
+- mp4
+- datenschutz
+- open-source
+ReleaseNotesUrl: https://github.com/patrickbirkholz0000/knips/releases/tag/v{{VERSION}}
+ManifestType: defaultLocale
+ManifestVersion: 1.28.0

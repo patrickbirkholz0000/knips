@@ -178,8 +178,9 @@ unter der neuen CSP (Editor, Video-Editor, Verlauf, Karten laden Bilder/Videos �
 CI 20.10.2026 (Daten/Datenschutz): alle 16 Selbsttests grün, neu `storage`; Auto-Zensur auf hohem Bild
 (1400×5965) 24 statt 9 Funde, auf breitem (6011×880) 16 statt 1; „Text kopieren“ Seite = Rust in allen
 Fällen; blockierte Datei → „Zugriff verweigert“ statt stillem Erfolg; Druck-Tasten-Vermerk in der Registry.
-WebView2-Cache geprüft: Auch ohne InPrivate landete das per Asset-Protokoll geladene Bild nicht im Cache —
-InPrivate bleibt als Absicherung. `scripts/uninstall-test.ps1` läuft erst, wenn der Workflow es aufruft.
+WebView2-Cache geprüft: Auch ohne InPrivate landeten per Asset-Protokoll geladenes Bild und Video (Range)
+nicht im Cache — InPrivate bleibt als Absicherung. `scripts/uninstall-test.ps1` läuft erst, wenn der
+Workflow es aufruft; den stillen Deinstaller mit Hook (`/S`) prüft bereits `scripts/test-install.ps1`.
 Noch am Gerät zu testen: Tastendrücke auf echter Tastatur (Hook neben anderen Tools), Mikrofon,
 Ziehen aus den Karten in andere Apps, Einfügen in fremde Apps, mehrere Monitore mit gemischter Skalierung.
 

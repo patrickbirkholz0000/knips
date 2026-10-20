@@ -94,6 +94,7 @@ if (!inTauri) {
     mockEmit("bootstrap-changed", { ...mockBootstrap, settings, telemetryConsent });
   });
   registerMock("telemetry_count", () => {});
+  registerMock("link_confirm_shown", () => true);
   registerMock("link_confirm_decide", () => true);
   registerMock("set_settings", ({ patch }) => {
     settings = { ...settings, ...patch };

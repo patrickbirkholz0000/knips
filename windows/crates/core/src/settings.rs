@@ -46,8 +46,15 @@ impl KeyCombo {
         self.mods & MOD_WIN != 0
     }
 
-    /// Anzeige wie in Windows: „Strg+Umschalt+4“, „Alt+Druck“, „Win+Umschalt+S“.
+    /// Anzeige wie in Windows: „Strg+Umschalt+4“, „Alt+Druck“, „Win+Umschalt+S“ — mit den deutschen
+    /// Tastennamen aus `key_name` (Zeichentasten wie auf QWERTZ).
     pub fn display(&self) -> String {
+        self.display_with(key_name)
+    }
+
+    /// Wie `display`, aber mit eigenen Tastennamen (die App nimmt die Beschriftung des aktuellen Layouts,
+    /// `knips_platform::hotkeys::key_name`).
+    pub fn display_with(&self, key_name: impl Fn(u32) -> String) -> String {
         let mut parts: Vec<String> = vec![];
         if self.mods & MOD_WIN != 0 {
             parts.push("Win".into());
@@ -66,7 +73,9 @@ impl KeyCombo {
     }
 }
 
-/// Deutscher Tastenname für einen Virtual-Key.
+/// Deutscher Tastenname für einen Virtual-Key. Zeichentasten (0xBA–0xE2) so, wie sie auf dem deutschen
+/// Layout beschriftet sind — die App fragt dafür das aktuelle Layout (`knips_platform::hotkeys::key_name`),
+/// das hier ist der Rückfall und die Attrappe.
 pub fn key_name(vk: u32) -> String {
     match vk {
         0x08 => "Rücktaste".into(),
@@ -233,9 +242,131 @@ pub struct Settings {
     pub settings_version: u32,
 }
 
+/// Werkzeuge des Bild-Editors (`EditorTool` in src/shared/types.ts).
+pub const EDITOR_TOOLS: [&str; 10] = ["select", "arrow", "rectangle", "ellipse", "line", "text", "counter", "highlight", "redact", "crop"];
+
+/// Felder, die das Einstellungsfenster über `set_settings` ändern darf. Alles andere (Kürzel, interne
+/// Merker, Nutzungsstatistik) ändert nur Rust selbst.
+pub const SETTINGS_WINDOW_FIELDS: [&str; 25] = [
+    "saveFolder",
+    "copyToClipboard",
+    "showQuickAccess",
+    "quickAccessAutoHide",
+    "quickAccessSeconds",
+    "openEditorAfterCapture",
+    "playSound",
+    "recordingFps",
+    "recordingShowCursor",
+    "recordingCountdown",
+    "recordingMicrophone",
+    "recordingAtScreenSize",
+    "recordingHevc",
+    "recordingShowClicks",
+    "gifFps",
+    "gifWidth",
+    "redactStyle",
+    "exportAtScreenSize",
+    "imageFormat",
+    "showAutoRedact",
+    "autoRedactKinds",
+    "retentionDays",
+    "disabledHotkeys",
+    "launchAtLogin",
+    "linkCaptureWithoutConfirm",
+];
+
+/// Felder, die Bild- und Video-Editor ändern dürfen (zuletzt gewählter Zensurstil).
+pub const EDITOR_WINDOW_FIELDS: [&str; 1] = ["redactStyle"];
+
+/// Prüft einen Ablageordner aus der Oberfläche (Windows-Pfad, nur Text — ob es den Ordner gibt, prüft die
+/// App). Leer = Standard. Erlaubt nur absolute Pfade auf einem Laufwerk (`C:\…`): keine Netzwerk- (UNC,
+/// `\\server\freigabe`) oder Gerätepfade (`\\?\`, `\\.\`, `CON`, `NUL`, `COM1` …), keine Datenströme
+/// (`…:stream`), kein `.`/`..`, keine in Windows-Namen verbotenen Zeichen.
+pub fn check_save_folder(path: &str) -> Result<(), String> {
+    if path.is_empty() {
+        return Ok(());
+    }
+    let bad = |why: &str| Err(format!("Dieser Ordner geht nicht als Ablage: {why}."));
+    if path.len() > 1024 {
+        return bad("Pfad zu lang");
+    }
+    if path.chars().any(|c| c.is_control() || matches!(c, '<' | '>' | '"' | '|' | '?' | '*')) {
+        return bad("ungültige Zeichen im Pfad");
+    }
+    let bytes = path.as_bytes();
+    let drive = bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && matches!(bytes[2], b'\\' | b'/');
+    if !drive {
+        if path.starts_with(r"\\") || path.starts_with("//") {
+            return bad("Netzwerk- und Gerätepfade sind nicht erlaubt");
+        }
+        return bad(r"nur vollständige Pfade auf einem Laufwerk, z. B. C:\Bilder\Knips");
+    }
+    for part in path[3..].split(['\\', '/']) {
+        if part.is_empty() {
+            continue; // abschließender oder doppelter Trenner
+        }
+        if part == "." || part == ".." {
+            return bad("„.“ und „..“ sind im Pfad nicht erlaubt");
+        }
+        if part.contains(':') {
+            return bad("„:“ ist nur nach dem Laufwerksbuchstaben erlaubt");
+        }
+        if part.ends_with([' ', '.']) {
+            return bad("Ordnernamen dürfen nicht auf Leerzeichen oder Punkt enden");
+        }
+        // Gerätenamen gelten auch mit Endung („nul.txt“).
+        let stem = part.split('.').next().unwrap_or("").trim_end().to_uppercase();
+        let numbered = stem
+            .strip_prefix("COM")
+            .or_else(|| stem.strip_prefix("LPT"))
+            .is_some_and(|n| matches!(n, "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"));
+        if numbered || matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$") {
+            return bad("Gerätenamen wie CON, NUL oder COM1 sind nicht erlaubt");
+        }
+    }
+    Ok(())
+}
+
 impl Settings {
     pub const QUICK_ACCESS_SECONDS: std::ops::RangeInclusive<u32> = 1..=3600;
+    pub const RECORDING_FPS: std::ops::RangeInclusive<u32> = 5..=60;
+    pub const GIF_FPS: std::ops::RangeInclusive<u32> = 1..=50;
+    pub const GIF_WIDTH: std::ops::RangeInclusive<u32> = 160..=3840;
+    /// 0 = unbegrenzt; sonst höchstens zehn Jahre.
+    pub const RETENTION_DAYS: std::ops::RangeInclusive<u32> = 0..=3650;
     pub const VERSION: u32 = 1;
+
+    /// Teiländerung aus der Oberfläche prüfen und anwenden: `patch` ist ein JSON-Objekt nur mit Feldern
+    /// aus `allowed` (sonst Fehler), Typen und Auswahlwerte wie in `Settings`, Zahlen in ihren Bereichen,
+    /// Ablageordner nach `check_save_folder` (wenn er sich ändert). Liefert den neuen Stand; `self` bleibt.
+    pub fn patched(&self, patch: &serde_json::Value, allowed: &[&str]) -> Result<Settings, String> {
+        let fields = patch.as_object().ok_or_else(|| "Einstellungen: Objekt erwartet".to_string())?;
+        let mut merged = serde_json::to_value(self).map_err(|e| e.to_string())?;
+        let target = merged.as_object_mut().ok_or_else(|| "Einstellungen: Objekt erwartet".to_string())?;
+        for (key, value) in fields {
+            if !allowed.contains(&key.as_str()) {
+                return Err(format!("Die Einstellung „{key}“ lässt sich hier nicht ändern."));
+            }
+            target.insert(key.clone(), value.clone());
+        }
+        let next: Settings = serde_json::from_value(merged).map_err(|e| format!("Ungültige Einstellung: {e}"))?;
+        let ranges = [
+            ("quickAccessSeconds", next.quick_access_seconds, Self::QUICK_ACCESS_SECONDS),
+            ("recordingFps", next.recording_fps, Self::RECORDING_FPS),
+            ("gifFps", next.gif_fps, Self::GIF_FPS),
+            ("gifWidth", next.gif_width, Self::GIF_WIDTH),
+            ("retentionDays", next.retention_days, Self::RETENTION_DAYS),
+        ];
+        for (name, value, range) in ranges {
+            if fields.contains_key(name) && !range.contains(&value) {
+                return Err(format!("Ungültige Einstellung: {name} muss zwischen {} und {} liegen.", range.start(), range.end()));
+            }
+        }
+        if next.save_folder != self.save_folder {
+            check_save_folder(next.save_folder.trim())?;
+        }
+        Ok(next)
+    }
 
     pub fn default_hotkeys() -> BTreeMap<HotkeyAction, KeyCombo> {
         HotkeyAction::ALL.iter().filter_map(|a| a.default_combo().map(|c| (*a, c))).collect()
@@ -270,10 +401,12 @@ impl Settings {
 
     /// Werte in gültige Bereiche bringen (nach dem Laden und nach jeder Änderung aus der UI).
     pub fn sanitize(&mut self) {
-        self.quick_access_seconds = self.quick_access_seconds.clamp(1, 3600);
-        self.recording_fps = self.recording_fps.clamp(5, 60);
-        self.gif_fps = self.gif_fps.clamp(1, 50);
-        self.gif_width = self.gif_width.clamp(160, 3840);
+        let clamp = |v: u32, r: std::ops::RangeInclusive<u32>| v.clamp(*r.start(), *r.end());
+        self.quick_access_seconds = clamp(self.quick_access_seconds, Self::QUICK_ACCESS_SECONDS);
+        self.recording_fps = clamp(self.recording_fps, Self::RECORDING_FPS);
+        self.gif_fps = clamp(self.gif_fps, Self::GIF_FPS);
+        self.gif_width = clamp(self.gif_width, Self::GIF_WIDTH);
+        self.retention_days = clamp(self.retention_days, Self::RETENTION_DAYS);
         self.hotkeys.retain(|_, c| c.is_valid());
     }
 }
@@ -327,6 +460,11 @@ mod tests {
         assert_eq!(s.hotkeys[&HotkeyAction::CaptureArea].display(), "Druck");
         assert_eq!(s.hotkeys[&HotkeyAction::CaptureWindow].display(), "Alt+Druck");
         assert_eq!(KeyCombo::new(0x53, MOD_WIN | MOD_SHIFT).display(), "Win+Umschalt+S");
+        assert_eq!(KeyCombo::new(0xBA, MOD_CONTROL | MOD_SHIFT).display(), "Strg+Umschalt+Ü");
+        // Mit Namen aus einem anderen Layout (US: „;“ auf derselben Taste); Sondertasten bleiben deutsch.
+        let us = |vk: u32| if vk == 0xBA { ";".to_string() } else { key_name(vk) };
+        assert_eq!(KeyCombo::new(0xBA, MOD_CONTROL | MOD_SHIFT).display_with(us), "Strg+Umschalt+;");
+        assert_eq!(KeyCombo::new(VK_SNAPSHOT, MOD_ALT).display_with(us), "Alt+Druck");
         assert!(!KeyCombo::new(0x41, MOD_SHIFT).is_valid());
         assert!(KeyCombo::new(0x2C, MOD_SHIFT).is_valid());
         let json = serde_json::to_string(&s).unwrap();
@@ -338,5 +476,117 @@ mod tests {
         // Links nehmen ohne Einstellung nie ohne Rückfrage auf, auch mit alter settings.json ohne das Feld.
         assert!(!s.link_capture_without_confirm && !partial.link_capture_without_confirm);
         assert!(json.contains(r#""linkCaptureWithoutConfirm":false"#));
+    }
+
+    #[test]
+    fn patch_from_settings_window() {
+        use serde_json::json;
+        let s = Settings::default();
+        let all = &SETTINGS_WINDOW_FIELDS[..];
+        // erlaubte Felder, gültige Werte
+        let patch = json!({
+            "playSound": false,
+            "quickAccessSeconds": 3600,
+            "redactStyle": "blur",
+            "linkCaptureWithoutConfirm": true,
+            "disabledHotkeys": ["captureArea"],
+            "saveFolder": r"D:\Screenshots\Knips",
+        });
+        let next = s.patched(&patch, all).unwrap();
+        assert!(!next.play_sound && next.link_capture_without_confirm);
+        assert_eq!(next.quick_access_seconds, 3600);
+        assert_eq!(next.redact_style, RedactStyle::Blur);
+        assert_eq!(next.save_folder, r"D:\Screenshots\Knips");
+        assert_eq!(s, Settings::default(), "self bleibt unverändert");
+        // leerer Ablageordner = Standard; unveränderter Ordner wird nicht erneut geprüft
+        assert!(next.patched(&json!({ "saveFolder": "" }), all).is_ok());
+        // nicht erlaubte Felder (Kürzel, interne Merker, Nutzungsstatistik, Unbekanntes)
+        for key in ["hotkeys", "didFirstLaunch", "askedShortcutTakeover", "tookSnippingKey", "settingsVersion", "editor", "telemetryConsent", "telemetryInstallId", "unbekannt"] {
+            assert!(s.patched(&json!({ key: true }), all).is_err(), "{key}");
+        }
+        // falsche Typen, unbekannte Auswahlwerte, Bereiche, kein Objekt
+        for bad in [
+            json!({ "playSound": "ja" }),
+            json!({ "redactStyle": "schwarz" }),
+            json!({ "imageFormat": "bmp" }),
+            json!({ "autoRedactKinds": ["email", "passwort"] }),
+            json!({ "disabledHotkeys": ["formatC"] }),
+            json!({ "quickAccessSeconds": 0 }),
+            json!({ "quickAccessSeconds": 3601 }),
+            json!({ "quickAccessSeconds": -5 }),
+            json!({ "recordingFps": 240 }),
+            json!({ "gifFps": 0 }),
+            json!({ "gifWidth": 100000 }),
+            json!({ "retentionDays": 100000 }),
+            json!({ "saveFolder": 42 }),
+            json!({ "saveFolder": r"\\server\freigabe" }),
+            json!(["playSound"]),
+            json!("playSound"),
+        ] {
+            assert!(s.patched(&bad, all).is_err(), "{bad}");
+        }
+        // Editoren dürfen nur den Zensurstil ändern
+        assert_eq!(s.patched(&json!({ "redactStyle": "pixelate" }), &EDITOR_WINDOW_FIELDS).unwrap().redact_style, RedactStyle::Pixelate);
+        for key in ["linkCaptureWithoutConfirm", "saveFolder", "launchAtLogin"] {
+            assert!(s.patched(&json!({ key: true }), &EDITOR_WINDOW_FIELDS).is_err(), "{key}");
+        }
+        assert!(s.patched(&json!({ "playSound": false }), &[]).is_err());
+        assert!(s.patched(&json!({}), &[]).is_ok());
+    }
+
+    #[test]
+    fn save_folder_rules() {
+        for ok in [
+            "",
+            r"C:\Users\Anna\Pictures\Knips",
+            r"C:\Users\Anna\Pictures\Knips\",
+            "d:/Screenshots",
+            r"E:\",
+            r"C:\Users\Anna\Bilder\Österreich 2026",
+            r"C:\Users\Anna\Console",
+            r"C:\COM10",
+            r"C:\Daten\v1.2",
+        ] {
+            assert_eq!(check_save_folder(ok), Ok(()), "{ok}");
+        }
+        for bad in [
+            r"\\server\freigabe\Knips",
+            "//server/freigabe",
+            r"\\?\C:\Knips",
+            r"\\.\PhysicalDrive0",
+            r"\\?\UNC\server\freigabe",
+            "Knips",
+            r"Bilder\Knips",
+            r"\Knips",
+            "C:Knips",
+            r"C:\Users\..\Windows",
+            r"C:\Users\.\Anna",
+            r"C:\Knips:versteckt",
+            r"C:\Knips\NUL",
+            r"C:\Knips\con.txt",
+            r"C:\Knips\COM1",
+            r"C:\Knips\lpt9",
+            r"C:\Knips\COM¹",
+            r"C:\Knips\a<b",
+            r"C:\Knips\a|b",
+            r"C:\Knips\a?",
+            r"C:\Knips\a*",
+            r"C:\Knips\name.",
+            r"C:\Knips\name ",
+            "C:\\Knips\\a\nb",
+            r"1:\Knips",
+            "https://example.com/knips",
+            "file:///C:/Knips",
+        ] {
+            assert!(check_save_folder(bad).is_err(), "{bad:?}");
+        }
+        assert!(check_save_folder(&format!(r"C:\{}", "a".repeat(1100))).is_err());
+    }
+
+    #[test]
+    fn sanitize_clamps_ranges() {
+        let mut s = Settings { quick_access_seconds: 0, recording_fps: 500, gif_fps: 0, gif_width: 1, retention_days: 99_999, ..Settings::default() };
+        s.sanitize();
+        assert_eq!((s.quick_access_seconds, s.recording_fps, s.gif_fps, s.gif_width, s.retention_days), (1, 60, 1, 160, 3650));
     }
 }

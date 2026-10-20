@@ -24,13 +24,17 @@ use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Diagnostics::Debug::MessageBeep;
 use windows::Win32::System::Registry::{RegGetValueW, RegSetKeyValueW, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, REG_DWORD, RRF_RT_REG_DWORD, RRF_RT_REG_SZ};
 use windows::Win32::System::Threading::{GetCurrentThread, GetCurrentThreadId, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL};
+#[cfg(feature = "dev")]
+use windows::Win32::UI::Input::KeyboardAndMouse::{LoadKeyboardLayoutW, UnloadKeyboardLayout, KLF_NOTELLSHELL};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, RegisterHotKey, SendInput, UnregisterHotKey, HOT_KEY_MODIFIERS, INPUT, INPUT_0, INPUT_KEYBOARD,
-    KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_BACK, VK_CONTROL,
-    VK_DELETE, VK_ESCAPE, VK_LMENU, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RWIN, VK_SHIFT,
+    GetAsyncKeyState, GetKeyboardLayout, GetKeyboardLayoutList, MapVirtualKeyExW, RegisterHotKey, SendInput, ToUnicodeEx,
+    UnregisterHotKey, HKL, HOT_KEY_MODIFIERS, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+    KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, MAPVK_VK_TO_CHAR, MAPVK_VK_TO_VSC, VIRTUAL_KEY, VK_BACK, VK_CONTROL,
+    VK_DELETE, VK_ESCAPE, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, GetMessageW, PeekMessageW, PostThreadMessageW, SendMessageTimeoutW,
+    CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId, PeekMessageW,
+    PostThreadMessageW, SendMessageTimeoutW,
     SetTimer, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, HC_ACTION, HHOOK, HWND_BROADCAST,
     KBDLLHOOKSTRUCT, LLKHF_INJECTED, MB_OK, MSG, PM_NOREMOVE, SMTO_ABORTIFHUNG, WH_KEYBOARD_LL, WM_APP, WM_HOTKEY,
     WM_KEYDOWN, WM_KEYUP, WM_SETTINGCHANGE, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER,
@@ -662,6 +666,121 @@ pub fn set_snipping_key(enabled: bool) -> Result<()> {
         SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, WPARAM(0), LPARAM(area.as_ptr() as isize), SMTO_ABORTIFHUNG, 1000, None);
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------- Tastaturlayout: Namen und AltGr
+
+/// Tasten, deren Zeichen vom Layout abhängt (OEM-Tasten: Umlaute, Satzzeichen, `<>`). Buchstaben und
+/// Ziffern heißen wie ihr Virtual-Key (der folgt schon dem Layout), Sondertasten bleiben deutsch.
+fn layout_dependent(vk: u32) -> bool {
+    matches!(vk, 0xBA..=0xC0 | 0xDB..=0xDF | 0xE2)
+}
+
+/// Layout, in dem gerade getippt wird (Thread des Vordergrundfensters), sonst das des eigenen Threads.
+fn current_layout() -> HKL {
+    // SAFETY: reine Abfragen; ein ungültiges Fenster liefert Thread 0.
+    unsafe {
+        let fg = GetForegroundWindow();
+        let thread = if fg.0.is_null() { 0 } else { GetWindowThreadProcessId(fg, None) };
+        let hkl = GetKeyboardLayout(thread);
+        if hkl.0.is_null() {
+            GetKeyboardLayout(0)
+        } else {
+            hkl
+        }
+    }
+}
+
+/// Alle Layouts, zwischen denen der Nutzer umschalten kann.
+fn installed_layouts() -> Vec<HKL> {
+    // SAFETY: erst die Anzahl, dann ein passend großes Feld.
+    unsafe {
+        let n = GetKeyboardLayoutList(None);
+        if n <= 0 {
+            return vec![];
+        }
+        let mut list = vec![HKL(std::ptr::null_mut()); n as usize];
+        let got = GetKeyboardLayoutList(Some(&mut list));
+        list.truncate(got.max(0) as usize);
+        list
+    }
+}
+
+fn key_name_in(vk: u32, hkl: HKL) -> String {
+    if layout_dependent(vk) {
+        // SAFETY: reine Abfrage. Bit 31 kennzeichnet Tottasten (´, ^), das Zeichen steht im unteren Wort.
+        let mapped = unsafe { MapVirtualKeyExW(vk, MAPVK_VK_TO_CHAR, Some(hkl)) };
+        if let Some(c) = char::from_u32(mapped & 0xFFFF).filter(|c| *c != '\0' && !c.is_control() && !c.is_whitespace()) {
+            let mut upper = c.to_uppercase();
+            return match (upper.next(), upper.next()) {
+                (Some(u), None) => u.to_string(),
+                _ => c.to_string(), // „ß“ bleibt „ß“ (nicht „SS“)
+            };
+        }
+    }
+    knips_core::settings::key_name(vk)
+}
+
+/// Name der Taste `vk` für Anzeigen wie „Strg+Umschalt+Ü“: Zeichentasten so, wie sie auf dem aktuellen
+/// Layout beschriftet sind (US: „;“ statt „Ü“), alles andere mit den deutschen Namen aus knips-core.
+pub fn key_name(vk: u32) -> String {
+    key_name_in(vk, current_layout())
+}
+
+fn altgr_char_in(combo: KeyCombo, hkl: HKL) -> Option<String> {
+    // AltGr meldet Windows als Strg+Alt; mit Win gedrückt tippt niemand ein Zeichen.
+    if combo.mods & (MOD_CONTROL | MOD_ALT) != (MOD_CONTROL | MOD_ALT) || combo.mods & MOD_WIN != 0 || combo.vk > 0xFF {
+        return None;
+    }
+    let mut state = [0u8; 256];
+    for vk in [VK_CONTROL, VK_LCONTROL, VK_MENU, VK_RMENU] {
+        state[vk.0 as usize] = 0x80;
+    }
+    if combo.mods & MOD_SHIFT != 0 {
+        state[VK_SHIFT.0 as usize] = 0x80;
+        state[VK_LSHIFT.0 as usize] = 0x80;
+    }
+    let mut buf = [0u16; 8];
+    // SAFETY: Puffer und Tastenzustand gehören uns. Flag 4: Zustand des Tastaturtreibers nicht ändern
+    // (sonst bliebe eine Tottaste „hängen“), ab Windows 10 1607.
+    let n = unsafe {
+        let scan = MapVirtualKeyExW(combo.vk, MAPVK_VK_TO_VSC, Some(hkl));
+        ToUnicodeEx(combo.vk, scan, &state, &mut buf, 0x4, Some(hkl))
+    };
+    // < 0: Tottaste (das Zeichen steht trotzdem im Puffer), 0: kein Zeichen.
+    let len = (n.unsigned_abs() as usize).min(buf.len());
+    let text: String = String::from_utf16_lossy(&buf[..len]).chars().filter(|c| !c.is_control()).collect();
+    (!text.trim().is_empty()).then_some(text)
+}
+
+/// Ergibt `combo` beim Tippen ein Zeichen, weil Strg+Alt dasselbe ist wie AltGr (deutsch: Strg+Alt+Q = „@“,
+/// Strg+Alt+E = „€“)? Dann dieses Zeichen — als Kürzel würde es das Tippen verhindern. Geprüft werden das
+/// aktuelle und alle anderen installierten Layouts.
+pub fn altgr_char(combo: KeyCombo) -> Option<String> {
+    let mut layouts = vec![current_layout()];
+    for hkl in installed_layouts() {
+        if !layouts.contains(&hkl) {
+            layouts.push(hkl);
+        }
+    }
+    layouts.into_iter().filter(|h| !h.0.is_null()).find_map(|h| altgr_char_in(combo, h))
+}
+
+/// Selbsttest: Tastennamen und AltGr-Zeichen auf dem Layout `klid` (z. B. „00000407“ = Deutsch,
+/// „00000409“ = US). Lädt das Layout dafür kurz, ohne es zu aktivieren.
+#[cfg(feature = "dev")]
+pub fn probe_layout(klid: &str, vks: &[u32], combos: &[KeyCombo]) -> Result<(Vec<String>, Vec<Option<String>>)> {
+    let before = installed_layouts();
+    let id = super::util::wide(klid);
+    // SAFETY: `id` ist null-terminiert und lebt über den Aufruf.
+    let hkl = unsafe { LoadKeyboardLayoutW(windows::core::PCWSTR(id.as_ptr()), KLF_NOTELLSHELL) }?;
+    let names = vks.iter().map(|vk| key_name_in(*vk, hkl)).collect();
+    let chars = combos.iter().map(|c| altgr_char_in(*c, hkl)).collect();
+    if !before.contains(&hkl) {
+        // SAFETY: nur das eben selbst geladene Layout wieder entfernen.
+        let _ = unsafe { UnloadKeyboardLayout(hkl) };
+    }
+    Ok((names, chars))
 }
 
 /// Tastenkombination simulieren wie von der Tastatur (Selbsttest `hotkeys`).

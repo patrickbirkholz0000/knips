@@ -24,8 +24,12 @@ use windows::Win32::System::Threading::AttachThreadInput;
 use super::util::{hwnd, init_com, wide, wide_path};
 
 fn shell_execute(file: &[u16]) -> Result<()> {
-    // SAFETY: `file` ist null-terminiert und lebt über den Aufruf.
-    let r = unsafe { ShellExecuteW(None, w!("open"), PCWSTR(file.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL) };
+    shell_execute_verb(w!("open"), file)
+}
+
+fn shell_execute_verb(verb: PCWSTR, file: &[u16]) -> Result<()> {
+    // SAFETY: `file` ist null-terminiert und lebt über den Aufruf; `verb` ist ein statischer String.
+    let r = unsafe { ShellExecuteW(None, verb, PCWSTR(file.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL) };
     // Rückgabe > 32 = Erfolg (alte Win16-Konvention).
     if r.0 as isize > 32 {
         Ok(())
@@ -37,6 +41,15 @@ fn shell_execute(file: &[u16]) -> Result<()> {
 /// Datei/Ordner mit der Standard-App öffnen.
 pub fn open_path(path: &Path) -> Result<()> {
     shell_execute(&wide_path(path))
+}
+
+/// Ordner im Explorer öffnen — nur Ordner. Das Verb „explore“ gibt es nur für Ordner; eine Datei oder ein
+/// Programm an dieser Stelle wird damit nie gestartet.
+pub fn open_folder(path: &Path) -> Result<()> {
+    if !path.is_dir() {
+        bail!("Kein Ordner: {}", path.display());
+    }
+    shell_execute_verb(w!("explore"), &wide_path(path))
 }
 
 pub fn open_url(url: &str) -> Result<()> {

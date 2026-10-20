@@ -1,0 +1,169 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "capabilities": [
+    {
+      "identifier": "base",
+      "description": "Alle Knips-Fenster: Ereignisse aus Rust empfangen (nicht senden).",
+      "windows": ["*"],
+      "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+    },
+    {
+      "identifier": "settings",
+      "description": "Einstellungen: Einstellungen der Oberfläche, Kürzel, Druck-Taste, Ablage, Zustimmung zur Statistik, erlaubte Webseiten.",
+      "windows": ["settings"],
+      "permissions": [
+        "allow-get-bootstrap",
+        "allow-list-items",
+        "allow-set-settings",
+        "allow-hotkey-record",
+        "allow-hotkey-record-cancel",
+        "allow-hotkeys-reset-defaults",
+        "allow-hotkeys-preset-mac",
+        "allow-snipping-takeover",
+        "allow-snipping-restore",
+        "allow-choose-save-folder",
+        "allow-open-save-folder",
+        "allow-storage-size",
+        "allow-purge-originals",
+        "allow-open-url",
+        "allow-telemetry-set-consent"
+      ]
+    },
+    {
+      "identifier": "menu",
+      "description": "Menü-Panel: Aufnahmen starten, Fenster öffnen, zuletzt Aufgenommenes, Beenden.",
+      "windows": ["menu"],
+      "permissions": [
+        "allow-get-bootstrap",
+        "allow-list-items",
+        "allow-item-open",
+        "allow-item-start-drag",
+        "allow-perform",
+        "allow-open-image-file",
+        "allow-open-save-folder",
+        "allow-open-settings",
+        "allow-open-history",
+        "allow-menu-resize",
+        "allow-menu-close",
+        "allow-quit-app"
+      ]
+    },
+    {
+      "identifier": "cards",
+      "description": "Karten unten links.",
+      "windows": ["cards"],
+      "permissions": [
+        "allow-get-bootstrap",
+        "allow-get-cards",
+        "allow-cards-layout",
+        "allow-cards-hover",
+        "allow-cards-dismiss",
+        "allow-cards-dismiss-all",
+        "allow-item-open",
+        "allow-item-copy",
+        "allow-item-copy-text",
+        "allow-item-pin",
+        "allow-item-reveal",
+        "allow-item-delete",
+        "allow-item-start-drag"
+      ]
+    },
+    {
+      "identifier": "history",
+      "description": "Verlauf.",
+      "windows": ["history"],
+      "permissions": [
+        "allow-get-bootstrap",
+        "allow-list-items",
+        "allow-item-open",
+        "allow-item-copy",
+        "allow-item-reveal",
+        "allow-item-delete",
+        "allow-item-start-drag"
+      ]
+    },
+    {
+      "identifier": "pins",
+      "description": "Angepinnte Bilder: kopieren, verschieben, zoomen, schließen.",
+      "windows": ["pin-*"],
+      "permissions": [
+        "allow-pin-info",
+        "allow-pin-copy",
+        "core:window:allow-close",
+        "core:window:allow-start-dragging",
+        "core:window:allow-scale-factor",
+        "core:window:allow-outer-position",
+        "core:window:allow-set-size",
+        "core:window:allow-set-position"
+      ]
+    },
+    {
+      "identifier": "bars",
+      "description": "Leisten für Bildschirmaufnahme, Countdown und Scroll-Screenshot.",
+      "windows": ["rec-controls", "rec-countdown", "scroll-controls"],
+      "permissions": [
+        "allow-get-recording-state",
+        "allow-recording-stop",
+        "allow-get-scroll-state",
+        "allow-scroll-finish",
+        "core:window:allow-start-dragging"
+      ]
+    },
+    {
+      "identifier": "consent",
+      "description": "Frage zur Nutzungsstatistik.",
+      "windows": ["consent"],
+      "permissions": ["allow-telemetry-set-consent"]
+    },
+    {
+      "identifier": "link-confirm",
+      "description": "Rückfrage vor Aufnahmen per knips://-Link: nur die eigene Antwort.",
+      "windows": ["link-confirm-*"],
+      "permissions": ["allow-link-confirm-shown", "allow-link-confirm-decide"]
+    },
+    {
+      "identifier": "editor",
+      "description": "Bild-Editor: Original laden, Texterkennung, speichern, Text kopieren; Einstellungen nur den Zensurstil.",
+      "windows": ["editor-*"],
+      "permissions": [
+        "allow-get-bootstrap",
+        "allow-editor-open",
+        "allow-editor-text-lines",
+        "allow-editor-detect",
+        "allow-editor-stage",
+        "allow-editor-commit",
+        "allow-clipboard-text",
+        "allow-hud",
+        "allow-item-reveal",
+        "allow-set-editor-prefs",
+        "allow-set-settings",
+        "allow-telemetry-count",
+        "core:window:allow-close",
+        "core:window:allow-destroy",
+        "core:window:allow-set-title"
+      ]
+    },
+    {
+      "identifier": "video",
+      "description": "Video-Editor: Video laden, Vorschaubilder, Auto-Zensur, Verfolgen, Export; Einstellungen nur den Zensurstil.",
+      "windows": ["video-*"],
+      "permissions": [
+        "allow-get-bootstrap",
+        "allow-video-open",
+        "allow-video-thumbnails",
+        "allow-video-detect",
+        "allow-video-track",
+        "allow-video-save",
+        "allow-video-export-gif",
+        "allow-video-cancel",
+        "allow-item-copy",
+        "allow-item-reveal",
+        "allow-set-settings",
+        "allow-telemetry-count",
+        "core:window:allow-close",
+        "core:window:allow-destroy",
+        "core:window:allow-set-title"
+      ]
+    }
+  ]
+}

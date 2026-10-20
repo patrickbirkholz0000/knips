@@ -39,13 +39,9 @@ fn main() {
 
 fn run(args: Vec<String>) {
     let mut builder = tauri::Builder::default();
-    // Zweiter Start (z. B. knips://area aus Stream Deck) → an die laufende Instanz.
+    // Zweiter Start (z. B. knips://area aus Stream Deck) → an die laufende Instanz, genau einmal.
     if paths::test_root().is_none() {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|_app, argv, _cwd| {
-            for arg in argv.iter().filter(|a| a.starts_with("knips://")) {
-                app::handle_url(arg);
-            }
-        }));
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| app::second_instance(app, &argv)));
     }
     let app = builder
         .plugin(
@@ -72,9 +68,9 @@ fn run(args: Vec<String>) {
                     }
                 });
             }
-            for arg in args.iter().filter(|a| a.starts_with("knips://")) {
-                app::handle_url(arg);
-            }
+            #[cfg(feature = "dev")]
+            selftest::before_start_links(app.handle());
+            app::first_start(&args);
             #[cfg(feature = "dev")]
             selftest::after_setup(app.handle());
             Ok(())
@@ -136,6 +132,7 @@ fn run(args: Vec<String>) {
             commands::video_cancel,
             commands::telemetry_set_consent,
             commands::telemetry_count,
+            commands::link_confirm_shown,
             commands::link_confirm_decide,
             #[cfg(feature = "dev")]
             selftest::selftest_report,

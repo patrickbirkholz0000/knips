@@ -39,6 +39,8 @@ pub struct Knips {
     pub links: Links,
     /// Kürzel, die nicht registriert werden konnten.
     pub hotkey_failures: Mutex<Vec<HotkeyAction>>,
+    /// Einzeln für das Asset-Protokoll freigegebene Dateien im Ablageordner.
+    asset_files: Mutex<std::collections::HashSet<std::path::PathBuf>>,
     ocr_available: OnceLock<bool>,
     hevc_available: OnceLock<bool>,
 }
@@ -82,7 +84,7 @@ pub struct BootPaths {
 impl Knips {
     pub fn bootstrap(&self) -> Bootstrap {
         let settings = self.settings.get();
-        let hotkey_labels = settings.hotkeys.iter().map(|(a, c)| (*a, c.display())).collect();
+        let hotkey_labels = settings.hotkeys.iter().map(|(a, c)| (*a, hotkeys::label(c))).collect();
         Bootstrap {
             hotkey_labels,
             hotkey_failures: self.hotkey_failures.lock().clone(),
@@ -112,13 +114,31 @@ impl Knips {
         }
     }
 
-    /// Ordner, die Fenster über das Asset-Protokoll lesen dürfen (Vorschaubilder, Ablage, Pins, Videos).
+    /// Was Fenster über das Asset-Protokoll lesen dürfen: die eigenen Ordner von Knips (Originale und
+    /// Vorschaubilder in `items`, Pins und Video-Vorschauen in `temp`) und aus dem Ablageordner nur die
+    /// Dateien eigener Aufnahmen (`allow_item_files`) — nie den ganzen, frei wählbaren Ordner.
     pub fn allow_asset_dirs(&self) {
         let scope = self.app.asset_protocol_scope();
-        for dir in [paths::items_dir(), self.settings.save_folder(), paths::temp_dir()] {
+        for dir in [paths::items_dir(), paths::temp_dir()] {
             paths::ensure(&dir);
             if let Err(err) = scope.allow_directory(&dir, true) {
                 log::warn!("Asset-Freigabe {} fehlgeschlagen: {err}", dir.display());
+            }
+        }
+        self.allow_item_files(&self.store.items());
+    }
+
+    /// Fertige Dateien dieser Aufnahmen für das Asset-Protokoll freigeben (Editor ohne Original).
+    pub fn allow_item_files(&self, items: &[knips_core::model::CaptureItem]) {
+        let scope = self.app.asset_protocol_scope();
+        let mut allowed = self.asset_files.lock();
+        for item in items {
+            let file = std::path::PathBuf::from(&item.file_path);
+            if file.is_absolute() && !allowed.contains(&file) {
+                if let Err(err) = scope.allow_file(&file) {
+                    log::warn!("Asset-Freigabe {} fehlgeschlagen: {err}", file.display());
+                }
+                allowed.insert(file);
             }
         }
     }
@@ -160,6 +180,7 @@ pub fn setup(app: &AppHandle) -> anyhow::Result<()> {
         telemetry: telemetry.clone(),
         links: Links::default(),
         hotkey_failures: Mutex::new(vec![]),
+        asset_files: Mutex::new(Default::default()),
         ocr_available: OnceLock::new(),
         hevc_available: OnceLock::new(),
     });
@@ -167,6 +188,7 @@ pub fn setup(app: &AppHandle) -> anyhow::Result<()> {
 
     store.set_on_change(|items| {
         let k = knips();
+        k.allow_item_files(&items);
         k.emit("items-changed", items.clone());
         k.cards.sync(&items);
     });
@@ -215,6 +237,25 @@ pub fn setup(app: &AppHandle) -> anyhow::Result<()> {
     telemetry.start();
     log::info!("Knips gestartet ({})", if knips_platform::IS_REAL { "Windows" } else { "Attrappe" });
     Ok(())
+}
+
+/// Zweiter Start, während Knips läuft (Doppelklick auf einen knips://-Link, Stream Deck, Kommandozeile):
+/// Das Plugin `single-instance` übergibt die Argumente hierher, das Deep-Link-Plugin prüft sie (genau ein
+/// Argument mit dem Schema aus `tauri.conf.json`) und meldet sie an `on_open_url` → `handle_url`. Das ist
+/// der einzige Weg — `single-instance` läuft deshalb ohne sein Feature `deep-link`, sonst liefe jeder
+/// Link zweimal (Menü auf und gleich wieder zu, zwei Pins, zwei Aufnahmen).
+pub fn second_instance(app: &AppHandle, argv: &[String]) {
+    use tauri_plugin_deep_link::DeepLinkExt;
+    app.deep_link().handle_cli_arguments(argv.iter());
+}
+
+/// Erster Start mit `knips://…` als Argument. Das Deep-Link-Plugin meldet das Argument schon beim eigenen
+/// Start, bevor `on_open_url` angemeldet ist — diese Meldung hört niemand. Deshalb hier, genau einmal
+/// (Selbsttest `links` startet Knips dafür mit `knips://pin`).
+pub fn first_start(args: &[String]) {
+    for arg in args.iter().skip(1).filter(|a| a.starts_with("knips://")) {
+        handle_url(arg);
+    }
 }
 
 /// URL-Befehle `knips://area|window|fullscreen|record|last|text|scroll|pin|menu|history|settings` — immer

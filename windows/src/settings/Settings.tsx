@@ -142,9 +142,13 @@ const GROUPS: [string, HotkeyAction[]][] = [
 function Shortcuts({ boot }: { boot: Bootstrap }) {
   const { settings: s, hotkeyLabels, hotkeyFailures } = boot;
   const [recording, setRecording] = useState<HotkeyAction | null>(null);
+  const [rejected, setRejected] = useState<string | null>(null);
 
   useEffect(() => {
-    const off = events.hotkeyRecorded(() => setRecording(null));
+    const off = events.hotkeyRecorded((r) => {
+      setRecording(null);
+      setRejected(r.result === "rejected" ? r.message ?? "Diese Kombination geht nicht." : null);
+    });
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") { setRecording((r) => (r ? (api.hotkeyRecordCancel(), null) : r)); }
     };
@@ -163,11 +167,16 @@ function Shortcuts({ boot }: { boot: Bootstrap }) {
   const startRec = (a: HotkeyAction) => {
     if (recording === a) { api.hotkeyRecordCancel(); setRecording(null); return; }
     setRecording(a);
+    setRejected(null);
     api.hotkeyRecord(a);
   };
 
   return (
     <>
+      {rejected && (
+        <Notice tone="orange" icon={<AlertTriangle size={17} fill="currentColor" stroke="#fff" />}
+          title="Kürzel nicht übernommen" detail={rejected} />
+      )}
       {boot.snippingKeyEnabled && usesPrint && (
         <Notice tone="orange" icon={<AlertTriangle size={17} fill="currentColor" stroke="#fff" />}
           title="Windows belegt die Druck-Taste noch selbst"
@@ -322,13 +331,21 @@ function Storage({ boot }: { boot: Bootstrap }) {
   const items = useItems();
   const [size, setSize] = useState<number | null>(null);
   const [confirm, setConfirm] = useState(false);
+  const [folderError, setFolderError] = useState<string | null>(null);
   const refresh = () => api.storageSize().then((n) => setSize(n ?? 0));
   useEffect(() => { refresh(); }, []);
   const folder = boot.paths.saveFolder;
   const name = folder.split(/[\\/]/).filter(Boolean).pop() ?? folder;
   const change = async () => {
     const f = await api.chooseSaveFolder();
-    if (f) set({ saveFolder: f });
+    if (!f) return;
+    // Rust prüft den Ordner (Laufwerkspfad, kein Netzwerk- oder Gerätepfad, existiert) und lehnt sonst ab.
+    try {
+      await api.setSettings({ saveFolder: f });
+      setFolderError(null);
+    } catch (e) {
+      setFolderError(String(e));
+    }
   };
   return (
     <>
@@ -342,6 +359,7 @@ function Storage({ boot }: { boot: Bootstrap }) {
           <Pill onClick={change}>Ändern …</Pill>
           <Pill kind="primary" onClick={() => api.openSaveFolder()}>Öffnen</Pill>
         </div>
+        {folderError && <p className="st-folder-error">{folderError}</p>}
       </Card>
       <Card title="Originale" footer="Mit dem Original lässt sich eine Zensur später ändern. Es liegt getrennt in der App-Ablage und wird nie geteilt.">
         <Row title="Aufbewahren">

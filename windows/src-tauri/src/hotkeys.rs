@@ -40,22 +40,43 @@ pub fn apply() {
 #[serde(rename_all = "camelCase")]
 struct Recorded {
     action: HotkeyAction,
+    /// „combo“, „remove“, „cancel“ oder „rejected“ (Kombination tippt ein Zeichen, siehe `message`).
     result: &'static str,
     combo: Option<KeyCombo>,
+    message: Option<String>,
+}
+
+/// Anzeige eines Kürzels mit den Tastennamen des aktuellen Layouts.
+pub fn label(combo: &KeyCombo) -> String {
+    combo.display_with(hotkeys::key_name)
+}
+
+/// Warum `combo` nicht als Kürzel taugt: Strg+Alt ist unter Windows dasselbe wie AltGr. Ergibt die
+/// Kombination auf einem installierten Layout ein Zeichen (deutsch: Strg+Alt+Q = „@“), ließe es sich nicht
+/// mehr tippen, solange Knips läuft.
+pub fn altgr_conflict(combo: &KeyCombo) -> Option<String> {
+    let ch = hotkeys::altgr_char(*combo)?;
+    let alt_gr = combo.display_with(hotkeys::key_name).replacen("Strg+Alt+", "AltGr+", 1);
+    Some(format!(
+        "{} geht nicht: Unter Windows ist Strg+Alt dasselbe wie AltGr, und {alt_gr} tippt „{ch}“. Als Kürzel ließe sich „{ch}“ nicht mehr eingeben – bitte eine andere Kombination wählen.",
+        label(combo)
+    ))
 }
 
 /// Nächste Tastenkombination für `action` aufnehmen (Einstellungen).
 pub fn record(action: HotkeyAction) {
     hotkeys::record(Box::new(move |result| {
         let k = knips();
-        let (kind, combo) = match result {
-            RecordResult::Combo(c) => ("combo", Some(c)),
-            RecordResult::Remove => ("remove", None),
-            RecordResult::Cancel => ("cancel", None),
+        let (kind, combo, message) = match result {
+            RecordResult::Combo(c) => match altgr_conflict(&c) {
+                Some(message) => ("rejected", Some(c), Some(message)),
+                None => ("combo", Some(c), None),
+            },
+            RecordResult::Remove => ("remove", None, None),
+            RecordResult::Cancel => ("cancel", None, None),
         };
-        match kind {
-            "combo" => {
-                let combo = combo.expect("Kombination");
+        match (kind, combo) {
+            ("combo", Some(combo)) => {
                 k.settings.update(|s| {
                     // Eine Kombination gehört nur einer Aktion.
                     s.hotkeys.retain(|a, c| *a == action || *c != combo);
@@ -63,15 +84,16 @@ pub fn record(action: HotkeyAction) {
                     s.disabled_hotkeys.remove(&action);
                 });
             }
-            "remove" => {
+            ("remove", _) => {
                 k.settings.update(|s| {
                     s.hotkeys.remove(&action);
                 });
             }
+            ("rejected", _) => log::info!("Kürzel abgelehnt: {}", message.as_deref().unwrap_or_default()),
             _ => {}
         }
         apply();
-        k.emit("hotkey-recorded", Recorded { action, result: kind, combo });
+        k.emit("hotkey-recorded", Recorded { action, result: kind, combo, message });
         k.broadcast_bootstrap();
     }));
 }

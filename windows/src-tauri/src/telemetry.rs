@@ -169,9 +169,18 @@ impl Telemetry {
     }
 }
 
-/// Ziel: `KNIPS_TELEMETRY_URL` oder der Knips-Server.
+/// Ziel: der Knips-Server. Nur Entwickler-Builds (Feature `dev`) nehmen stattdessen `KNIPS_TELEMETRY_URL`,
+/// und nur `https://…` oder `http://` auf diesen Rechner (`tm::endpoint_override_allowed`). Weitergabe-Builds
+/// lesen die Variable nie — sonst könnte eine Umgebungsvariable die Statistik umleiten, auch unverschlüsselt.
 pub fn endpoint() -> String {
-    std::env::var("KNIPS_TELEMETRY_URL").ok().map(|u| u.trim().to_string()).filter(|u| !u.is_empty()).unwrap_or_else(|| tm::ENDPOINT.into())
+    #[cfg(feature = "dev")]
+    if let Some(url) = std::env::var("KNIPS_TELEMETRY_URL").ok().map(|u| u.trim().to_string()).filter(|u| !u.is_empty()) {
+        if tm::endpoint_override_allowed(&url) {
+            return url;
+        }
+        log::warn!("KNIPS_TELEMETRY_URL ignoriert: nur https:// oder http:// auf diesen Rechner");
+    }
+    tm::ENDPOINT.into()
 }
 
 pub fn client_info(channel: Channel, app_version: &str) -> ClientInfo {

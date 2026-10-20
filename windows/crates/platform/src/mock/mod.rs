@@ -284,6 +284,41 @@ pub mod hotkeys {
         let _ = combo;
     }
 
+    /// Name der Taste `vk` auf dem aktuellen Layout — die Attrappe tut so, als wäre es das deutsche.
+    pub fn key_name(vk: u32) -> String {
+        knips_core::settings::key_name(vk)
+    }
+
+    /// Zeichen, das `combo` als AltGr-Kombination tippt — die Attrappe kennt das deutsche Layout.
+    pub fn altgr_char(combo: KeyCombo) -> Option<String> {
+        use knips_core::settings::{MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN};
+        if combo.mods & (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN) != (MOD_CONTROL | MOD_ALT) {
+            return None;
+        }
+        let c = match combo.vk {
+            0x51 => "@",
+            0x45 => "€",
+            0x4D => "µ",
+            0x32 => "²",
+            0x33 => "³",
+            0x37 => "{",
+            0x38 => "[",
+            0x39 => "]",
+            0x30 => "}",
+            0xDB => "\\",
+            0xBB => "~",
+            0xE2 => "|",
+            _ => return None,
+        };
+        Some(c.into())
+    }
+
+    /// Selbsttest: Tastennamen und AltGr-Zeichen auf dem Layout `klid` (Attrappe: immer deutsch).
+    pub fn probe_layout(klid: &str, vks: &[u32], combos: &[KeyCombo]) -> Result<(Vec<String>, Vec<Option<String>>)> {
+        let _ = klid;
+        Ok((vks.iter().map(|vk| key_name(*vk)).collect(), combos.iter().map(|c| altgr_char(*c)).collect()))
+    }
+
     /// „Druck-Taste zum Öffnen der Bildschirmausschnitterstellung verwenden“ (Windows 11).
     pub fn snipping_key_enabled() -> bool {
         false
@@ -303,6 +338,15 @@ pub mod shell {
 
     /// Datei/Ordner mit der Standard-App öffnen.
     pub fn open_path(path: &Path) -> Result<()> {
+        std::process::Command::new("open").arg(path).spawn()?;
+        Ok(())
+    }
+
+    /// Ordner im Explorer öffnen — nur Ordner; Dateien und Programme werden nie gestartet.
+    pub fn open_folder(path: &Path) -> Result<()> {
+        if !path.is_dir() {
+            anyhow::bail!("Kein Ordner: {}", path.display());
+        }
         std::process::Command::new("open").arg(path).spawn()?;
         Ok(())
     }

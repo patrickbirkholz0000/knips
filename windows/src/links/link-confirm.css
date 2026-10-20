@@ -43,6 +43,8 @@ html[data-view="link-confirm"] body {
   font-weight: 500;
 }
 .lc-check input { width: 15px; height: 15px; margin: 0; accent-color: rgb(23, 23, 23); }
+/* Wie „Aufnehmen“: erst nach der Schutzzeit wählbar. */
+.lc-check.off { opacity: 0.45; }
 .lc-btn {
   height: 32px;
   padding: 0 16px;

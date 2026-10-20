@@ -21,7 +21,9 @@ knips-platform = { path = "../crates/platform" }
 tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset", "macos-private-api"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-autostart = "2"
-tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+# Ohne Feature `deep-link`: Der Rückruf reicht die Argumente selbst an das Deep-Link-Plugin weiter
+# (`app::second_instance`). Mit dem Feature täte das Plugin es zusätzlich — jeder Link liefe doppelt.
+tauri-plugin-single-instance = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-log = "2"
 drag = "2"

@@ -6,7 +6,8 @@
 //! (simulierte Tastendrücke), clipboard (echte Zwischenablage, nur für die CI), telemetry
 //! (Nutzungsstatistik gegen einen lokalen Server auf 127.0.0.1).
 //! Mit Fenstern (startet die App unsichtbar für den Nutzer, fotografiert nur eigene Fenster): ui, render,
-//! links (Rückfrage vor knips://-Aufnahmen; Aufnahmen sind durch eine Liste ersetzt, nimmt nie auf).
+//! links (Rückfrage vor knips://-Aufnahmen; Aufnahmen sind durch eine Liste ersetzt, nimmt nie auf),
+//! nomedia (Windows N/KN ohne Media Feature Pack) und oldwin (Windows vor 10 2004) — `selftest_media.rs`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -31,7 +32,7 @@ use crate::settings::SettingsStore;
 use crate::store::Store;
 use crate::wm;
 
-const WINDOW_TESTS: [&str; 3] = ["ui", "render", "links"];
+const WINDOW_TESTS: [&str; 5] = ["ui", "render", "links", "nomedia", "oldwin"];
 
 /// `Some(code)`: Test ist durch. `None`: Fenstertest — die App startet normal und
 /// `after_setup` übernimmt.
@@ -46,6 +47,12 @@ pub fn run(args: &[String]) -> Option<i32> {
     knips_platform::clipboard::set_disabled(true);
     if WINDOW_TESTS.contains(&test.as_str()) {
         std::env::set_var("KNIPS_SELFTEST", format!("{test}|{}", out.display()));
+        // Simulationen vor dem App-Start setzen (die Werte werden einmal pro Prozess gemerkt).
+        match test.as_str() {
+            "nomedia" => std::env::set_var("KNIPS_TEST_NO_MEDIA", "1"),
+            "oldwin" => std::env::set_var("KNIPS_TEST_OLD_WINDOWS", "1"),
+            _ => {}
+        }
         return None;
     }
     let result = match test.as_str() {
@@ -318,14 +325,19 @@ fn record(seconds: f64) -> Result<()> {
     let t = Instant::now();
     let recorder = media::Recorder::start(opts, Box::new(|e| eprintln!("Aufnahmefehler: {e}")))?;
     println!("Start: {} ms", t.elapsed().as_millis());
+    // Maus kreisen lassen: Bildänderungen wie bei echter Nutzung (variable Bildrate).
+    let mover = crate::selftest_media::MouseMover::start(&m);
     std::thread::sleep(Duration::from_secs_f64(seconds));
+    drop(mover);
     let t = Instant::now();
     let duration = recorder.stop()?;
     println!("Stopp: {} ms, Dauer laut Recorder {duration:.2} s", t.elapsed().as_millis());
     let info = media::probe(&path)?;
     let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-    println!("Datei: {}×{}, {:.2} s, {:.1} fps, {} KB", info.width, info.height, info.duration, info.fps, size / 1024);
+    println!("Datei: {}×{}, {:.2} s, wirksam {:.1} fps, {} KB", info.width, info.height, info.duration, info.fps, size / 1024);
+    let exported = crate::selftest_media::check_recording_export(&path);
     let _ = std::fs::remove_file(&path);
+    exported?;
     if (info.duration - seconds).abs() > 0.6 {
         bail!("Dauer {:.2} s statt {seconds} s", info.duration);
     }
@@ -750,7 +762,7 @@ fn telemetry_test(out: &Path) -> Result<()> {
 // ------------------------------------------------------------------ track / video
 
 /// Pseudo-zufälliges, textähnliches Muster (deterministisch).
-fn pattern(width: u32, height: u32, seed: u32) -> RgbaImage {
+pub(crate) fn pattern(width: u32, height: u32, seed: u32) -> RgbaImage {
     let mut state = seed.wrapping_mul(2_654_435_761).wrapping_add(1);
     let mut next = move || {
         state ^= state << 13;
@@ -778,7 +790,7 @@ fn pattern(width: u32, height: u32, seed: u32) -> RgbaImage {
 }
 
 /// Scrollendes Testvideo: fester Kopf (60 px), Inhalt wandert `speed` px pro Bild nach oben.
-fn scrolling_frame(content: &RgbaImage, width: u32, height: u32, offset: u32) -> RgbaImage {
+pub(crate) fn scrolling_frame(content: &RgbaImage, width: u32, height: u32, offset: u32) -> RgbaImage {
     let mut frame = RgbaImage::from_pixel(width, height, image::Rgba([210, 214, 222, 255]));
     for y in 60..height {
         let cy = y - 60 + offset;
@@ -875,6 +887,9 @@ fn video(out: &Path) -> Result<()> {
         bail!("GIF hat falsche Größe oder keine Bilder");
     }
 
+    // Variable Bildrate wie eine Bildschirmaufnahme: Export ≥ 24 fps, Bewegung bleibt erhalten.
+    crate::selftest_media::vfr_export(out)?;
+
     // Auto-Zensur im Video: stehendes Bild mit Kundendaten.
     if ocr::available() {
         let still = sample::sample_image(1400, 880, 2.0);
@@ -908,6 +923,8 @@ pub fn after_setup(app: &AppHandle) {
             "ui" => ui(&app, &out),
             "render" => render(&app, &out),
             "links" => links(&app, &out),
+            "nomedia" => crate::selftest_media::nomedia(&app, &out),
+            "oldwin" => crate::selftest_media::oldwin(&app, &out),
             _ => Ok(()),
         };
         let code = match result {
@@ -925,7 +942,7 @@ pub fn after_setup(app: &AppHandle) {
 }
 
 /// Eigenes Fenster fotografieren (nicht ausgeschlossen, da Test-Sandbox).
-fn shoot(app: &AppHandle, label: &str, out: &Path, name: &str) -> Result<()> {
+pub(crate) fn shoot(app: &AppHandle, label: &str, out: &Path, name: &str) -> Result<()> {
     let window = app.get_webview_window(label).with_context(|| format!("Fenster {label} fehlt"))?;
     let hwnd = wm::hwnd(&window).with_context(|| format!("Fenster {label} ohne HWND"))?;
     let image = capture::own_window_image(hwnd)?;
@@ -1075,7 +1092,7 @@ pub fn selftest_probe(id: u32, value: String) {
 }
 
 /// Wertet den JavaScript-Ausdruck `expr` im Fenster aus und liefert das Ergebnis als Text.
-fn probe(window: &WebviewWindow, expr: &str, timeout: Duration) -> Result<String> {
+pub(crate) fn probe(window: &WebviewWindow, expr: &str, timeout: Duration) -> Result<String> {
     let id = PROBE_ID.fetch_add(1, Ordering::SeqCst);
     let send = "window.__TAURI_INTERNALS__.invoke('selftest_probe'";
     window.eval(format!(

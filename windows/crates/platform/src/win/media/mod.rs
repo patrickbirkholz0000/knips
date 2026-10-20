@@ -31,12 +31,29 @@ pub struct VideoInfo {
     pub has_audio: bool,
 }
 
+/// Fehlermeldung, wenn Media Foundation fehlt (Windows N/KN ohne Media Feature Pack).
+pub const MISSING_HINT: &str = "Für Videos braucht Windows das „Media Feature Pack“. Diese Windows-Ausgabe (N/KN) enthält es nicht. \
+Installieren unter Einstellungen → Apps → Optionale Features → Feature hinzufügen → „Media Feature Pack“, danach neu starten. \
+Screenshots funktionieren auch ohne.";
+
+/// Media Foundation vorhanden? Ohne sind Aufnahme, Video-Editor und Video-/GIF-Export gesperrt.
+pub fn available() -> bool {
+    util::mf_available()
+}
+
 pub fn probe(path: &Path) -> Result<VideoInfo> {
     reader::probe(path)
 }
 
 pub fn hevc_encoder_available() -> bool {
     writer::hevc_encoder_available()
+}
+
+/// HEVC nutzbar: Encoder vorhanden **und** das Ergebnis lässt sich wieder lesen (Decoder aus der
+/// „HEVC-Videoerweiterung“). Ein Grafiktreiber bringt oft nur den Encoder mit — dann wäre jede
+/// HEVC-Aufnahme unlesbar. Einmal pro Prozess mit einem winzigen Testvideo geprüft (≈ 0,3 s).
+pub fn hevc_available() -> bool {
+    export::hevc_usable()
 }
 
 pub fn thumbnail(path: &Path, max_pixel: u32) -> Result<RgbaImage> {
@@ -96,4 +113,17 @@ pub fn write_test_video(
     frame: &mut dyn FnMut(usize) -> RgbaImage,
 ) -> Result<()> {
     export::write_test_video(path, width, height, fps, count, hevc, frame)
+}
+
+/// Testvideo mit variabler Bildrate (wie eine Bildschirmaufnahme): Bild `i` ab `times[i]` Sekunden,
+/// das letzte bis `duration` (Selbsttest `video`).
+pub fn write_test_video_vfr(
+    path: &Path,
+    width: u32,
+    height: u32,
+    times: &[f64],
+    duration: f64,
+    frame: &mut dyn FnMut(usize) -> RgbaImage,
+) -> Result<()> {
+    export::write_test_video_vfr(path, width, height, times, duration, frame)
 }

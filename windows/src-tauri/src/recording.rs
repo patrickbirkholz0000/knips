@@ -12,7 +12,65 @@ use parking_lot::Mutex;
 use serde::Serialize;
 
 use crate::app::knips;
+use crate::crash::OnDrop;
 use crate::{paths, wm};
+
+/// Wie oft der Hinweis „Media Feature Pack fehlt“ kam (Selbsttest `nomedia`).
+static MEDIA_HINTS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Windows N/KN ohne Media Feature Pack: Video geht nicht — erklären, wo es das Paket gibt.
+pub fn media_missing_hint() {
+    MEDIA_HINTS.fetch_add(1, Ordering::SeqCst);
+    knips().alert_with_settings(
+        "Bildschirmaufnahme nicht verfügbar",
+        knips_platform::media::MISSING_HINT,
+        "Optionale Features öffnen",
+        "ms-settings:optionalfeatures",
+    );
+}
+
+#[cfg(feature = "dev")]
+pub fn media_hints_shown() -> u32 {
+    MEDIA_HINTS.load(Ordering::SeqCst)
+}
+
+/// Mikrofon ließ sich nicht öffnen oder fiel aus: Video ist (teilweise) ohne Ton. Desktop-Apps fragt
+/// Windows 10 nicht nach — der Schalter muss in den Datenschutz-Einstellungen an sein.
+fn microphone_hint(warnings: &[String]) {
+    let message = format!(
+        "{}\n\nPrüfe unter Einstellungen → Datenschutz → Mikrofon, ob „Zugriff auf das Mikrofon“ und \
+         „Desktop-Apps den Zugriff auf das Mikrofon erlauben“ eingeschaltet sind und ob ein Mikrofon angeschlossen ist.",
+        warnings.join("\n")
+    );
+    knips().alert_with_settings("Video ohne Ton", &message, "Mikrofon-Einstellungen öffnen", "ms-settings:privacy-microphone");
+}
+
+/// Die Aufnahme ließ sich nicht in die Ablage übernehmen (z. B. nicht lesbar): Datei nicht im
+/// Temp-Ordner liegen lassen, sondern in den Ablageordner legen und im Fehler nennen.
+fn rescue(temp: &std::path::Path, err: anyhow::Error) -> anyhow::Error {
+    if !temp.exists() {
+        return err;
+    }
+    let folder = knips().settings.save_folder();
+    paths::ensure(&folder);
+    let stem = format!("Knips Aufnahme {}", knips_core::format::file_date_now());
+    let mut target = folder.join(format!("{stem}.mp4"));
+    let mut n = 2;
+    while target.exists() {
+        target = folder.join(format!("{stem} ({n}).mp4"));
+        n += 1;
+    }
+    let moved = std::fs::rename(temp, &target).or_else(|_| std::fs::copy(temp, &target).map(|_| {
+        let _ = std::fs::remove_file(temp);
+    }));
+    match moved {
+        Ok(()) => anyhow::anyhow!("{err:#}\n\nDas Video liegt unbearbeitet unter {}", target.display()),
+        Err(e) => {
+            log::warn!("Aufnahme nicht in die Ablage verschoben: {e}");
+            anyhow::anyhow!("{err:#}\n\nDas Video liegt unter {}", temp.display())
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Phase {
@@ -174,8 +232,15 @@ impl Recording {
                     rec.stop(true);
                 }
             });
+            // Stürzt der Start ab, nicht im Countdown hängen bleiben (sonst nie wieder eine Aufnahme).
+            let _reset = OnDrop(|| {
+                if std::thread::panicking() {
+                    knips().recording.teardown();
+                }
+            });
             match Recorder::start(options, on_error) {
                 Ok(recorder) => {
+                    let mic_problem = !recorder.warnings().is_empty();
                     {
                         let mut inner = rec.inner.lock();
                         inner.recorder = Some(recorder);
@@ -186,6 +251,10 @@ impl Recording {
                     rec.show_controls(&monitor, global, full);
                     rec.tick();
                     crate::telemetry::count("recording_start");
+                    // Einblendung ist aus Aufnahmen ausgeschlossen; Einzelheiten nach dem Speichern.
+                    if mic_problem {
+                        knips().hud.show("Mikrofon nicht verfügbar – Video ohne Ton", "error");
+                    }
                 }
                 Err(err) => {
                     rec.teardown();
@@ -233,13 +302,24 @@ impl Recording {
         std::thread::spawn(move || {
             let k = knips();
             let rec = &k.recording;
+            // Stürzt das Speichern ab, nicht in „Finishing“ hängen bleiben (sonst nie wieder eine Aufnahme).
+            let _reset = OnDrop(|| {
+                if std::thread::panicking() {
+                    knips().recording.teardown();
+                }
+            });
             if !save {
                 recorder.cancel();
                 rec.teardown();
                 k.hud.show("Aufnahme verworfen", "trash");
                 return;
             }
-            let result = recorder.stop().and_then(|_| k.store.add_video(&path, scale));
+            let warnings = recorder.warnings();
+            let stopped = recorder.stop();
+            let result = match stopped {
+                Ok(_) => k.store.add_video(&path, scale).map_err(|err| rescue(&path, err)),
+                Err(err) => Err(err),
+            };
             rec.teardown();
             match result {
                 Ok(item) => {
@@ -251,13 +331,16 @@ impl Recording {
                     if settings.show_quick_access {
                         k.cards.show(item, monitor.unwrap_or_else(knips_platform::monitors::at_cursor));
                     }
+                    if !warnings.is_empty() {
+                        microphone_hint(&warnings);
+                    }
                 }
                 Err(err) => k.alert("Aufnahme konnte nicht gespeichert werden", &format!("{err:#}")),
             }
         });
     }
 
-    fn teardown(&self) {
+    pub(crate) fn teardown(&self) {
         {
             let mut inner = self.inner.lock();
             let cancel = inner.cancel.clone();

@@ -61,7 +61,9 @@ export const mockBootstrap: Bootstrap = {
   platform: "mock",
   version: "1.0.0",
   ocrAvailable: true,
-  hevcAvailable: true,
+  // Zum Ansehen ohne Media Foundation / ohne HEVC: „nomedia“ bzw. „nohevc“ in der Adresse.
+  hevcAvailable: !/nohevc/.test(globalThis.location?.href ?? ""),
+  mediaAvailable: !/nomedia/.test(globalThis.location?.href ?? ""),
   telemetryConsent: null,
 };
 

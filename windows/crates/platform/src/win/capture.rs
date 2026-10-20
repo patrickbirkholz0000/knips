@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Result};
@@ -17,8 +18,9 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetLayeredWindowAttributes, GetWindowLongPtrW, GetWindowRect, GetWindowTextW,
-    GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetWindowDisplayAffinity, GWL_EXSTYLE, LWA_ALPHA,
-    WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+    GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetWindowDisplayAffinity, ShowWindow, GWL_EXSTYLE,
+    LWA_ALPHA, SW_HIDE, SW_SHOWNA, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WS_EX_APPWINDOW, WS_EX_LAYERED,
+    WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
 };
 
 use super::d3d::{item_for_monitor, item_for_window, Dda, Wgc};
@@ -321,11 +323,86 @@ impl RegionCapturer {
     }
 }
 
-/// Fenster aus allen Aufnahmen ausschließen (`WDA_EXCLUDEFROMCAPTURE`) bzw. wieder zulassen.
-pub fn exclude_from_capture(handle: isize, exclude: bool) {
+/// Erste Windows-Version, in der `WDA_EXCLUDEFROMCAPTURE` Fenster unsichtbar macht (Windows 10 2004).
+const EXCLUDE_MIN_BUILD: u32 = 19041;
+
+/// Kann Windows eigene Fenster aus Aufnahmen herausnehmen? Vor Windows 10 2004 wirkt
+/// `WDA_EXCLUDEFROMCAPTURE` wie `WDA_MONITOR`: Das Fenster erscheint in jeder Aufnahme als schwarze
+/// Fläche (beim Aufnahmerahmen wäre das ganze Video schwarz). Dann wird nichts gesetzt; die App blendet
+/// eigene Fenster vor einem Standbild kurz aus (`hide_for_capture`).
+pub fn exclusion_supported() -> bool {
+    static R: OnceLock<bool> = OnceLock::new();
+    *R.get_or_init(|| {
+        #[cfg(feature = "dev")]
+        if std::env::var_os("KNIPS_TEST_OLD_WINDOWS").is_some() {
+            log::warn!("Windows vor 2004 simuliert (KNIPS_TEST_OLD_WINDOWS): eigene Fenster werden ausgeblendet");
+            return false;
+        }
+        let build = super::system::build_number();
+        // Unbekannt (0): lieber setzen — ab Windows 10 2004 ist das der Normalfall.
+        let ok = build == 0 || build >= EXCLUDE_MIN_BUILD;
+        if !ok {
+            log::info!("Windows-Build {build} < {EXCLUDE_MIN_BUILD}: eigene Fenster werden vor Standbildern ausgeblendet");
+        }
+        ok
+    })
+}
+
+/// `WDA_EXCLUDEFROMCAPTURE` setzen, wenn es wirkt (`exclusion_supported`). `false` = nicht gesetzt.
+pub(crate) fn set_excluded(h: windows::Win32::Foundation::HWND, what: &str) -> bool {
+    if !exclusion_supported() {
+        return false;
+    }
     // SAFETY: ungültige Handles ergeben nur einen Fehler.
-    let r = unsafe { SetWindowDisplayAffinity(hwnd(handle), if exclude { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE }) };
-    if let Err(e) = r {
+    match unsafe { SetWindowDisplayAffinity(h, WDA_EXCLUDEFROMCAPTURE) } {
+        Ok(()) => true,
+        Err(e) => {
+            log::warn!("{what}: aus Aufnahmen ausschließen fehlgeschlagen: {e}");
+            false
+        }
+    }
+}
+
+/// Fenster aus allen Aufnahmen ausschließen (`WDA_EXCLUDEFROMCAPTURE`) bzw. wieder zulassen. Vor
+/// Windows 10 2004 ohne Wirkung (siehe `exclusion_supported`).
+pub fn exclude_from_capture(handle: isize, exclude: bool) {
+    if exclude {
+        set_excluded(hwnd(handle), "Fenster");
+        return;
+    }
+    // SAFETY: ungültige Handles ergeben nur einen Fehler.
+    if let Err(e) = unsafe { SetWindowDisplayAffinity(hwnd(handle), WDA_NONE) } {
         log::warn!("SetWindowDisplayAffinity fehlgeschlagen: {e}");
+    }
+}
+
+/// Sichtbare unter `handles` ausblenden (für ein Standbild, wenn `exclusion_supported` nicht gilt)
+/// und warten, bis der Bildschirm ohne sie gezeichnet ist. Liefert die ausgeblendeten Fenster.
+pub fn hide_for_capture(handles: &[isize]) -> Vec<isize> {
+    let mut hidden = Vec::new();
+    for &h in handles {
+        // SAFETY: ungültige Handles ergeben nur `false`.
+        unsafe {
+            if IsWindowVisible(hwnd(h)).as_bool() {
+                let _ = ShowWindow(hwnd(h), SW_HIDE);
+                hidden.push(h);
+            }
+        }
+    }
+    if !hidden.is_empty() {
+        // Einige Bildwechsel abwarten, bis der Bildschirm ohne sie gezeichnet ist (DwmFlush kann bei
+        // ruhendem Desktop warten, bis sich etwas ändert — deshalb feste Zeit).
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    hidden
+}
+
+/// Mit `hide_for_capture` ausgeblendete Fenster wieder zeigen, ohne sie zu aktivieren.
+pub fn show_after_capture(handles: &[isize]) {
+    for &h in handles {
+        // SAFETY: ungültige Handles ergeben nur einen Fehler.
+        unsafe {
+            let _ = ShowWindow(hwnd(h), SW_SHOWNA);
+        }
     }
 }

@@ -41,6 +41,8 @@
 .menu-tile .ico { width: 16px; flex: none; display: flex; justify-content: center; color: rgba(255, 255, 255, 0.75); }
 .menu-tile .label { flex: none; white-space: nowrap; }
 .menu-tile.red, .menu-tile.red .ico { color: var(--red); }
+/* Nicht verfügbar (Video ohne Media Feature Pack): gedämpft, Klick zeigt den Hinweis. */
+.menu-tile.off { opacity: 0.45; }
 
 .menu-recent { display: flex; flex-direction: column; gap: 8px; }
 .menu-recent-head { display: flex; align-items: center; justify-content: space-between; padding: 0 4px; }

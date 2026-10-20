@@ -70,13 +70,37 @@ pub fn cfr_pts(i: usize, fps: u32) -> i64 {
     (i as i128 * TICKS as i128 / fps.max(1) as i128) as i64
 }
 
-/// Bildrate für den Export: Quelle gerundet, 1…60, ohne Angabe 30.
+/// Bildrate für den Export: wirksame Quellrate (`effective_fps`) gerundet, höchstens 60. Unter 24
+/// (oder unbekannt) 30 — sonst würden Bewegungen ruckeln und Zensurfelder nur grob zur Zeit passen;
+/// stehende Quellbilder werden dafür zeitgenau wiederholt.
 pub fn export_fps(src_fps: f64) -> u32 {
-    if src_fps.is_finite() && src_fps >= 1.0 {
-        (src_fps.round() as u32).clamp(1, 60)
+    if src_fps.is_finite() && src_fps >= 23.5 {
+        (src_fps.round() as u32).clamp(24, 60)
     } else {
         30
     }
+}
+
+/// Wirksame Bildrate eines Videos mit variabler Bildrate. Bildschirmaufnahmen schreiben nur bei
+/// Änderungen ein Bild; die MP4-Angabe (`nominal`) ist dann der Durchschnitt — bei einer Aufnahme mit
+/// 30 fps und viel Stillstand z. B. 2,4 fps. Maßgeblich ist der typische kürzeste Abstand zweier Bilder
+/// (`pts` in 100 ns, beliebige Reihenfolge): Median aller Abstände bis zum 1,5-Fachen des
+/// 5-%-Quantils. Nie weniger als `nominal`; zu wenige Bilder → `nominal`.
+pub fn effective_fps(nominal: f64, pts: &[i64]) -> f64 {
+    let nominal = if nominal.is_finite() && nominal > 0.0 { nominal } else { 0.0 };
+    let mut t = pts.to_vec();
+    t.sort_unstable();
+    t.dedup();
+    // Abstände unter 1/240 s sind Rundungs-/Umordnungsreste, kein Bildabstand.
+    let mut d: Vec<i64> = t.windows(2).map(|w| w[1] - w[0]).filter(|&x| x >= TICKS / 240).collect();
+    if d.len() < 3 {
+        return nominal;
+    }
+    d.sort_unstable();
+    let low = d[d.len() / 20];
+    let near: Vec<i64> = d.iter().copied().take_while(|&x| x <= low + low / 2).collect();
+    let typical = near[near.len() / 2].max(1);
+    (TICKS as f64 / typical as f64).clamp(nominal, 240.0_f64.max(nominal))
 }
 
 // ───────────────────────── Bildraten-Begrenzung ─────────────────────────
@@ -436,9 +460,49 @@ mod tests {
         assert_eq!(export_fps(0.0), 30);
         assert_eq!(export_fps(59.94), 60);
         assert_eq!(export_fps(144.0), 60);
+        // Variable Bildrate mit viel Stillstand (CI: 30 fps eingestellt → 2,4 fps im Durchschnitt)
+        assert_eq!(export_fps(2.4), 30);
+        assert_eq!(export_fps(15.0), 30);
+        assert_eq!(export_fps(f64::NAN), 30);
+        assert_eq!(export_fps(23.976), 24);
+        assert_eq!(export_fps(25.0), 25);
         assert_eq!(unpack(pack(1920, 1080)), (1920, 1080));
         assert_eq!(fit_width(1920, 1080, 800), (800, 450));
         assert_eq!(fit_width(640, 480, 800), (640, 480));
+    }
+
+    #[test]
+    fn wirksame_bildrate() {
+        let f = |i: i64| i * TICKS / 30;
+        // Konstant 30 fps
+        let cfr: Vec<i64> = (0..90).map(f).collect();
+        assert!((effective_fps(30.0, &cfr) - 30.0).abs() < 0.1);
+        // Aufnahme mit 30 fps: 0,5 s Bewegung, dann 4 s Stillstand mit drei einzelnen Bildern.
+        // Durchschnitt ≈ 4 fps, wirksam 30.
+        let mut vfr: Vec<i64> = (0..15).map(f).collect();
+        vfr.extend([TICKS, 2 * TICKS, 4 * TICKS + TICKS / 2]);
+        let avg = vfr.len() as f64 / 4.5;
+        assert!(avg < 5.0);
+        let e = effective_fps(avg, &vfr);
+        assert!((e - 30.0).abs() < 0.5, "{e}");
+        assert_eq!(export_fps(e), 30);
+        // Ungleichmäßige Abstände wie aus `FrameGate` (≥ 0,9 Intervall, oft etwas mehr)
+        let mut t = 0i64;
+        let mut jitter = vec![0i64];
+        for k in 0..60 {
+            t += [300_000i64, 333_333, 360_000, 333_333, 450_000][k % 5];
+            jitter.push(t);
+        }
+        assert_eq!(export_fps(effective_fps(1.0, &jitter)), 30);
+        // 60 fps, unsortiert und mit doppelten Zeiten
+        let mut s60: Vec<i64> = (0..40).map(|i| i * TICKS / 60).rev().collect();
+        s60.push(0);
+        assert_eq!(export_fps(effective_fps(10.0, &s60)), 60);
+        // Zu wenige Bilder → Angabe des Containers
+        assert_eq!(effective_fps(2.0, &[0, TICKS]), 2.0);
+        assert_eq!(effective_fps(f64::NAN, &[]), 0.0);
+        // Nie unter der Angabe (CFR mit B-Bildern: Abstände stimmen, Angabe gleich)
+        assert!(effective_fps(25.0, &(0..50).map(|i| i * TICKS / 25).collect::<Vec<_>>()) >= 25.0);
     }
 
     #[test]

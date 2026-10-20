@@ -38,8 +38,39 @@ pub fn com_init() -> Com {
     Com(hr.is_ok())
 }
 
+/// Media-Foundation-DLLs, die `knips.exe` verzögert lädt (`src-tauri/build.rs`, `/DELAYLOAD`).
+pub const MF_DLLS: [&str; 3] = ["mfplat.dll", "mfreadwrite.dll", "mf.dll"];
+
+/// Gibt es Media Foundation? Fehlt in Windows-N/KN-Editionen ohne „Media Feature Pack“. Die DLLs
+/// werden verzögert geladen: Ein Aufruf ohne sie würde den Prozess beenden — deshalb prüft `enter`
+/// dies vor jeder Media-Foundation-Funktion. Geprüft wird nur im Systemordner (keine fremden DLLs
+/// aus dem Programm- oder Arbeitsordner); die geladenen Module bleiben geladen.
+pub fn mf_available() -> bool {
+    static R: OnceLock<bool> = OnceLock::new();
+    *R.get_or_init(|| {
+        #[cfg(feature = "dev")]
+        if std::env::var_os("KNIPS_TEST_NO_MEDIA").is_some() {
+            log::warn!("Media Foundation als fehlend simuliert (KNIPS_TEST_NO_MEDIA)");
+            return false;
+        }
+        use windows::Win32::System::LibraryLoader::{LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32};
+        for dll in MF_DLLS {
+            let name: Vec<u16> = dll.encode_utf16().chain(std::iter::once(0)).collect();
+            // SAFETY: nullterminierter Name; das Modul bleibt absichtlich geladen (Prozesslebensdauer).
+            if let Err(e) = unsafe { LoadLibraryExW(windows::core::PCWSTR(name.as_ptr()), None, LOAD_LIBRARY_SEARCH_SYSTEM32) } {
+                log::warn!("Media Foundation fehlt ({dll}: {}) — Videofunktionen gesperrt", e.message().trim());
+                return false;
+            }
+        }
+        true
+    })
+}
+
 /// COM (MTA) für diesen Thread und `MFStartup` (einmal pro Prozess).
 pub fn enter() -> Result<Com> {
+    if !mf_available() {
+        bail!("{}", super::MISSING_HINT);
+    }
     let com = com_init();
     static MF: OnceLock<std::result::Result<(), String>> = OnceLock::new();
     let r = MF.get_or_init(|| {

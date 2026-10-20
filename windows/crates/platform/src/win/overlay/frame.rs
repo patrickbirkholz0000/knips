@@ -148,10 +148,10 @@ unsafe fn create_and_draw(rect: IRect, color: FrameColor) -> Result<HWND> {
             let _ = DestroyWindow(hwnd);
             return Err(e);
         }
-        // Aus Aufnahmen ausschließen (bei Layered-Fenstern nicht überall möglich → nur warnen).
-        if let Err(e) = SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) {
-            log::warn!("Rahmen: aus Aufnahmen ausschließen fehlgeschlagen: {e}");
-        }
+        // Aus Aufnahmen ausschließen (bei Layered-Fenstern nicht überall möglich → nur warnen). Vor
+        // Windows 10 2004 nicht: Dort wäre das ganze Fenster — samt durchsichtigem Inneren, also dem
+        // aufgenommenen Bereich — in der Aufnahme schwarz. Der Rahmen liegt außerhalb des Bereichs.
+        crate::win::capture::set_excluded(hwnd, "Rahmen");
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), wx, wy, ww, wh, SWP_NOACTIVATE | SWP_SHOWWINDOW);
         Ok(hwnd)

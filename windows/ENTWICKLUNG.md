@@ -29,7 +29,8 @@ Auf dem Mac (Attrappe statt Windows-Teilen, nur zum Entwickeln):
 pnpm dev                                           # Oberfläche im Browser auf :1430, Attrappen statt Tauri
 node scripts/shot.mjs "/cards" shots/cards.png 1100 1060 --transparent   # Screenshot einer Ansicht
 cargo test -p knips-core                           # Kern-Tests
-cargo check -p knips --features dev --target x86_64-pc-windows-msvc       # Windows-Code prüfen
+cargo test -p knips-platform                       # reine Video-Rechnungen (win/media/pure.rs) auf dem Mac
+cargo check -p knips --features dev --target x86_64-pc-windows-msvc       # Windows-Code prüfen (auch ohne --features dev)
 ```
 Der Windows-Check braucht ein Windows-Ziel (`rustup target add x86_64-pc-windows-msvc`) und für
 `tauri-build` einen Ressourcen-Compiler (`llvm-rc`; zum reinen Prüfen genügt eine Attrappe, die eine leere
@@ -49,9 +50,9 @@ Alle zusammen: `scripts/selftest.ps1` (macht die CI).
 | `output` | Ausgabe 1× PNG/JPEG, Original in voller Auflösung, Editor-Speichern, „Text kopieren“ ohne Zensiertes |
 | `selection` | Auswahl-Overlay offscreen (Bereich, Fenstermodus, Aufnahme) |
 | `capture` | echte Standbilder aller Monitore, Fensterliste, Fensteraufnahme, Bereichsaufnahme (nur Maße) |
-| `record [s]` | echte Bildschirmaufnahme, Dauer und Größe (Datei wird gelöscht) |
+| `record [s]` | echte Bildschirmaufnahme mit kreisender Maus, Dauer und Größe; Export der Aufnahme ≥ 24 fps (Datei wird gelöscht) |
 | `track` | mitlaufender Balken in scrollendem Testvideo deckt zu jedem Zeitpunkt ab |
-| `video` | MP4-Export mit Kürzen + Balken, GIF-Export, Auto-Zensur im Video |
+| `video` | MP4-Export mit Kürzen + Balken, GIF-Export, Auto-Zensur im Video; Quelle mit variabler Bildrate (wie eine Aufnahme, Ø 9 fps): wirksam ≈ 30 fps, Export ≥ 24 fps, jedes Exportbild zeigt das Quellbild seiner Zeit |
 | `perf` | Zeiten: Standbild, 1×+PNG, Texterkennung |
 | `hotkeys` | Kürzel über RegisterHotKey und Tastatur-Hook mit simulierten Tastendrücken (auch Druck, Win-Kombination) |
 | `overlay` | das echte Auswahl-Overlay mit simulierter Maus/Tastatur: Ziehen, Umschalt-Quadrat, Esc, Eingabe, Leertaste + Fensterklick — nur auf Rechnern ohne Nutzer (CI) |
@@ -60,6 +61,8 @@ Alle zusammen: `scripts/selftest.ps1` (macht die CI).
 | `render` | Renderer der Oberfläche — gleiche Dokumente wie `SelfTest.render` auf dem Mac (Vergleich: `tests/reference/mac-render-*.png`) |
 | `ui` | alle Fenster mit Beispieldaten, je ein Bild (Vergleich: `tests/reference/mac-ui/`), auch `einwilligung.png`, `link-rueckfrage.png` und Allgemein/Datenschutz/Über Knips nach unten gescrollt (`…-unten.png`) |
 | `links` | Rückfrage vor knips://fullscreen/last/record (wie `links` auf dem Mac): ohne Einstellung erst Rückfrage, weiterer Link verfällt, Esc/Schließen/Abbrechen = nichts, Aufnehmen erst nach der Schutzzeit (Rust und Oberfläche), „Nicht mehr fragen“ nur mit Aufnehmen, Stoppen und eigener Weg direkt; mit Einstellung direkt; Schalter in Allgemein. Ausführen ist durch eine Liste ersetzt, nimmt nie auf. Bilder: `link-rueckfrage-*.png`, `link-einstellung-allgemein.png` |
+| `nomedia` | Windows N/KN ohne Media Feature Pack (simuliert, `KNIPS_TEST_NO_MEDIA`): Importtabelle der knips.exe (mfplat/mfreadwrite/mf nur verzögert), alle Videofunktionen melden den Hinweis statt abzustürzen, Video-Kürzel zeigt Hinweis statt Auswahl, Screenshot geht; Bilder `einstellungen-aufnahme-ohne-media.png`, `menu-ohne-media.png` |
+| `oldwin` | Windows vor 10 2004 (simuliert, `KNIPS_TEST_OLD_WINDOWS`): kein `WDA_EXCLUDEFROMCAPTURE`, eigene Fenster für das Standbild ausgeblendet und danach wieder sichtbar, Aufnahmerahmen ohne Ausschluss |
 
 ## Nutzungsstatistik und Lizenz
 
@@ -136,8 +139,37 @@ Oberfläche im Browser gegen die Mac-Referenzbilder, Ablage-Selbsttest mit Attra
 Auswahl-Overlays mit simulierter Maus. Fenster-Bilder aus der CI gegen die Mac-Referenzen durchgesehen.
 CI 20.10.2026 (Version 1.0.0): alle 15 Selbsttests grün, auch `links` (Rückfrage per Link) und alle Fenster
 unter der neuen CSP (Editor, Video-Editor, Verlauf, Karten laden Bilder/Videos über das Asset-Protokoll).
+CI 20.10.2026 (Medien/Verträglichkeit): alle 17 Selbsttests grün, neu `nomedia` und `oldwin`; die knips.exe aus
+dem Installer lädt mfplat/mfreadwrite/mf nur verzögert (`llvm-readobj --coff-imports`: nur unter `DelayImport`);
+Aufnahme mit bewegter Maus wirksam 30 fps (vorher als 2,4 fps exportiert), VFR-Testvideo Ø 8,9 → Export 30 fps.
+Nicht in der CI prüfbar: echte N-Edition, echtes Windows vor 2004, Mikrofon ohne Freigabe.
 Noch am Gerät zu testen: Tastendrücke auf echter Tastatur (Hook neben anderen Tools), Mikrofon,
 Ziehen aus den Karten in andere Apps, Einfügen in fremde Apps, mehrere Monitore mit gemischter Skalierung.
+
+## Windows-Ausgaben und ältere Versionen
+
+- **N/KN ohne Media Feature Pack:** Media Foundation fehlt. `knips.exe` lädt `mfplat.dll`, `mfreadwrite.dll`
+  und `mf.dll` deshalb verzögert (`src-tauri/build.rs`: `/DELAYLOAD` + `delayimp.lib`); `media::available()`
+  prüft sie per `LoadLibraryExW` im Systemordner, `util::enter()` vor jeder MF-Funktion (ein Aufruf ohne DLL
+  würde den Prozess beenden). Ohne MF: Video-Kürzel/Menü zeigen den Hinweis „Media Feature Pack“ mit Knopf
+  `ms-settings:optionalfeatures`, Einstellungen → Bildschirmaufnahme ebenso, Video-Editor/Export melden ihn
+  als Fehler; Screenshots, Texterkennung, Zwischenablage laufen normal. Neue MF-Funktionen nur hinter `enter()`.
+- **HEVC** wird nur angeboten (`hevcAvailable`), wenn ein kurzes Testvideo sich schreiben **und** lesen lässt —
+  Grafiktreiber bringen oft nur den Encoder mit, ohne „HEVC-Videoerweiterung“ wäre die Aufnahme unlesbar.
+  Lässt sich eine Aufnahme trotzdem nicht übernehmen, landet sie unbearbeitet im Ablageordner (Meldung nennt den Pfad).
+- **Variable Bildrate:** Aufnahmen schreiben nur Bilder bei Änderungen; die MP4-Angabe ist der Durchschnitt
+  (CI: 30 fps eingestellt → 2,4 fps). `probe` liefert deshalb die wirksame Rate aus den Bildabständen
+  (`pure::effective_fps`), der Export nimmt sie (unter 24 → 30) und wiederholt stehende Bilder zeitgenau.
+- **Vor Windows 10 2004 (Build 19041):** `WDA_EXCLUDEFROMCAPTURE` wirkt wie `WDA_MONITOR` (Fenster schwarz,
+  beim Aufnahmerahmen das ganze Video) → wird nicht gesetzt (`capture::exclusion_supported`); stattdessen blendet
+  `wm::cloak_for_capture` sichtbare Knips-Fenster für Standbilder kurz aus. In Videos und Scroll-Aufnahmen
+  können dort eigene Leisten erscheinen, wenn sie im Bereich liegen (Stopp-Leiste bei Vollbild).
+  `SetIsCursorCaptureEnabled` (ab 2004) und `SetIsBorderRequired` (ab Windows 11) sind optional.
+- **Mikrofon:** Desktop-Apps fragt Windows 10 nicht; verweigert/fehlt es, läuft die Aufnahme ohne Ton weiter,
+  die Einblendung sagt es sofort, nach dem Speichern erklärt ein Dialog die Datenschutz-Schalter
+  (`Recorder::warnings`, Knopf `ms-settings:privacy-microphone`).
+- **Abstürze:** Panic-Hook (`crash.rs`) schreibt Thread, Stelle und Rückverfolgung ins Log; Wächter setzen
+  „Overlay aktiv“, „Overlay wird vorbereitet“ und den Aufnahme-Zustand auch nach einem Panic zurück.
 
 ## Windows-Eigenheiten (gefunden in der CI)
 

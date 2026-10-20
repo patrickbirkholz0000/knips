@@ -95,10 +95,75 @@ fn current_stride(reader: &IMFSourceReader) -> Option<i32> {
     }
 }
 
+/// Höchstens so viele Zeitstempel für die wirksame Bildrate (Bildschirmaufnahmen: nur Bilder mit
+/// Änderungen, also selbst bei 60 fps mindestens 10 s Bewegung). Nur Entpacken, kein Dekodieren —
+/// liest aber die Bilddaten von der Platte, deshalb begrenzt und je Datei gemerkt.
+const FPS_SCAN: usize = 600;
+
+/// Wirksame Bildrate je Datei (Pfad, Größe, Änderungszeit) — `probe` läuft beim Öffnen, für
+/// Vorschaubilder, Erkennung und Export jeweils erneut.
+fn effective_fps_cached(path: &Path, nominal: f64) -> f64 {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    type Key = (std::path::PathBuf, u64, Option<std::time::SystemTime>);
+    static CACHE: Mutex<Option<HashMap<Key, f64>>> = Mutex::new(None);
+    let key: Option<Key> = std::fs::metadata(path).ok().map(|m| (path.to_path_buf(), m.len(), m.modified().ok()));
+    if let Some(k) = &key {
+        if let Some(fps) = CACHE.lock().ok().and_then(|c| c.as_ref().and_then(|c| c.get(k).copied())) {
+            return fps;
+        }
+    }
+    let fps = match sample_times(path, FPS_SCAN) {
+        Ok(times) => pure::effective_fps(nominal, &times),
+        Err(e) => {
+            log::debug!("Bildabstände nicht lesbar ({e:#}), nehme die Angabe {nominal:.2} fps");
+            return nominal;
+        }
+    };
+    if let (Some(k), Ok(mut c)) = (key, CACHE.lock()) {
+        let c = c.get_or_insert_with(HashMap::new);
+        if c.len() > 64 {
+            c.clear();
+        }
+        c.insert(k, fps);
+    }
+    fps
+}
+
+/// Zeitstempel der ersten `limit` Videoproben (komprimiert gelesen, ohne Decoder; 100 ns).
+fn sample_times(path: &Path, limit: usize) -> Result<Vec<i64>> {
+    let reader = open_reader(path, false)?;
+    let mut out = Vec::new();
+    // SAFETY: Ausgabezeiger zeigen auf lokale Variablen; Reader ist gültig.
+    unsafe {
+        reader.SetStreamSelection(ALL, false).ctx("Ströme abwählen")?;
+        reader.SetStreamSelection(VIDEO, true).ctx("Videostrom wählen")?;
+        while out.len() < limit {
+            let mut flags = 0u32;
+            let mut ts = 0i64;
+            let mut sample: Option<IMFSample> = None;
+            reader.ReadSample(VIDEO, 0, None, Some(&mut flags), Some(&mut ts), Some(&mut sample)).ctx("Probe lesen")?;
+            if flags & MF_SOURCE_READERF_ERROR.0 as u32 != 0 {
+                bail!("Lesefehler im Video");
+            }
+            if sample.is_some() {
+                out.push(ts);
+            }
+            if flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0 {
+                break;
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// `fps` ist die **wirksame** Bildrate (`pure::effective_fps`): Bildschirmaufnahmen haben variable
+/// Bildrate, die Angabe im MP4 ist nur der Durchschnitt.
 pub fn probe(path: &Path) -> Result<VideoInfo> {
     let _com = enter()?;
     let (_r, m) = open_rgb(path)?;
-    Ok(VideoInfo { duration: m.duration, width: m.w, height: m.h, fps: m.fps, hevc: m.hevc, has_audio: m.has_audio })
+    let fps = effective_fps_cached(path, m.fps);
+    Ok(VideoInfo { duration: m.duration, width: m.w, height: m.h, fps, hevc: m.hevc, has_audio: m.has_audio })
 }
 
 struct Cur {

@@ -210,7 +210,10 @@ export interface Bootstrap {
   platform: "windows" | "mock";
   version: string;
   ocrAvailable: boolean;
+  /** HEVC aufnehmen **und** wieder lesen (Encoder und Decoder); sonst nur H.264. */
   hevcAvailable: boolean;
+  /** Media Foundation vorhanden — fehlt in Windows N/KN ohne „Media Feature Pack“: dann kein Video. */
+  mediaAvailable: boolean;
   /** Anonyme Nutzungsstatistik: null = noch nicht beantwortet (beim nächsten Start wird wieder gefragt). */
   telemetryConsent: boolean | null;
 }

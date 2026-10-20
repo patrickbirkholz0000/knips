@@ -29,8 +29,12 @@ fn string(name: PCWSTR) -> Option<String> {
 pub fn os_version() -> String {
     let major = dword(w!("CurrentMajorVersionNumber")).unwrap_or(10);
     let minor = dword(w!("CurrentMinorVersionNumber")).unwrap_or(0);
-    let build = string(w!("CurrentBuildNumber")).and_then(|b| b.parse::<u32>().ok()).unwrap_or(0);
-    format!("{major}.{minor}.{build}")
+    format!("{major}.{minor}.{}", build_number())
+}
+
+/// Build-Nummer (19041 = Windows 10 2004, 22000 = Windows 11); 0 = unbekannt.
+pub(crate) fn build_number() -> u32 {
+    string(w!("CurrentBuildNumber")).and_then(|b| b.parse::<u32>().ok()).unwrap_or(0)
 }
 
 /// Anzeigesprache des Benutzers, z. B. „de-DE“.

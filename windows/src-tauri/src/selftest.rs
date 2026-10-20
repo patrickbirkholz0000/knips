@@ -20,7 +20,7 @@ use anyhow::{bail, Context, Result};
 use knips_core::geometry::{IRect, Rect};
 use knips_core::links::Immediate;
 use knips_core::model::{Annotation, AnnotationKind, ImageDocument, ImageFormat, RedactStyle, SensitiveKind, VideoDocument, VideoRedaction};
-use knips_core::settings::HotkeyAction;
+use knips_core::settings::{Appearance, HotkeyAction};
 use knips_core::{imageops, sensitive, textlayout, tracker, videodetect, RgbaImage};
 use knips_platform::media::{self, FrameReader};
 use knips_platform::overlay::{self, Purpose};
@@ -1401,59 +1401,21 @@ fn ui(app: &AppHandle, out: &Path) -> Result<()> {
     check("menu", shoot(app, crate::menu::LABEL, out, "menu.png"));
     crate::menu::close(app);
 
-    // Einstellungen je Bereich
-    for pane in ["general", "shortcuts", "recording", "redaction", "export", "storage", "privacy", "about"] {
-        crate::commands::show_settings(app, Some(pane.into()));
-        std::thread::sleep(Duration::from_millis(900));
-        check(&format!("einstellungen-{pane}"), shoot(app, "settings", out, &format!("einstellungen-{pane}.png")));
+    // Einstellungen, Einwilligung, Link-Rückfrage und Verlauf — hell und dunkel (Einstellung „Darstellung“).
+    let appearance = k.settings.get().appearance;
+    for (theme, suffix) in [(Appearance::Light, ""), (Appearance::Dark, "-dunkel")] {
+        k.settings.update(|s| s.appearance = theme);
+        k.broadcast_bootstrap();
+        ui_windows(app, out, suffix, &mut check);
     }
-    // Allgemein, Datenschutz und Über Knips zusätzlich nach unten gescrollt („Befehle per Link“, Lizenz,
-    // „So arbeitet Knips“) — der CI-Bildschirm ist nur 1024×768, ein höheres Fenster ginge nicht.
-    for pane in ["general", "privacy", "about"] {
-        crate::commands::show_settings(app, Some(pane.into()));
-        std::thread::sleep(Duration::from_millis(900));
-        if let Some(w) = app.get_webview_window("settings") {
-            let _ = w.eval("document.querySelector('.st-page')?.scrollTo(0, 100000)");
-        }
-        std::thread::sleep(Duration::from_millis(500));
-        check(&format!("einstellungen-{pane}-unten"), shoot(app, "settings", out, &format!("einstellungen-{pane}-unten.png")));
-    }
-    // Frage zur Nutzungsstatistik (erscheint sonst nur beim ersten Start, nie in der Sandbox).
-    crate::telemetry::show_consent(app);
-    std::thread::sleep(Duration::from_millis(1200));
-    check("einwilligung", shoot(app, crate::telemetry::CONSENT_LABEL, out, "einwilligung.png"));
-    if let Some(w) = app.get_webview_window(crate::telemetry::CONSENT_LABEL) {
-        let _ = w.destroy();
-    }
+    k.settings.update(|s| s.appearance = appearance);
+    k.broadcast_bootstrap();
     let sandbox_off = if k.telemetry.consent().is_some() || k.telemetry.enabled() {
         Err(anyhow::anyhow!("Sandbox: Statistik aktiv oder Zustimmung gesetzt"))
     } else {
         Ok(())
     };
     check("statistik-sandbox", sandbox_off);
-
-    // Rückfrage vor einer Aufnahme per knips://-Link. Ausführen ist ersetzt: nimmt nie auf.
-    k.links.set_test_hooks(Some((Arc::new(|_| {}), Arc::new(|| false))));
-    let saved = k.settings.get().link_capture_without_confirm;
-    k.settings.update(|s| s.link_capture_without_confirm = false);
-    crate::app::handle_url("knips://fullscreen");
-    let prompt = wait_prompt(app, Immediate::Fullscreen).and_then(|(label, _)| {
-        std::thread::sleep(Duration::from_millis(900)); // „Aufnehmen“ nach der Schutzzeit
-        shoot(app, &label, out, "link-rueckfrage.png").map(|_| label)
-    });
-    match prompt {
-        Ok(label) => {
-            k.links.decide(&label, false, false);
-        }
-        Err(err) => check("link-rueckfrage", Err(err)),
-    }
-    k.links.set_test_hooks(None);
-    k.settings.update(|s| s.link_capture_without_confirm = saved);
-
-    // Verlauf
-    crate::commands::show_history(app);
-    std::thread::sleep(Duration::from_millis(1500));
-    check("verlauf", shoot(app, "history", out, "verlauf.png"));
 
     // Bild-Editor und Video-Editor
     crate::commands::open_item(app, items[0].id, Some("redact".into()));
@@ -1491,6 +1453,105 @@ fn ui(app: &AppHandle, out: &Path) -> Result<()> {
         bail!("Fenster ohne Bild: {}", failures.join(", "));
     }
     Ok(())
+}
+
+/// Fenster aus `ui`, die Hell/Dunkel folgen: Einstellungen je Bereich (Start mit Bereit-Check), Einwilligung,
+/// Link-Rückfrage, Verlauf. Prüft je Fenster, dass `<html data-theme>` zur Einstellung passt (die Fenster lesen
+/// sie beim Start über `get_bootstrap` — dafür brauchen auch Einwilligung und Rückfrage die Berechtigung).
+fn ui_windows(app: &AppHandle, out: &Path, suffix: &str, check: &mut dyn FnMut(&str, Result<()>)) {
+    let k = crate::app::knips();
+    let dark = !suffix.is_empty();
+    let want = if dark { "dark" } else { "light" };
+    let themed = |w: &WebviewWindow| -> Result<()> {
+        let theme = probe(w, "document.documentElement.dataset.theme", Duration::from_secs(3))?;
+        if theme != want {
+            bail!("data-theme = {theme}, erwartet {want}");
+        }
+        Ok(())
+    };
+
+    // Einstellungen je Bereich; „start“ zuerst (Kürzel, drei Schritte, Bereit-Check).
+    for pane in crate::commands::SETTINGS_PANES {
+        crate::commands::show_settings(app, Some(pane.into()));
+        std::thread::sleep(Duration::from_millis(900));
+        let name = format!("einstellungen-{pane}{suffix}");
+        check(&name, shoot(app, "settings", out, &format!("{name}.png")));
+    }
+    if let Some(w) = app.get_webview_window("settings") {
+        check(&format!("einstellungen-theme{suffix}"), themed(&w));
+        crate::commands::show_settings(app, Some("start".into()));
+        std::thread::sleep(Duration::from_millis(700));
+        // Bereit-Check: eine Zeile je Prüfung (mindestens Bildschirm, Kürzel, Ablage, Mikrofon), Status unten links.
+        let ready = probe(
+            &w,
+            "(() => { const rows = document.querySelectorAll('.st-check').length; const status = document.querySelector('.st-status')?.textContent ?? ''; return rows + '|' + status; })()",
+            Duration::from_secs(3),
+        );
+        let ok = match &ready {
+            Ok(v) => {
+                println!("   Bereit-Check{suffix}: {v}");
+                v.split('|').next().and_then(|n| n.parse::<usize>().ok()).unwrap_or(0) >= 4 && (v.contains("Bereit") || v.contains("offen"))
+            }
+            Err(_) => false,
+        };
+        check(&format!("bereit-check{suffix}"), if ok { Ok(()) } else { Err(anyhow::anyhow!("Start ohne Bereit-Check: {ready:?}")) });
+    }
+    // Allgemein, Datenschutz und Über Knips zusätzlich nach unten gescrollt („Befehle per Link“, Lizenz,
+    // Schriften) — der CI-Bildschirm ist nur 1024×768, ein höheres Fenster ginge nicht.
+    let below: &[&str] = if dark { &["general"] } else { &["general", "privacy", "about"] };
+    for pane in below {
+        crate::commands::show_settings(app, Some((*pane).into()));
+        std::thread::sleep(Duration::from_millis(900));
+        if let Some(w) = app.get_webview_window("settings") {
+            let _ = w.eval("document.querySelector('.st-page')?.scrollTo(0, 100000)");
+        }
+        std::thread::sleep(Duration::from_millis(500));
+        let name = format!("einstellungen-{pane}-unten{suffix}");
+        check(&name, shoot(app, "settings", out, &format!("{name}.png")));
+    }
+    if let Some(w) = app.get_webview_window("settings") {
+        let _ = w.hide();
+    }
+
+    // Frage zur Nutzungsstatistik (erscheint sonst nur beim ersten Start, nie in der Sandbox).
+    crate::telemetry::show_consent(app);
+    std::thread::sleep(Duration::from_millis(1200));
+    check(&format!("einwilligung{suffix}"), shoot(app, crate::telemetry::CONSENT_LABEL, out, &format!("einwilligung{suffix}.png")));
+    if let Some(w) = app.get_webview_window(crate::telemetry::CONSENT_LABEL) {
+        check(&format!("einwilligung-theme{suffix}"), themed(&w));
+        let _ = w.destroy();
+    }
+
+    // Rückfrage vor einer Aufnahme per knips://-Link. Ausführen ist ersetzt: nimmt nie auf.
+    k.links.set_test_hooks(Some((Arc::new(|_| {}), Arc::new(|| false))));
+    let saved = k.settings.get().link_capture_without_confirm;
+    k.settings.update(|s| s.link_capture_without_confirm = false);
+    crate::app::handle_url("knips://fullscreen");
+    let prompt = wait_prompt(app, Immediate::Fullscreen).and_then(|(label, w)| {
+        std::thread::sleep(Duration::from_millis(900)); // „Aufnehmen“ nach der Schutzzeit
+        shoot(app, &label, out, &format!("link-rueckfrage{suffix}.png"))?;
+        Ok((label, themed(&w)))
+    });
+    match prompt {
+        Ok((label, theme)) => {
+            check(&format!("link-rueckfrage-theme{suffix}"), theme);
+            k.links.decide(&label, false, false);
+        }
+        Err(err) => check(&format!("link-rueckfrage{suffix}"), Err(err)),
+    }
+    k.links.set_test_hooks(None);
+    k.settings.update(|s| s.link_capture_without_confirm = saved);
+
+    // Verlauf
+    crate::commands::show_history(app);
+    std::thread::sleep(Duration::from_millis(1500));
+    check(&format!("verlauf{suffix}"), shoot(app, "history", out, &format!("verlauf{suffix}.png")));
+    if let Some(w) = app.get_webview_window("history") {
+        check(&format!("verlauf-theme{suffix}"), themed(&w));
+        if dark {
+            let _ = w.hide();
+        }
+    }
 }
 
 /// Dateien unter `dir`, die einen der Texte enthalten (Kennungen der Aufnahmen).
@@ -1857,7 +1918,7 @@ fn links_steps(app: &AppHandle, out: &Path, calls: &parking_lot::Mutex<Vec<Hotke
     crate::commands::show_settings(app, Some("general".into()));
     std::thread::sleep(Duration::from_millis(1200));
     let settings_w = app.get_webview_window("settings").context("Einstellungen fehlen")?;
-    let switch = "[...document.querySelectorAll('.st-row')].find(r => r.textContent.includes('Aufnahmen per Link ohne Rückfrage'))?.querySelector('[role=switch]')";
+    let switch = "[...document.querySelectorAll('.k-row')].find(r => r.textContent.includes('Aufnahmen per Link ohne Rückfrage'))?.querySelector('[role=switch]')";
     let found = probe(&settings_w, &format!("(() => {{ const s = {switch}; if (!s) return 'fehlt'; s.scrollIntoView({{ block: 'center' }}); return s.getAttribute('aria-checked'); }})()"), Duration::from_secs(3))?;
     std::thread::sleep(Duration::from_millis(400));
     shoot(app, "settings", out, "link-einstellung-allgemein.png")?;

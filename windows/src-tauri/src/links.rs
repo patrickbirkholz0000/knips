@@ -21,7 +21,8 @@ use crate::wm;
 
 /// Fenster der Rückfrage heißen `link-confirm-<kennung>` (jede Rückfrage ein neues Fenster).
 pub const LABEL_PREFIX: &str = "link-confirm-";
-const SIZE: (f64, f64) = (500.0, 252.0);
+/// Dialog-Karte mit Kachel, Text und Knöpfen (src/links/LinkConfirm.tsx); höher als bis 1.0 (500 × 252).
+const SIZE: (f64, f64) = (520.0, 352.0);
 
 pub type PerformFn = Arc<dyn Fn(HotkeyAction) + Send + Sync>;
 pub type BusyFn = Arc<dyn Fn() -> bool + Send + Sync>;

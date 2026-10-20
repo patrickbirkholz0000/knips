@@ -1,0 +1,617 @@
+/* Gemeinsame Bausteine (shared/ui/index.tsx) — Markensprache aus docs/design.md, Werte nur aus tokens.css.
+   Präfix k-. Hell/Dunkel über die Tokens (data-theme), nichts hier hängt am Modus. */
+
+/* Schatten unter Daumen und Kappen kommen immer aus dem dunklen Ton (--k-dark), nie aus der Tinte —
+   die ist im Dunkelmodus hell. */
+
+/* Dünne Rollbalken mit runden Daumen. */
+.k-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--k-line-strong) transparent;
+}
+
+/* ---------------------------------------------------------------- Schalter */
+
+.k-switch {
+  position: relative;
+  flex: none;
+  width: 38px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--k-radius-pill);
+  background: var(--k-line-strong);
+  transition: background var(--k-t-base);
+}
+.k-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--k-dark-button);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--k-dark) 30%, transparent);
+  transition: transform var(--k-t-base);
+}
+.k-switch[aria-checked="true"] {
+  background: var(--k-accent);
+}
+.k-switch[aria-checked="true"]::after {
+  transform: translateX(16px);
+}
+.k-switch:disabled {
+  opacity: 0.4;
+}
+
+/* ---------------------------------------------------------------- Segment-Schalter */
+
+.k-seg {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--k-radius-field);
+  background: var(--k-fill);
+}
+.k-seg button {
+  height: 28px;
+  padding: 0 13px;
+  border-radius: calc(var(--k-radius-field) - 3px);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--k-ink-soft);
+  white-space: nowrap;
+  transition: color var(--k-t-fast), background var(--k-t-fast), box-shadow var(--k-t-fast);
+}
+.k-seg button:hover:not(.on) {
+  color: var(--k-ink);
+}
+.k-seg button.on {
+  background: var(--k-segment-thumb);
+  color: var(--k-ink);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--k-dark) 14%, transparent), 0 0 0 0.5px color-mix(in srgb, var(--k-dark) 6%, transparent);
+}
+.k-seg--sm button {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+/* ---------------------------------------------------------------- Auswahlfeld */
+
+.k-select {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+.k-select select {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 36px;
+  min-width: 132px;
+  padding: 0 34px 0 12px;
+  border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-radius-field);
+  background: var(--k-surface);
+  color: var(--k-ink);
+  font-size: 13.5px;
+  outline: none;
+  transition: border-color var(--k-t-fast), box-shadow var(--k-t-fast);
+}
+.k-select select:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--k-ink) 24%, var(--k-line));
+}
+.k-select select:focus-visible {
+  border-color: var(--k-accent);
+  box-shadow: var(--k-focus-ring);
+}
+.k-select select:disabled {
+  opacity: 0.45;
+}
+.k-select svg {
+  position: absolute;
+  right: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--k-ink-soft);
+}
+
+/* ---------------------------------------------------------------- Kästchen */
+
+.k-check {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--k-ink);
+}
+.k-check input {
+  position: absolute;
+  opacity: 0;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+.k-check__box {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--k-line-strong);
+  border-radius: var(--k-radius-sm);
+  background: var(--k-surface);
+  color: transparent;
+  transition: background var(--k-t-fast), border-color var(--k-t-fast);
+}
+.k-check input:checked + .k-check__box {
+  background: var(--k-accent);
+  border-color: var(--k-accent);
+  color: var(--k-on-accent);
+}
+.k-check input:focus-visible + .k-check__box {
+  outline: 2px solid var(--k-accent);
+  outline-offset: 2px;
+}
+.k-check.is-off {
+  opacity: 0.45;
+}
+
+/* ---------------------------------------------------------------- Knöpfe */
+
+.k-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: var(--k-radius-field);
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  transition: background var(--k-t-fast), border-color var(--k-t-fast), opacity var(--k-t-fast), color var(--k-t-fast);
+}
+.k-btn svg {
+  flex: none;
+}
+.k-btn--primary {
+  background: var(--k-button);
+  color: var(--k-button-ink);
+}
+.k-btn--primary:hover:not(:disabled) {
+  opacity: 0.86;
+}
+.k-btn--primary:active:not(:disabled) {
+  opacity: 0.72;
+}
+.k-btn--secondary {
+  background: var(--k-surface);
+  border-color: var(--k-line-strong);
+  color: var(--k-ink);
+}
+.k-btn--secondary:hover:not(:disabled) {
+  background: var(--k-canvas);
+}
+.k-btn--secondary:active:not(:disabled) {
+  background: var(--k-fill);
+}
+.k-btn--text {
+  height: auto;
+  padding: 4px 2px;
+  border: 0;
+  color: var(--k-ink-muted);
+  text-underline-offset: 4px;
+}
+.k-btn--text:hover:not(:disabled) {
+  color: var(--k-ink);
+  text-decoration: underline;
+}
+.k-btn--sm {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12.5px;
+}
+.k-btn:disabled {
+  opacity: 0.4;
+}
+
+/* ---------------------------------------------------------------- Tastenkappen */
+
+.k-keys {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+.k-keys__part {
+  display: inline-flex;
+  align-items: center;
+}
+.k-keys__plus {
+  padding: 0 5px;
+  font-family: var(--k-mono);
+  font-size: 11px;
+  color: var(--k-ink-soft);
+}
+.k-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-radius-sm);
+  background: var(--k-surface);
+  color: var(--k-ink);
+  font-family: var(--k-mono);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: inset 0 -1.5px 0 var(--k-line-strong);
+}
+.k-key--lg {
+  min-width: 38px;
+  height: 36px;
+  padding: 0 11px;
+  border-radius: var(--k-radius-field);
+  font-size: 13.5px;
+  box-shadow: inset 0 -2px 0 var(--k-line-strong), 0 1px 2px color-mix(in srgb, var(--k-dark) 6%, transparent);
+}
+.k-key--dark {
+  border-color: var(--k-dark-line);
+  background: var(--k-dark-raised);
+  color: var(--k-dark-ink);
+  box-shadow: inset 0 -1.5px 0 var(--k-dark-line);
+}
+.k-keys--dark .k-keys__plus {
+  color: var(--k-dark-muted);
+}
+.k-keys--lg .k-keys__plus {
+  padding: 0 7px;
+  font-size: 12px;
+}
+
+/* ---------------------------------------------------------------- Überschriften, Karten, Zeilen */
+
+.k-overline {
+  font-family: var(--k-mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: var(--k-overline-tracking);
+  text-transform: uppercase;
+  color: var(--k-ink-soft);
+}
+.k-overline--side {
+  color: var(--k-side-muted);
+}
+
+.k-card {
+  background: var(--k-surface);
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-radius-card);
+  box-shadow: var(--k-shadow);
+}
+.k-card--rows {
+  padding: 0 20px;
+}
+
+.k-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.k-section__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 2px;
+}
+.k-section__title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  color: var(--k-ink);
+}
+.k-section__foot {
+  margin: 0;
+  padding: 0 2px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--k-ink-soft);
+}
+
+.k-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 58px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--k-line);
+}
+.k-row:last-child {
+  border-bottom: 0;
+}
+.k-row__text {
+  flex: 1;
+  min-width: 0;
+}
+.k-row__title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--k-ink);
+}
+.k-row__desc {
+  margin-top: 3px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--k-ink-soft);
+}
+.k-row__ctl {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.k-row__below {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.k-row--off {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------- Hinweise */
+
+.k-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--k-radius-card);
+}
+.k-notice--warn {
+  background: var(--k-warn-soft);
+  border-color: color-mix(in srgb, var(--k-warn) 22%, transparent);
+}
+.k-notice--success {
+  background: var(--k-success-soft);
+  border-color: color-mix(in srgb, var(--k-success) 22%, transparent);
+}
+.k-notice__icon {
+  flex: none;
+  display: flex;
+  margin-top: 1px;
+}
+.k-notice--warn .k-notice__icon {
+  color: var(--k-warn);
+}
+.k-notice--success .k-notice__icon {
+  color: var(--k-success);
+}
+.k-notice__body {
+  flex: 1;
+  min-width: 0;
+}
+.k-notice__title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--k-ink);
+}
+.k-notice__detail {
+  margin-top: 3px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--k-ink-muted);
+}
+.k-notice__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* ---------------------------------------------------------------- Bereit-Zeichen, Punkte */
+
+.k-status {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+}
+.k-status--ok {
+  background: var(--k-success-soft);
+  color: var(--k-success);
+}
+.k-status--missing {
+  background: var(--k-record-soft);
+}
+.k-status--missing::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--k-record);
+}
+.k-status--optional {
+  border: 2px dashed var(--k-line-strong);
+}
+
+.k-dot {
+  flex: none;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.k-dot--ok {
+  background: var(--k-success);
+}
+.k-dot--missing {
+  background: var(--k-record);
+}
+.k-dot--idle {
+  background: var(--k-line-strong);
+}
+
+.k-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--k-radius-pill);
+  background: var(--k-record);
+  color: var(--k-on-accent);
+  font-family: var(--k-mono);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* ---------------------------------------------------------------- Icon-Kachel, Punkte, Dialog */
+
+.k-tile {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--k-radius-field);
+  background: var(--k-accent-soft);
+  color: var(--k-accent);
+}
+.k-tile--lg {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--k-radius-card);
+}
+
+.k-point {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.k-point__text {
+  flex: 1;
+  min-width: 0;
+  padding-top: 1px;
+}
+.k-point__title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--k-ink);
+}
+.k-point__desc {
+  margin-top: 2px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--k-ink-muted);
+}
+
+.k-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 24px 28px 22px;
+  background: var(--k-surface);
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-radius-dialog);
+  box-shadow: var(--k-shadow-dialog);
+  color: var(--k-ink);
+}
+.k-dialog__title {
+  margin: 4px 0 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: var(--k-ink);
+}
+.k-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 4px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--k-ink-muted);
+}
+.k-dialog__body p {
+  margin: 0;
+}
+.k-dialog__foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 14px;
+}
+.k-dialog__extra {
+  margin-right: auto;
+  min-width: 0;
+}
+.k-dialog__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-left: auto;
+}
+
+/* Halbtransparente Fläche hinter einem Dialog im selben Fenster. */
+.k-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--k-dark) 32%, transparent);
+  animation: k-fade-in 0.12s ease-out both;
+}
+.k-scrim > .k-dialog {
+  width: min(420px, 100%);
+  animation: k-dialog-in 0.2s var(--k-ease) both;
+}
+
+@keyframes k-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes k-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .k-scrim,
+  .k-scrim > .k-dialog {
+    animation: none;
+  }
+}

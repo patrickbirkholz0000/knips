@@ -261,7 +261,7 @@ pub fn nomedia(app: &AppHandle, out: &Path) -> Result<()> {
     crate::commands::show_settings(app, Some("recording".into()));
     std::thread::sleep(Duration::from_millis(1200));
     let settings = app.get_webview_window("settings").context("Einstellungen fehlen")?;
-    let text = probe(&settings, "document.body.innerText.includes('Media Feature Pack') && !!document.querySelector('.st-notice')", Duration::from_secs(5))?;
+    let text = probe(&settings, "document.body.innerText.includes('Media Feature Pack') && !!document.querySelector('.k-notice')", Duration::from_secs(5))?;
     if text != "true" {
         bail!("Einstellungen zeigen keinen Hinweis auf das Media Feature Pack ({text})");
     }

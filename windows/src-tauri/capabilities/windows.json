@@ -24,6 +24,7 @@
         "allow-choose-save-folder",
         "allow-open-save-folder",
         "allow-storage-size",
+        "allow-save-folder-ok",
         "allow-purge-originals",
         "allow-open-url",
         "allow-telemetry-set-consent"
@@ -111,15 +112,15 @@
     },
     {
       "identifier": "consent",
-      "description": "Frage zur Nutzungsstatistik.",
+      "description": "Frage zur Nutzungsstatistik (Einstellungen nur lesen: Hell/Dunkel).",
       "windows": ["consent"],
-      "permissions": ["allow-telemetry-set-consent"]
+      "permissions": ["allow-get-bootstrap", "allow-telemetry-set-consent"]
     },
     {
       "identifier": "link-confirm",
-      "description": "Rückfrage vor Aufnahmen per knips://-Link: nur die eigene Antwort.",
+      "description": "Rückfrage vor Aufnahmen per knips://-Link: nur die eigene Antwort (Einstellungen nur lesen: Hell/Dunkel).",
       "windows": ["link-confirm-*"],
-      "permissions": ["allow-link-confirm-shown", "allow-link-confirm-decide"]
+      "permissions": ["allow-get-bootstrap", "allow-link-confirm-shown", "allow-link-confirm-decide"]
     },
     {
       "identifier": "editor",

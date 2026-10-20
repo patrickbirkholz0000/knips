@@ -110,6 +110,7 @@ fn run(args: Vec<String>) {
             commands::menu_close,
             commands::choose_save_folder,
             commands::storage_size,
+            commands::save_folder_ok,
             commands::purge_originals,
             commands::clipboard_text,
             commands::hud,

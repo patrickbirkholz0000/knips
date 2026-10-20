@@ -1,64 +1,71 @@
-/* Rückfrage vor Aufnahmen per knips://-Link — Stil wie die Frage zur Nutzungsstatistik
-   (helle Fläche, schwarzer Hauptknopf). */
+/* Rückfrage vor Aufnahmen per knips://-Link — Dialog-Karte wie die Onboarding-Karte wie in der App-Familie
+   (shared/ui DialogCard). Schutzzeit sichtbar: leiser Fortschritt im Knopf „Aufnehmen“. */
 html[data-view="link-confirm"] body {
-  background: var(--page);
   overflow: hidden;
 }
 .lc {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  padding: 22px 28px 22px;
-  background: var(--page);
-  color: var(--ink);
+  padding: 12px;
+  background: var(--k-canvas);
 }
-.lc-head { display: flex; align-items: center; gap: 14px; }
-.lc-head img { width: 50px; height: 50px; flex: none; }
-.lc-head h1 {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.4px;
-  line-height: 1.2;
+.lc > .k-dialog {
+  flex: 1;
+  min-height: 0;
+  box-shadow: var(--k-shadow-float);
 }
-.lc-msg {
-  margin: 16px 0 0;
-  font-size: 13.5px;
-  line-height: 1.5;
-}
-.lc-hint {
-  margin: 8px 0 0;
-  font-size: 12.5px;
-  line-height: 1.4;
-  color: var(--muted);
-}
-.lc-row { display: flex; align-items: center; gap: 10px; margin-top: auto; padding-top: 16px; }
-.lc-check {
+.lc-action {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin-right: auto;
-  font-size: 12.5px;
-  font-weight: 500;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-radius-card);
+  background: var(--k-surface-raised);
 }
-.lc-check input { width: 15px; height: 15px; margin: 0; accent-color: rgb(23, 23, 23); }
-/* Wie „Aufnehmen“: erst nach der Schutzzeit wählbar. */
-.lc-check.off { opacity: 0.45; }
-.lc-btn {
-  height: 32px;
-  padding: 0 16px;
-  border: 0;
-  border-radius: 9px;
-  background: rgb(228, 228, 231);
-  color: rgb(23, 23, 23);
-  font: inherit;
-  font-size: 13px;
+.lc-action__title {
+  font-size: 14px;
   font-weight: 600;
-  white-space: nowrap;
+  color: var(--k-ink);
 }
-.lc-btn.primary { background: rgb(23, 23, 23); color: #fff; }
-.lc-btn:hover:not(:disabled) { filter: brightness(0.96); }
-.lc-btn.primary:hover:not(:disabled) { filter: brightness(1.25); }
-.lc-btn:active:not(:disabled) { opacity: 0.8; }
-.lc-btn:disabled { opacity: 0.45; }
+.lc-action__link {
+  margin-top: 2px;
+  font-family: var(--k-mono);
+  font-size: 11.5px;
+  color: var(--k-ink-soft);
+}
+.lc-hint {
+  font-size: 12.5px;
+  color: var(--k-ink-soft);
+}
+.lc-confirm {
+  position: relative;
+  overflow: hidden;
+}
+/* Leiser Fortschritt der Schutzzeit (0,6 s), danach ist der Knopf scharf. */
+.lc-arm {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 100%;
+  background: var(--k-button-ink);
+  opacity: 0.55;
+  transform-origin: left;
+  animation: lc-arm linear both;
+}
+@keyframes lc-arm {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lc-arm {
+    animation: none;
+    transform: scaleX(0.5);
+  }
+}

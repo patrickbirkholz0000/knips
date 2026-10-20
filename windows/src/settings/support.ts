@@ -1,5 +1,8 @@
 // Texte und Kürzel-Typen wie in SettingsSupport.swift / Hotkeys.swift.
-import type { HotkeyAction, SensitiveKind } from "../shared/types";
+import type { HotkeyAction, SensitiveKind, Settings } from "../shared/types";
+
+/** Bereiche der Einstellungen — gleiche Namen wie `SETTINGS_PANES` in src-tauri/src/commands.rs. */
+export type Pane = "start" | "general" | "shortcuts" | "recording" | "redaction" | "export" | "storage" | "privacy" | "about";
 
 export const hotkeyTitle: Record<HotkeyAction, string> = {
   captureArea: "Bereich aufnehmen",
@@ -35,3 +38,18 @@ export const kindOrder: SensitiveKind[] = ["email", "iban", "phone", "card", "se
 export const styleTitle = { pixelate: "Verpixeln", blur: "Unschärfe", solid: "Balken" } as const;
 
 export const VK_SNAPSHOT = 0x2c;
+
+/** Eingeschaltete Kürzel mit Tastenkombination. */
+export function activeHotkeys(s: Settings): HotkeyAction[] {
+  return (Object.keys(s.hotkeys) as HotkeyAction[]).filter((a) => !!s.hotkeys[a] && !s.disabledHotkeys.includes(a));
+}
+
+/** Liegt ein eingeschaltetes Kürzel auf der Druck-Taste? */
+export function usesPrintKey(s: Settings): boolean {
+  return activeHotkeys(s).some((a) => s.hotkeys[a]!.vk === VK_SNAPSHOT);
+}
+
+/** „1 Schritt“, „2 Schritte“. */
+export function steps(n: number): string {
+  return n === 1 ? "1 Schritt" : `${n} Schritte`;
+}

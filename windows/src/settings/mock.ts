@@ -11,7 +11,13 @@ function label(c: KeyCombo): string {
 }
 
 if (!inTauri) {
+  // Zum Ansehen des Bereit-Checks mit offenen Schritten: „fehlt“ in der Adresse (Kürzel belegt, Ablage weg;
+  // zusammen mit „nomedia“ auch ohne Video).
+  const missing = /fehlt/.test(globalThis.location?.href ?? "");
   let boot: Bootstrap = structuredClone(mockBootstrap);
+  if (missing) boot.hotkeyFailures = ["captureWindow"];
+  // „bereit“: Druck-Taste schon übernommen — alles erledigt.
+  if (/bereit/.test(globalThis.location?.href ?? "")) boot = { ...boot, snippingKeyEnabled: false, settings: { ...boot.settings, tookSnippingKey: true } };
   const labels = (s: Settings) => {
     const out: Bootstrap["hotkeyLabels"] = {};
     for (const [a, c] of Object.entries(s.hotkeys)) if (c) out[a as HotkeyAction] = label(c);
@@ -46,6 +52,7 @@ if (!inTauri) {
   registerMock("snipping_restore", () => void push({ snippingKeyEnabled: true }, { tookSnippingKey: false }));
   registerMock("telemetry_set_consent", ({ consent }) => void push({ telemetryConsent: consent }));
   registerMock("choose_save_folder", () => "D:\\Aufnahmen\\Knips");
+  registerMock("save_folder_ok", () => !missing);
   registerMock("purge_originals", () => {});
   registerMock("open_url", () => {});
   registerMock("open_save_folder", () => {});

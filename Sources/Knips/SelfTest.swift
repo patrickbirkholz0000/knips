@@ -10,7 +10,7 @@ import Vision
 @MainActor enum SelfTest {
     static func run(_ args: [String]) -> Int32 {
         guard args.count >= 2 else {
-            print("Aufruf: --selftest render|detect|ui|selection|settings|telemetry|video|capture|record <ordner>")
+            print("Aufruf: --selftest render|detect|ui|selection|settings|links|telemetry|video|capture|record <ordner>")
             return 2
         }
         let out = URL(fileURLWithPath: args[1], isDirectory: true)
@@ -19,7 +19,7 @@ import Vision
         do {
             switch args[0] {
             case "render": try render(out)
-            case "detect": detect(out)
+            case "detect": try detect(out)
             case "ui": try runAsync { try await ui(out) }
             case "selection": try selection(out)
             case "live":
@@ -37,6 +37,9 @@ import Vision
             case "settings":
                 NSApp.setActivationPolicy(.accessory)
                 try runAsync { try await settings(out, panes: args.count > 2 ? args[2].split(separator: ",").compactMap { SettingsPane(rawValue: String($0)) } : SettingsPane.allCases) }
+            case "links":
+                NSApp.setActivationPolicy(.accessory)
+                try runAsync { try await links(out) }
             case "telemetry": try runAsync { try await telemetry(out, live: args.count > 2 && args[2] == "live") }
             case "video": try runAsync { try await video(out) }
             case "capture": try runAsync { try await capture() }
@@ -85,6 +88,11 @@ import Vision
 
     // MARK: Testbild
 
+    /// Erfundener Stripe-Schlüssel im Testbild. Absichtlich zusammengesetzt: Im Quelltext steht so nie
+    /// „sk_“ + „live_“ direkt vor Buchstaben/Ziffern, damit Secret-Scanner (GitHub-Push-Schutz) nicht anschlagen.
+    static let sampleStripeKey = "sk_" + "live_KnipsBeispiel42"
+    static let sampleStripeLine = "Stripe-Key: " + sampleStripeKey
+
     /// Nachgebautes App-Fenster mit typischen sensiblen Daten (alle fiktiv).
     static func sampleImage(width: Int = 1400, height: Int = 880, scale: CGFloat = 2) -> CGImage {
         let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
@@ -117,7 +125,7 @@ import Vision
         text("E-Mail: erika.mustermann@example.com", 196, 124)
         text("Telefon: +49 170 1234567", 196, 152)
         text("IBAN: DE89 3704 0044 0532 0130 00", 196, 180)
-        text("Stripe-Key: sk_live_KnipsBeispiel42", 196, 208, size: 13, color: .darkGray)
+        text(sampleStripeLine, 196, 208, size: 13, color: .darkGray)
         text("Bestellung #48213 wurde am 03.10. versendet und ist unterwegs.", 196, 252)
         text("Hinweis: Lieferzeit 2–3 Werktage, Sendungsverfolgung folgt per Mail.", 196, 280, color: .darkGray)
         ctx.setFillColor(NSColor.systemBlue.cgColor)
@@ -168,7 +176,7 @@ import Vision
         guard cropped.width == 1000, cropped.height == 420 else { throw CaptureError.noDisplay }
     }
 
-    static func detect(_ out: URL) {
+    static func detect(_ out: URL) throws {
         let base = sampleImage()
         let findings = SensitiveDetector.detectSync(in: base)
         for f in findings { print("  \(f.kind.title): \(f.text) @ \(Int(f.rect.minX)),\(Int(f.rect.minY)) \(Int(f.rect.width))×\(Int(f.rect.height))") }
@@ -198,6 +206,16 @@ import Vision
         let samples = ["kontakt@example.com", "DE89 3704 0044 0532 0130 00", "4111 1111 1111 1111", "ghp_abcdefghijklmnopqrstuvwxyz123456",
                        "Bestellung 48213 versendet", "0170 1234567", "192.168.178.1", "Passwort: hunter22"]
         for s in samples { print("  „\(s)“ → \(SensitiveDetector.matches(in: s).map(\.0.title))") }
+        // Pflicht-Treffer: Texterkennung + Muster müssen den erfundenen Schlüssel vollständig finden (normal und 2×).
+        var missing: [String] = []
+        for (name, list) in [("1×", findings), ("2×", bigFindings)] {
+            if !list.contains(where: { $0.kind == .secret && $0.text == sampleStripeKey }) { missing.append("Stripe-Key \(name)") }
+            if !list.contains(where: { $0.kind == .email && $0.text == "erika.mustermann@example.com" }) { missing.append("E-Mail \(name)") }
+        }
+        if SensitiveDetector.matches(in: "kontakt@example.com").map(\.0) != [.email] { missing.append("Muster E-Mail") }
+        if SensitiveDetector.matches(in: sampleStripeKey).map(\.0) != [.secret] { missing.append("Muster Stripe-Key") }
+        if !missing.isEmpty { throw CheckFailed(message: "Nicht erkannt: \(missing.joined(separator: ", "))") }
+        print("   ✓ Stripe-Key „\(sampleStripeKey)“ und E-Mail erkannt (1× und 2×)")
     }
 
     // MARK: UI
@@ -427,16 +445,21 @@ import Vision
 
     // MARK: Live-Fenster (nur eigene Fenster, abseits des sichtbaren Bereichs)
 
-    private static func windowShot(_ window: NSWindow, _ url: URL) async throws {
+    /// ScreenCaptureKit nimmt nur Fenster, die einen Bildschirm berühren — 1 pt Überlappung
+    /// in der äußersten Ecke reicht, der Rest liegt unsichtbar daneben.
+    private static func placeOffscreen(_ window: NSWindow) {
         let size = window.frame.size
-        // ScreenCaptureKit nimmt nur Fenster, die einen Bildschirm berühren — 1 pt Überlappung
-        // in der äußersten Ecke reicht, der Rest liegt unsichtbar daneben.
         let minX = NSScreen.screens.map(\.frame.minX).min() ?? 0
         let minY = NSScreen.screens.map(\.frame.minY).min() ?? 0
         let origin = NSPoint(x: minX - size.width + 1, y: minY - size.height + 1)
         window.setFrameOrigin(origin)
         window.orderFrontRegardless()
         window.setFrameOrigin(origin)
+    }
+
+    private static func windowShot(_ window: NSWindow, _ url: URL) async throws {
+        let size = window.frame.size
+        placeOffscreen(window)
         try await Task.sleep(nanoseconds: 900_000_000)
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         guard let scw = content.windows.first(where: { $0.windowID == CGWindowID(window.windowNumber) }) else { throw CaptureError.windowGone }
@@ -669,6 +692,124 @@ import Vision
         let consent = ConsentWindowController(telemetry: Telemetry.shared)
         try await windowShot(consent.window!, out.appendingPathComponent("zustimmung.png"))
         consent.window?.orderOut(nil)
+    }
+
+    // MARK: knips://-Links
+
+    /// Rückfrage vor sofort aufnehmenden knips://-Links (Vollbild, letzter Bereich, Videostart).
+    /// Aufnahmen sind durch eine Liste ersetzt: Es wird nie der Bildschirm aufgenommen und nie das
+    /// Auswahl-Overlay geöffnet. Die Rückfrage liegt neben dem sichtbaren Bildschirm.
+    static func links(_ out: URL) async throws {
+        let commands = LinkCommands.shared
+        let settings = AppSettings.shared, defaults = UserDefaults.standard
+        let key = "linkCaptureWithoutConfirm"
+        let (savedObject, savedValue) = (defaults.object(forKey: key), settings.linkCaptureWithoutConfirm)
+        var calls: [HotkeyAction] = []
+        var recording = false
+        commands.perform = { calls.append($0) }
+        commands.recordingBusy = { recording }
+        commands.show = { placeOffscreen($0.window!) }
+        defer {
+            settings.linkCaptureWithoutConfirm = savedValue
+            if let savedObject { defaults.set(savedObject, forKey: key) } else { defaults.removeObject(forKey: key) }
+        }
+        let delegate = AppDelegate()
+        func link(_ command: String) { delegate.application(NSApp, open: [URL(string: "knips://\(command)")!]) }
+        var failed: [String] = []
+        func check(_ name: String, _ ok: Bool) {
+            print("   \(ok ? "ok    " : "FALSCH") \(name) → \(calls.isEmpty ? "nichts" : calls.map(\.rawValue).joined(separator: ", "))"
+                  + (commands.confirmation.map { ", Rückfrage \($0.model.kind.rawValue) offen" } ?? ""))
+            if !ok { failed.append(name) }
+            calls.removeAll()
+        }
+        func dialog(_ kind: LinkCommands.Immediate) throws -> LinkConfirmWindowController {
+            guard let c = commands.confirmation, c.model.kind == kind else { throw CheckFailed(message: "keine Rückfrage für knips://\(kind.rawValue)") }
+            return c
+        }
+        func press(_ window: NSWindow, _ chars: String, _ keyCode: UInt16) throws {
+            guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                               timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                               context: nil, characters: chars, charactersIgnoringModifiers: chars,
+                                               isARepeat: false, keyCode: keyCode)
+            else { throw CheckFailed(message: "Tastenereignis nicht erzeugt") }
+            _ = window.performKeyEquivalent(with: event)
+            pumpEvents(for: 0.15)
+        }
+        let armed = UInt64((LinkConfirmWindowController.armDelay + 0.2) * 1_000_000_000)
+
+        settings.linkCaptureWithoutConfirm = false
+        print("Einstellung aus (Standard):")
+        link("fullscreen")
+        let full = try dialog(.fullscreen)
+        check("fullscreen fragt nach, nimmt nichts auf", calls.isEmpty)
+        try await windowShot(full.window!, out.appendingPathComponent("link-rueckfrage-fullscreen.png"))
+        link("last")
+        check("weiterer Link bei offener Rückfrage verfällt", calls.isEmpty && commands.confirmation === full)
+        try press(full.window!, "\u{1b}", 53)
+        check("Esc = Abbrechen", calls.isEmpty && commands.confirmation == nil)
+
+        link("last")
+        let last = try dialog(.last)
+        try press(last.window!, "\r", 36)
+        check("⏎ vor der Schutzzeit bestätigt nichts", calls.isEmpty && commands.confirmation === last)
+        try await Task.sleep(nanoseconds: armed)
+        try press(last.window!, "\r", 36)
+        check("⏎ = Aufnehmen → letzter Bereich", calls == [.captureLastArea] && commands.confirmation == nil
+              && !settings.linkCaptureWithoutConfirm)
+
+        link("record")
+        let record = try dialog(.record)
+        try await windowShot(record.window!, out.appendingPathComponent("link-rueckfrage-record.png"))
+        record.model.dontAskAgain = true
+        record.cancel()
+        check("Abbrechen mit „Nicht mehr fragen“ ändert nichts", calls.isEmpty && !settings.linkCaptureWithoutConfirm)
+
+        link("fullscreen")
+        try dialog(.fullscreen).window!.close()
+        check("Fenster schließen = Abbrechen", calls.isEmpty && commands.confirmation == nil)
+
+        recording = true
+        link("record")
+        check("record stoppt laufende Aufnahme ohne Rückfrage", calls == [.toggleRecording] && commands.confirmation == nil)
+        recording = false
+        link("record")
+        let late = try dialog(.record)
+        recording = true   // inzwischen per Kürzel gestartet
+        try await Task.sleep(nanoseconds: armed)
+        late.confirm()
+        check("Bestätigen stoppt eine inzwischen gestartete Aufnahme nicht", calls.isEmpty && commands.confirmation == nil)
+        recording = false
+
+        for (command, action) in [("area", HotkeyAction.captureArea), ("window", .captureWindow), ("text", .captureText),
+                                  ("scroll", .captureScrolling), ("pin", .pinClipboard)] {
+            link(command)
+            check("\(command) direkt (nur Oberfläche)", calls == [action] && commands.confirmation == nil)
+        }
+        delegate.handle(URL(string: "knips://fullscreen")!, fromLink: false)
+        check("eigener Kanal (Test-Befehl) ohne Rückfrage", calls == [.captureFullscreen] && commands.confirmation == nil)
+
+        link("fullscreen")
+        let remember = try dialog(.fullscreen)
+        remember.model.dontAskAgain = true
+        try await Task.sleep(nanoseconds: armed)
+        remember.confirm()
+        check("Aufnehmen mit „Nicht mehr fragen“ schaltet die Einstellung ein", calls == [.captureFullscreen]
+              && settings.linkCaptureWithoutConfirm && defaults.bool(forKey: key))
+
+        print("Einstellung an:")
+        for (command, action) in [("fullscreen", HotkeyAction.captureFullscreen), ("last", .captureLastArea), ("record", .toggleRecording)] {
+            link(command)
+            check("\(command) direkt", calls == [action] && commands.confirmation == nil)
+        }
+
+        // Einstellung in Allgemein (Fenster etwas höher, damit die neue Karte ganz drauf ist)
+        settings.linkCaptureWithoutConfirm = false
+        let controller = SettingsWindowController()
+        SettingsNavigation.shared.pane = .general
+        controller.window!.setContentSize(NSSize(width: SettingsWindowController.size.width, height: 860))
+        try await windowShot(controller.window!, out.appendingPathComponent("link-einstellung-allgemein.png"))
+        controller.window!.orderOut(nil)
+        if !failed.isEmpty { throw CheckFailed(message: "Link-Rückfrage falsch: \(failed.joined(separator: ", "))") }
     }
 
     static func live(_ out: URL) async throws {

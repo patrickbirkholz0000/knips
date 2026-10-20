@@ -6,10 +6,8 @@ Voraussetzung: macOS 14 (Sonoma) oder neuer.
 1. Knips auf „Applications“ (Programme) ziehen.
 
 2. Knips aus dem Programme-Ordner öffnen.
-   Falls macOS meldet, dass Knips nicht geprüft werden konnte:
-   „Fertig“ klicken, dann Systemeinstellungen → Datenschutz & Sicherheit,
-   ganz nach unten scrollen und bei „Knips“ auf „Dennoch öffnen“ klicken.
-   (Alternativ im Terminal: xattr -dr com.apple.quarantine /Applications/Knips.app)
+   Knips ist von Apple geprüft (notarisiert). Lehnt macOS den Start trotzdem ab,
+   unter Systemeinstellungen → Datenschutz & Sicherheit auf „Dennoch öffnen“ klicken.
 
 3. Bildschirmaufnahme erlauben: Knips zeigt beim ersten Start, wie es geht.
    Danach Knips einmal neu starten.
@@ -21,6 +19,10 @@ Voraussetzung: macOS 14 (Sonoma) oder neuer.
    Knips fragt beim Start, ob es diese Kürzel von macOS übernehmen darf.
 
 Alles Weitere über das Knips-Symbol in der Menüleiste.
+
+Deinstallieren: Hat Knips die Kürzel ⇧⌘3/4/5 übernommen, vorher in Knips unter
+Einstellungen → Tastaturkürzel auf „macOS-Kürzel wiederherstellen“ klicken – sonst
+bleiben sie nach dem Löschen ohne Funktion. Dann Knips beenden und löschen.
 
 Datenschutz: Alle Aufnahmen bleiben auf dem Mac, Knips hat kein Konto. Nur wenn du
 beim ersten Start zustimmst, sendet Knips anonyme Nutzungszähler (z. B. „3 Screenshots“,

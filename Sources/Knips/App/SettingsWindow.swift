@@ -446,6 +446,10 @@ private struct GeneralPane: View {
                     Switch(isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
                 }
             }
+            Card(title: "Befehle per Link",
+                 footer: "Sonst fragt Knips nach, bevor knips://fullscreen, knips://last oder knips://record aufnehmen – solche Links kann jede App und jede Webseite öffnen.") {
+                Row(title: "Aufnahmen per Link ohne Rückfrage") { Switch(isOn: $settings.linkCaptureWithoutConfirm) }
+            }
         }
     }
 }
@@ -928,7 +932,7 @@ private struct AboutPane: View {
                 InfoLine(symbol: "", text: "Text aus Screenshots kopieren")
             }
             Card(title: "Für Raycast & Co.") {
-                Row(title: "Befehle") {
+                Row(title: "Befehle", subtitle: "Bildschirm, letzter Bereich und Videostart fragen vorher nach (Allgemein)") {
                     Text("knips://area · window · fullscreen · record · text · last · menu")
                         .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.muted)
                 }

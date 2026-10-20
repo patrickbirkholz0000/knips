@@ -30,53 +30,49 @@ import ScreenCaptureKit
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { SettingsWindowController.prewarm() }
         #if KNIPS_DEV
         // Test-Sandbox: Befehle per Distributed Notification (URL-Aufrufe landen sonst bei der installierten App).
+        // Eigener Kanal, daher ohne Link-Rückfrage; „link:<befehl>“ verhält sich wie ein knips://-Link von außen.
         if Paths.testRoot != nil {
             DistributedNotificationCenter.default().addObserver(forName: Notification.Name("de.birkgroup.knips.test"), object: nil, queue: .main) { note in
-                guard let command = note.object as? String, let url = URL(string: "knips://\(command)") else { return }
-                onMainActor { (NSApp.delegate as? AppDelegate)?.application(NSApp, open: [url]) }
+                guard let raw = note.object as? String else { return }
+                let fromLink = raw.hasPrefix("link:")
+                guard let url = URL(string: "knips://\(fromLink ? String(raw.dropFirst(5)) : raw)") else { return }
+                onMainActor { (NSApp.delegate as? AppDelegate)?.handle(url, fromLink: fromLink) }
             }
         }
         #endif
         Log.info("Knips gestartet")
     }
 
-    /// `knips://area`, `knips://window`, `knips://fullscreen`, `knips://record`, `knips://pin`
-    /// — für Raycast, Stream Deck, Kurzbefehle.
+    /// `knips://area|window|fullscreen|record|last|text|scroll|pin|menu|history|settings` — für Raycast,
+    /// Stream Deck, Kurzbefehle. Sofort aufnehmende Befehle fragen vorher nach (`LinkCommands`).
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls where url.scheme == "knips" {
-            let command = url.host ?? url.path.replacingOccurrences(of: "/", with: "")
-            switch command {
-            case "area": CaptureCoordinator.shared.perform(.captureArea)
-            case "window": CaptureCoordinator.shared.perform(.captureWindow)
-            case "fullscreen": CaptureCoordinator.shared.perform(.captureFullscreen)
-            case "record": CaptureCoordinator.shared.perform(.toggleRecording)
-            case "pin": CaptureCoordinator.shared.perform(.pinClipboard)
-            case "last": CaptureCoordinator.shared.perform(.captureLastArea)
-            case "text": CaptureCoordinator.shared.perform(.captureText)
-            case "scroll": CaptureCoordinator.shared.perform(.captureScrolling)
-            case "settings": SettingsWindowController.show()
-            case "menu": StatusBarController.shared?.togglePanel()
-            case "history": HistoryWindowController.show()
-            #if KNIPS_DEV
-            case "debug-sample" where Paths.testRoot != nil:
-                if let item = try? CaptureStore.shared.addImage(SelfTest.sampleImage(), scale: 2) {
-                    QuickAccessController.shared.show(item, on: NSScreen.main ?? NSScreen.withMouse)
-                }
-            case "debug-lastarea" where Paths.testRoot != nil:
-                CaptureCoordinator.shared.debugSetLastArea(CGRect(x: 100, y: 100, width: 400, height: 300))
-            case "debug-scroll" where Paths.testRoot != nil:
-                Task {
-                    guard let screen = NSScreen.main, let content = try? await ScreenCapture.content(),
-                          let display = content.displays.first(where: { $0.displayID == screen.displayID }) else { return }
-                    ScrollCaptureController.shared.begin(screen: screen, display: display, localRect: CGRect(x: 100, y: 100, width: 600, height: 400), content: content)
-                }
-            case "debug-scroll-done" where Paths.testRoot != nil:
-                ScrollCaptureController.shared.finish(save: true)
-            case "debug-snapshot" where Paths.testRoot != nil:
-                Task { await Self.snapshotOwnWindows() }
-            #endif
-            default: Log.info("Unbekannter Befehl: \(url.absoluteString)")
+        for url in urls where url.scheme == "knips" { handle(url, fromLink: true) }
+    }
+
+    /// `fromLink`: über einen knips://-Link von außen; nur der Test-Kanal der Sandbox übergibt `false`.
+    func handle(_ url: URL, fromLink: Bool) {
+        let command = url.host ?? url.path.replacingOccurrences(of: "/", with: "")
+        if LinkCommands.shared.run(command, fromLink: fromLink) { return }
+        switch command {
+        #if KNIPS_DEV
+        case "debug-sample" where Paths.testRoot != nil:
+            if let item = try? CaptureStore.shared.addImage(SelfTest.sampleImage(), scale: 2) {
+                QuickAccessController.shared.show(item, on: NSScreen.main ?? NSScreen.withMouse)
             }
+        case "debug-lastarea" where Paths.testRoot != nil:
+            CaptureCoordinator.shared.debugSetLastArea(CGRect(x: 100, y: 100, width: 400, height: 300))
+        case "debug-scroll" where Paths.testRoot != nil:
+            Task {
+                guard let screen = NSScreen.main, let content = try? await ScreenCapture.content(),
+                      let display = content.displays.first(where: { $0.displayID == screen.displayID }) else { return }
+                ScrollCaptureController.shared.begin(screen: screen, display: display, localRect: CGRect(x: 100, y: 100, width: 600, height: 400), content: content)
+            }
+        case "debug-scroll-done" where Paths.testRoot != nil:
+            ScrollCaptureController.shared.finish(save: true)
+        case "debug-snapshot" where Paths.testRoot != nil:
+            Task { await Self.snapshotOwnWindows() }
+        #endif
+        default: Log.info("Unbekannter Befehl: \(url.absoluteString)")
         }
     }
 

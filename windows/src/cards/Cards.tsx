@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { CheckCircle2, Copy, Folder, Images, Pin, Play, ScanText, SquareArrowOutUpRight, Trash2, X } from "lucide-react";
+import { Check, Copy, Folder, Images, PenLine, Pin, Play, ScanText, SquareArrowOutUpRight, Trash2, X } from "lucide-react";
 import { api, events } from "../shared/ipc";
 import { duration } from "../shared/format";
 import type { CaptureItem, CardsState, Rect } from "../shared/types";
@@ -95,46 +95,50 @@ export default function Cards(_: { params: string[]; query: URLSearchParams }) {
                 api.itemStartDrag(item.id);
               }}
             >
-              <div className="card">
-                <Thumbnail item={item} className="th" />
+              <div className={"card" + (flashed === item.id ? " flashed" : "")}>
+                <Thumbnail item={item} className="th" background="var(--k-dark)" />
                 {item.kind !== "image" && (
                   <div className="card-badge">
-                    {item.kind === "gif" ? <Images size={10} strokeWidth={2.6} /> : <Play size={10} strokeWidth={2.6} fill="#fff" />}
+                    {item.kind === "gif" ? <Images size={11} strokeWidth={2.2} /> : <Play size={9} strokeWidth={0} fill="currentColor" />}
                     {item.kind === "gif" ? "GIF" : duration(item.duration ?? 0)}
                   </div>
                 )}
                 <div className="card-hover">
                   <div className="pills">
-                    <button className="card-pill" onClick={stop(() => { api.itemCopy(item.id); flash(item.id); })}>
+                    <button className="card-pill primary" onClick={stop(() => { api.itemCopy(item.id); flash(item.id); })}>
                       <Copy size={14} strokeWidth={2.2} /> Kopieren
                     </button>
-                    <button className="card-pill" onClick={stop(() => api.itemOpen(item.id))}>
-                      <SquareArrowOutUpRight size={14} strokeWidth={2.2} /> Öffnen
+                    {/* Bilder und Videos öffnen im Editor, GIFs in der Standard-App. */}
+                    <button className="card-pill secondary" onClick={stop(() => api.itemOpen(item.id))}>
+                      {item.kind === "gif" ? <SquareArrowOutUpRight size={14} strokeWidth={2} /> : <PenLine size={14} strokeWidth={2} />}
+                      {item.kind === "gif" ? "Öffnen" : "Bearbeiten"}
                     </button>
                   </div>
                   <button className="card-corner tl" title="Schließen" onClick={stop(() => api.cardsDismiss(item.id))}>
-                    <X size={12} strokeWidth={2.8} />
+                    <X size={13} strokeWidth={2.4} />
                   </button>
                   {item.kind === "image" && (
                     <button className="card-corner tr" title="Anpinnen" onClick={stop(() => api.itemPin(item.id))}>
-                      <Pin size={12} strokeWidth={2.4} />
+                      <Pin size={13} strokeWidth={2} />
                     </button>
                   )}
                   <button className="card-corner bl" title="Im Explorer zeigen" onClick={stop(() => api.itemReveal(item.id))}>
-                    <Folder size={12} strokeWidth={2.4} />
+                    <Folder size={13} strokeWidth={2} />
                   </button>
                   {item.kind === "image" && (
                     <button className="card-corner bl2" title="Text kopieren (ohne zensierte Stellen)" onClick={stop(() => api.itemCopyText(item.id))}>
-                      <ScanText size={12} strokeWidth={2.4} />
+                      <ScanText size={13} strokeWidth={2} />
                     </button>
                   )}
                   <button className="card-corner br" title="Löschen" onClick={stop(() => api.itemDelete(item.id))}>
-                    <Trash2 size={12} strokeWidth={2.4} />
+                    <Trash2 size={13} strokeWidth={2} />
                   </button>
                 </div>
                 {flashed === item.id && (
                   <div className="card-flash">
-                    <CheckCircle2 size={15} strokeWidth={2.4} /> Kopiert
+                    <span className="card-flash-pill">
+                      <Check size={15} strokeWidth={2.6} /> Kopiert
+                    </span>
                   </div>
                 )}
               </div>

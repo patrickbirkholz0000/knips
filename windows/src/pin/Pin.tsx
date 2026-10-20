@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentWindow, LogicalPosition, LogicalSize } from "@tauri-apps/api/window";
+import { Copy, X } from "lucide-react";
 import { api, fileUrl, inTauri } from "../shared/ipc";
 import type { PinInfo } from "../shared/types";
 import "./pin.css";
@@ -58,17 +59,14 @@ export default function Pin({ params }: { params: string[]; query: URLSearchPara
   return (
     <div className="pin" onMouseDown={onMouseDown} onWheel={onWheel}>
       <img src={fileUrl(info.path)} alt="" draggable={false} />
-      <button className="pin-close" title="Schließen" onMouseDown={(e) => e.stopPropagation()} onClick={close}>
-        <svg width="22" height="22" viewBox="0 0 22 22">
-          <defs>
-            <mask id="pin-x">
-              <rect width="22" height="22" fill="#fff" />
-              <path d="M7.5 7.5l7 7m0-7l-7 7" stroke="#000" strokeWidth="2" strokeLinecap="round" />
-            </mask>
-          </defs>
-          <circle cx="11" cy="11" r="10" fill="#fff" mask="url(#pin-x)" />
-        </svg>
-      </button>
+      <div className="pin-controls" onMouseDown={(e) => e.stopPropagation()}>
+        <button className="pin-btn" title="Schließen (Esc)" onClick={close}>
+          <X size={14} strokeWidth={2.4} />
+        </button>
+        <button className="pin-btn" title="Kopieren (Strg+C)" onClick={() => api.pinCopy(n)}>
+          <Copy size={13} strokeWidth={2.1} />
+        </button>
+      </div>
     </div>
   );
 }

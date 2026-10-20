@@ -27,11 +27,14 @@ if (!inTauri) {
 export default function Hud(_: { params: string[]; query: URLSearchParams }) {
   const [msg, setMsg] = useState<HudMessage | null>(null);
   const [fading, setFading] = useState(false);
+  // Jede Einblendung neu einhängen, damit sie wieder hereingleitet.
+  const [seq, setSeq] = useState(0);
   const timer = useRef<number>();
 
   useEffect(() => {
     const off = events.hudShow((m) => {
       setMsg(m);
+      setSeq((n) => n + 1);
       setFading(false);
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => setFading(true), SHOW_MS);
@@ -46,8 +49,8 @@ export default function Hud(_: { params: string[]; query: URLSearchParams }) {
   const Icon = icons[msg.icon] ?? CircleCheck;
   return (
     <div className="hud-wrap">
-      <div className={"hud" + (fading ? " fading" : "")}>
-        <Icon size={15} strokeWidth={2.2} />
+      <div key={seq} className={"hud" + (msg.icon === "check" ? " ok" : msg.icon === "error" ? " error" : "") + (fading ? " fading" : "")}>
+        <Icon size={16} strokeWidth={2} />
         <span>{msg.text}</span>
       </div>
     </div>

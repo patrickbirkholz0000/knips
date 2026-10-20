@@ -1,5 +1,13 @@
-/* Karten unten links — Maße aus QuickAccess.swift */
-.cards-panel { position: fixed; left: 0; bottom: 0; }
+/* Karten unten links (docs/design.md, „Karten“) — Maße aus QuickAccess.swift (236 × 148, Raster in layout.ts).
+   Vorschau Radius 12 mit dunklem Rand, beim Darüberfahren dunkler Schleier mit Pillen („Kopieren“ Papier = primär,
+   „Bearbeiten“/„Öffnen“ dunkel gehoben) und runden dunklen Eckknöpfen; „Kopiert“ kurz grün. Immer dunkel
+   (--k-dark-*), unabhängig von data-theme. */
+.cards-panel {
+  position: fixed; left: 0; bottom: 0;
+  font-family: var(--k-font); color: var(--k-dark-ink);
+  /* „erledigt“-Grün auf dunklem Grund; tokens.css hat dafür (noch) kein --k-dark-success. */
+  --cards-success: var(--k-dark-success, #4cc58e);
+}
 .card-pos {
   position: absolute; left: 0; bottom: 0; width: 236px; height: 148px;
   transition: transform 0.3s cubic-bezier(0.3, 1.2, 0.5, 1);
@@ -12,50 +20,87 @@
 .card-anim.leaving { transform: translateX(-260px); opacity: 0; pointer-events: none; }
 @keyframes card-in { from { transform: translateX(-260px); opacity: 0; } to { transform: none; opacity: 1; } }
 
+.card-wrap {
+  border-radius: 12px;
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--k-dark) 30%, transparent),
+    0 6px 16px -8px color-mix(in srgb, var(--k-dark) 60%, transparent); /* bleibt im Rand von 16 px (PADDING) */
+}
 .card {
   position: relative; width: 236px; height: 148px; border-radius: 12px; overflow: hidden;
-  background: rgb(26, 26, 26); box-shadow: 0 3px 8px rgba(0, 0, 0, 0.35); color: #fff;
+  background: var(--k-dark);
 }
 .card .th { position: absolute; inset: 0; }
+/* Dunkler Rand: außen Schwebefläche, innen feine helle Linie — hebt die Karte auf hellem wie dunklem Grund ab. */
 .card::after {
   content: ""; position: absolute; inset: 0; border-radius: 12px; pointer-events: none;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 0 0 1px var(--k-dark), inset 0 0 0 2px var(--k-dark-line);
 }
-.card-wrap { border-radius: 12px; box-shadow: 0 3px 8px rgba(0, 0, 0, 0.35); }
-.card-wrap .card { box-shadow: none; }
 
+/* Video-Dauer / GIF unten links */
 .card-badge {
-  position: absolute; left: 8px; bottom: 8px; display: flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px;
-  border-radius: 10px; background: rgba(0, 0, 0, 0.7); font-size: 10.5px; font-weight: 700;
+  position: absolute; left: 8px; bottom: 8px; display: flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px 0 7px;
+  border-radius: var(--k-radius-pill); background: color-mix(in srgb, var(--k-dark) 86%, transparent);
+  box-shadow: inset 0 0 0 1px var(--k-dark-line);
+  font-family: var(--k-mono); font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--k-dark-ink);
+  transition: opacity var(--k-t-fast);
 }
-.card-hover { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5); opacity: 0; transition: opacity 0.12s ease-out; }
+
+.card-hover {
+  position: absolute; inset: 0; opacity: 0; transition: opacity 0.12s ease-out;
+  background: color-mix(in srgb, var(--k-dark) 58%, transparent);
+}
 .card:hover .card-hover { opacity: 1; }
 .card:hover .card-badge { opacity: 0; }
+/* Während „Kopiert“ treten Pillen und Eckknöpfe zurück. */
+.card.flashed .card-hover { opacity: 0; }
 .card-hover .pills { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; }
 .card-pill {
-  width: 122px; height: 30px; border-radius: 15px; background: rgba(255, 255, 255, 0.94); color: rgba(0, 0, 0, 0.85);
-  display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 12.5px; font-weight: 600;
+  width: 124px; height: 32px; border-radius: var(--k-radius-pill);
+  display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 13px; font-weight: 500;
+  transition: background var(--k-t-fast), filter var(--k-t-fast);
 }
+.card-pill.primary { background: var(--k-dark-button); color: var(--k-dark-button-ink); font-weight: 600; }
+.card-pill.primary:hover { filter: brightness(0.94); }
+.card-pill.secondary {
+  background: var(--k-dark-raised); color: var(--k-dark-ink); box-shadow: inset 0 0 0 1px var(--k-dark-line);
+}
+.card-pill.secondary:hover { background: var(--k-dark-hover); }
+
+/* Kleine runde dunkle Knöpfe in den Ecken */
 .card-corner {
-  position: absolute; width: 24px; height: 24px; border-radius: 50%; background: rgba(0, 0, 0, 0.6);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18); color: #fff; display: flex; align-items: center; justify-content: center;
+  position: absolute; width: 26px; height: 26px; border-radius: 50%;
+  background: color-mix(in srgb, var(--k-dark) 88%, transparent); color: var(--k-dark-ink);
+  box-shadow: inset 0 0 0 1px var(--k-dark-line);
+  display: flex; align-items: center; justify-content: center; transition: background var(--k-t-fast);
 }
+.card-corner:hover { background: var(--k-dark-hover); }
 .card-corner.tl { left: 7px; top: 7px; }
 .card-corner.tr { right: 7px; top: 7px; }
 .card-corner.bl { left: 7px; bottom: 7px; }
 .card-corner.bl2 { left: 38px; bottom: 7px; }
 .card-corner.br { right: 7px; bottom: 7px; }
 .card-corner:active, .card-pill:active { filter: brightness(0.85); }
+
+/* „Kopiert“: kurze grüne Bestätigung */
 .card-flash {
-  position: absolute; inset: 0; background: rgba(0, 0, 0, 0.6); display: flex; align-items: center; justify-content: center; gap: 6px;
-  font-size: 13px; font-weight: 600; animation: flash-in 0.12s ease-out;
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--k-dark) 62%, transparent); animation: flash-in 0.12s ease-out;
+}
+.card-flash-pill {
+  display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px 0 11px; border-radius: var(--k-radius-pill);
+  background: var(--k-dark); box-shadow: inset 0 0 0 1px var(--k-dark-line);
+  font-size: 13px; font-weight: 600; color: var(--cards-success);
 }
 @keyframes flash-in { from { opacity: 0; } }
 
+/* „Alle schließen“ über der obersten Karte (ab zwei Karten) */
 .cards-header { position: absolute; left: 16px; top: 16px; width: 236px; height: 20px; display: flex; justify-content: flex-end; }
 .cards-header button {
-  display: flex; align-items: center; gap: 5px; height: 22px; padding: 0 10px; border-radius: 11px; color: #fff;
-  background: rgba(0, 0, 0, 0.72); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14); font-size: 11px; font-weight: 600;
-  opacity: 0; transition: opacity 0.12s ease-out; margin-top: -1px;
+  display: flex; align-items: center; gap: 5px; height: 22px; padding: 0 10px 0 8px; margin-top: -1px;
+  border-radius: var(--k-radius-pill); color: var(--k-dark-ink); background: var(--k-dark);
+  box-shadow: inset 0 0 0 1px var(--k-dark-line); font-size: 11.5px; font-weight: 500;
+  opacity: 0; transition: opacity 0.12s ease-out, background var(--k-t-fast);
 }
+.cards-header button:hover { background: var(--k-dark-hover); }
 .cards-header.show button { opacity: 1; }

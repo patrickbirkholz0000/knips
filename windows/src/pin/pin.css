@@ -1,11 +1,26 @@
-.pin { position: fixed; inset: 0; border-radius: 8px; overflow: hidden; background: transparent; }
+/* Angepinntes Bild (docs/design.md, „Angepinnte Bilder“): randlos mit Radius 10, beim Darüberfahren eine kleine
+   dunkle Pille mit Kopieren und Schließen (immer dunkel, --k-dark-*). Das Fenster ist genau so groß wie das Bild
+   (pins.rs) — für einen Schatten außen ist darin kein Platz. */
+.pin {
+  position: fixed; inset: 0; border-radius: var(--k-radius-field); overflow: hidden; background: transparent;
+  font-family: var(--k-font);
+}
 .pin img { width: 100%; height: 100%; display: block; object-fit: fill; pointer-events: none; }
 .pin::after {
-  content: ""; position: absolute; inset: 0; border-radius: 8px; pointer-events: none;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
+  content: ""; position: absolute; inset: 0; border-radius: var(--k-radius-field); pointer-events: none;
+  box-shadow: inset 0 0 0 1px var(--k-dark-line);
 }
-.pin-close {
-  position: absolute; left: 6px; top: 6px; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
-  opacity: 0; transition: opacity 0.15s ease-out; filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.5)); z-index: 1;
+.pin-controls {
+  position: absolute; left: 6px; top: 6px; z-index: 1;
+  display: flex; align-items: center; gap: 2px; height: 30px; padding: 0 3px;
+  border-radius: var(--k-radius-pill); background: color-mix(in srgb, var(--k-dark) 90%, transparent);
+  box-shadow: inset 0 0 0 1px var(--k-dark-line), 0 4px 10px -4px color-mix(in srgb, var(--k-dark) 70%, transparent);
+  opacity: 0; transition: opacity 0.15s ease-out;
 }
-.pin:hover .pin-close { opacity: 1; }
+.pin:hover .pin-controls { opacity: 1; }
+.pin-btn {
+  width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  color: var(--k-dark-ink); transition: background var(--k-t-fast);
+}
+.pin-btn:hover { background: var(--k-dark-hover); }
+.pin-btn:active { filter: brightness(0.85); }

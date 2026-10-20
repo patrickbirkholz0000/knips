@@ -40,7 +40,8 @@ Eigene Builds (`build.sh`, `install.sh`) enthalten Selbsttests, die ohne Bildsch
 build/Knips.app/Contents/MacOS/Knips --selftest <test> <ordner>
 ```
 
-Jeder Test läuft isoliert in `<ordner>/sandbox` und fasst die Zwischenablage nicht an.
+Jeder Test läuft isoliert in `<ordner>/sandbox`, mit eigenen Einstellungen (Domäne `de.birkgroup.knips.sandbox`),
+und fasst die echte Zwischenablage nicht an (Prüfungen der Zwischenablage nutzen eine private).
 
 | Test | prüft |
 |---|---|
@@ -50,7 +51,9 @@ Jeder Test läuft isoliert in `<ordner>/sandbox` und fasst die Zwischenablage ni
 | `cards` | Klicks auf Karten als echte Mausereignisse |
 | `live` | Bild- und Video-Editor als echtes Fenster |
 | `settings` | Einstellungsfenster je Bereich |
-| `output` | Ausgabe 1×, PNG/JPEG, Rahmen, Speichern, „Text kopieren“ ohne Zensiertes |
+| `links` | Rückfrage vor Aufnahmen per `knips://`-Link, Absender, Schutzzeit, Overlay per Link |
+| `telemetry` | Nutzungsstatistik gegen einen lokalen Server |
+| `output` | Ausgabe 1×, PNG/JPEG, Rahmen, Speichern, „Text kopieren“ ohne Zensiertes und Weggeschnittenes, Zwischenablage nach dem Zensieren |
 | `video`, `track` | Video-Zensur, Kürzen, MP4/GIF-Export, mitlaufende Balken |
 | `stitch` | Scroll-Screenshot pixelgenau gegen das Original |
 | `perf`, `record-bench` | Zeiten und Video-Varianten |

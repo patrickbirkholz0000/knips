@@ -694,6 +694,16 @@ import Vision
         // Frage beim ersten Start (eigenes Fenster, nicht über anderen Dialogen)
         let consent = ConsentWindowController(telemetry: Telemetry.shared)
         try await windowShot(consent.window!, out.appendingPathComponent("zustimmung.png"))
+        // ⏎ stimmt nicht zu: Das Fenster holt sich beim Start den Fokus, ein Tastendruck für eine andere App zählt nicht.
+        let before = Telemetry.shared.consent
+        guard let enter = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                           windowNumber: consent.window!.windowNumber, context: nil, characters: "\r",
+                                           charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)
+        else { throw CheckFailed(message: "Tastenereignis nicht erzeugt") }
+        _ = consent.window!.performKeyEquivalent(with: enter)
+        pumpEvents(for: 0.2)
+        guard Telemetry.shared.consent == before else { throw CheckFailed(message: "⏎ im Zustimmungsdialog hat entschieden") }
+        print("   ok     ⏎ im Zustimmungsdialog entscheidet nichts")
         consent.window?.orderOut(nil)
     }
 

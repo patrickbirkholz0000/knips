@@ -14,8 +14,8 @@
 # keinen Code auschecken; GH_TOKEN nur im Schritt, der ans Release hängt. Einrichtung: RELEASING.md.
 #
 # Variablen (Settings → Secrets and variables → Actions → Variables): SIGNPATH_ORGANIZATION_ID,
-# SIGNPATH_PROJECT_SLUG (Standard knips), SIGNPATH_SIGNING_POLICY_SLUG (Standard release-signing; mit
-# test-signing ein Probelauf: signiert mit dem Testzertifikat, hängt aber nichts an das Release).
+# SIGNPATH_PROJECT_SLUG (Standard knips), SIGNPATH_SIGNING_POLICY_SLUG (Standard release-signing; enthält der
+# Name „test“, z. B. test-signing, ist es ein Probelauf: signiert mit dem Testzertifikat, hängt nichts ans Release).
 name: Release
 
 on:
@@ -91,7 +91,8 @@ jobs:
             if ($env:RUN_REF -ne "refs/tags/$env:TAG") {
               throw "Signierte Läufe müssen auf dem Tag laufen: gh workflow run release.yml --ref $env:TAG -f tag=$env:TAG (läuft auf $env:RUN_REF)."
             }
-            $test = $env:POLICY -ne 'release-signing'
+            # Testzertifikat (Richtlinie mit „test“ im Namen): signieren und prüfen, aber nichts ans Release hängen.
+            $test = $env:POLICY -match 'test'
             "enabled=true" >> $env:GITHUB_OUTPUT
             "test=$($test.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
             "project=$env:PROJECT" >> $env:GITHUB_OUTPUT

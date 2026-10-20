@@ -956,7 +956,7 @@ import Vision
         smart.append(cut)
         editor.model.annotations = smart
         try await windowShot(editor.window!, out.appendingPathComponent("live-editor-schlaue-balken.png"))
-        print("   Sichtbarer Text ohne Zensur:\n" + editor.model.visibleText().split(separator: "\n").map { "     | " + $0 }.joined(separator: "\n"))
+        print("   Sichtbarer Text ohne Zensur:\n" + (await editor.model.renderedText()).split(separator: "\n").map { "     | " + $0 }.joined(separator: "\n"))
         editor.model.selectedID = nil
         editor.model.tool = .arrow
         try await windowShot(editor.window!, out.appendingPathComponent("live-editor-pfeil.png"))
@@ -1196,6 +1196,111 @@ import Vision
             print("Text kopieren (Karte):\n" + text.split(separator: "\n").map { "     | " + $0 }.joined(separator: "\n"))
             print(text.contains("@") ? "FEHLER: E-Mail trotz Balken im Text" : "   ✓ keine E-Mail im kopierten Text")
         }
+        editor.window?.orderOut(nil)
+
+        var failed: [String] = []
+        func check(_ ok: Bool, _ name: String) {
+            print("   \(ok ? "ok    " : "FALSCH") \(name)")
+            if !ok { failed.append(name) }
+        }
+
+        // „Text kopieren“ im Editor: Texterkennung auf dem fertigen Bild. Früher kamen Weggeschnittenes und ein Wort,
+        // das ein Balken zu weniger als 15 % verdeckt, vollständig mit.
+        print("Text kopieren (Editor) mit Zuschnitt und angeschnittenem Schlüssel:")
+        let textItem = try store.addImage(image, scale: 2)
+        await store.waitUntilWritten(textItem.id)
+        let textEditor = EditorWindowController(item: textItem, base: image, document: ImageDocument(), tool: .redact)
+        await textEditor.model.waitForText()
+        guard let key = textEditor.model.textLines.flatMap(\.words).first(where: { $0.text.contains("live_") })?.rect else {
+            throw CheckFailed(message: "Schlüssel im Testbild nicht erkannt")
+        }
+        var keyBar = Annotation(kind: .redact, start: CGPoint(x: key.minX - 4, y: key.minY - 6),
+                                end: CGPoint(x: key.minX + key.width * 0.12, y: key.maxY + 6))
+        keyBar.redactStyle = .solid
+        textEditor.model.annotations = [keyBar]
+        textEditor.model.crop = CGRect(x: 700, y: 0, width: 2100, height: key.maxY + 60)   // ohne Seitenleiste und Bestellzeilen
+        let before = TextLayout.plainText(textEditor.model.textLines, excluding: [keyBar.rect])
+        let copied = await textEditor.model.renderedText()
+        print(copied.split(separator: "\n").map { "     | " + $0 }.joined(separator: "\n"))
+        print("   bisher (Erkennung auf dem Original): Schlüssel \(before.contains(sampleStripeKey) ? "vollständig" : "nicht") im Text, "
+              + "Weggeschnittenes \(before.contains("Bestellung") ? "dabei" : "nicht dabei")")
+        check(copied.contains("Mustermann"), "sichtbarer Text kommt mit")
+        check(!copied.contains(sampleStripeKey) && !copied.contains("sk_live"), "angeschnittener Schlüssel kommt nicht vollständig mit")
+        check(!copied.contains("Bestellung") && !copied.contains("Hinweis") && !copied.contains("Übersicht"), "Weggeschnittenes fehlt")
+        textEditor.window?.orderOut(nil)
+
+        // Zwischenablage nach dem Zensieren — eine private Zwischenablage statt der echten.
+        print("Zwischenablage:")
+        let board = NSPasteboard(name: NSPasteboard.Name("de.birkgroup.knips.selbsttest.\(UUID().uuidString)"))
+        Clipboard.testPasteboard = board
+        defer {
+            Clipboard.testPasteboard = nil
+            board.releaseGlobally()
+        }
+        let settings = AppSettings.shared   // Sandbox-Domäne
+        settings.copyToClipboard = true
+        settings.showQuickAccess = false
+        settings.openEditorAfterCapture = false
+        func pasted() -> CGImage? {
+            board.data(forType: .png).flatMap { CGImageSourceCreateWithData($0 as CFData, nil) }.flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
+        }
+        guard let screen = NSScreen.main, let shot = CaptureCoordinator.shared.finish(image: image, scale: 2, screen: screen, source: .user) else {
+            throw CheckFailed(message: "Aufnahme nicht angelegt")
+        }
+        await store.waitUntilWritten(shot.id)
+        // Balken über der E-Mail-Zeile; die Zwischenablage hat Bildschirmgröße (1×), also halbe Koordinaten.
+        let emailBar = CGRect(x: 760, y: 470, width: 1300, height: 100)
+        let inPaste = CGRect(x: emailBar.minX / 2 + 10, y: emailBar.minY / 2 + 10, width: emailBar.width / 2 - 20, height: emailBar.height / 2 - 20)
+        let light = pasted().map { brightness($0, inPaste) } ?? -1
+        check(light > 0.5, "Aufnahme liegt in der Zwischenablage (Helligkeit E-Mail-Zeile \(String(format: "%.2f", light)))")
+        let shotEditor = EditorWindowController(item: shot, base: image, document: ImageDocument(), tool: .redact)
+        var emailRedaction = Annotation(kind: .redact, start: emailBar.origin, end: CGPoint(x: emailBar.maxX, y: emailBar.maxY))
+        emailRedaction.redactStyle = .solid
+        shotEditor.model.checkpoint()
+        shotEditor.model.annotations = [emailRedaction]
+        shotEditor.save(close: true)
+        let dark = pasted().map { brightness($0, inPaste) } ?? -1
+        check(dark >= 0 && dark < 0.1, "nach Zensieren + „Fertig“: zensierte Fassung in der Zwischenablage (\(String(format: "%.2f", dark)))")
+        board.clearContents()
+        board.setString("fremd", forType: .string)
+        let again = EditorWindowController(item: store.item(with: shot.id)!, base: image, document: store.loadImageDocument(for: shot), tool: .redact)
+        again.model.checkpoint()
+        again.model.annotations = []
+        again.save(close: true)
+        check(board.string(forType: .string) == "fremd" && pasted() == nil, "inzwischen etwas anderes kopiert: bleibt unberührt")
+        let changes = board.changeCount
+        let linked = CaptureCoordinator.shared.finish(image: image, scale: 2, screen: screen, source: .link)
+        check(linked != nil && board.changeCount == changes, "Aufnahme per Link: nicht in die Zwischenablage")
+
+        // knips://pin: nur Bilddaten und Bilddateien, nie eine Adresse aus dem Netz.
+        print("Anpinnen aus der Zwischenablage:")
+        board.clearContents()
+        board.writeObjects([URL(string: "http://10.255.255.1/bild.png")! as NSURL])
+        let started = Date()
+        let remote = Clipboard.image()
+        check(remote == nil && Date().timeIntervalSince(started) < 1,
+              "http-Adresse wird nicht geladen (\(Int(Date().timeIntervalSince(started) * 1000)) ms)")
+        let file = out.appendingPathComponent("anpinnen.png")
+        try write(image, file)
+        board.clearContents()
+        board.writeObjects([file as NSURL])
+        check(Clipboard.image()?.width == image.width, "Bilddatei wird geladen")
+        if !failed.isEmpty { throw CheckFailed(message: "Ausgabe falsch: \(failed.joined(separator: "; "))") }
+    }
+
+    /// Mittlere Helligkeit (0…1) eines Ausschnitts (Pixel, Ursprung oben links).
+    private static func brightness(_ image: CGImage, _ rect: CGRect) -> CGFloat {
+        let w = Int(rect.width), h = Int(rect.height)
+        guard let crop = image.cropping(to: rect),
+              let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return -1 }
+        ctx.draw(crop, in: CGRect(x: 0, y: 0, width: w, height: h))
+        guard let data = ctx.data else { return -1 }
+        let p = data.bindMemory(to: UInt8.self, capacity: w * h * 4)
+        var sum = 0
+        for i in 0..<(w * h) { sum += Int(p[i * 4]) + Int(p[i * 4 + 1]) + Int(p[i * 4 + 2]) }
+        return CGFloat(sum) / CGFloat(w * h * 3 * 255)
     }
 
     // MARK: Echte Aufnahme (nur Metadaten, keine Bildinhalte)

@@ -194,7 +194,7 @@ private struct HistoryCard: View {
         if item.kind == .image { Telemetry.count(.copyImage) }
         Task {
             await CaptureStore.shared.waitUntilWritten(item.id)
-            if item.kind == .image { Clipboard.copy(imageFile: item.fileURL) } else { Clipboard.copy(fileURL: item.fileURL) }
+            if item.kind == .image { Clipboard.copy(imageFile: item.fileURL, item: item.id) } else { Clipboard.copy(fileURL: item.fileURL) }
             HUD.show("Kopiert")
         }
     }

@@ -104,7 +104,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
     var zoomCenter: CGPoint = .zero
     /// Anzeige für die Zoom-Leiste: 100 % = so groß wie auf dem Bildschirm.
     @Published var zoomPercent = 100
-    /// Erkannte Textzeilen (im Hintergrund beim Öffnen) — für schlaue Balken und „Text kopieren“.
+    /// Erkannte Textzeilen des Originals (im Hintergrund beim Öffnen) — für die schlauen Balken.
     private(set) var textLines: [TextLine] = []
     private(set) var textReady = false
     private var textWaiters: [CheckedContinuation<Void, Never>] = []
@@ -179,9 +179,12 @@ enum EditorTool: String, CaseIterable, Identifiable {
         return line.rect.insetBy(dx: -pad, dy: -pad * 0.7).intersection(fullRect)
     }
 
-    /// Erkannter Text ohne zensierte Stellen.
-    func visibleText() -> String {
-        TextLayout.plainText(textLines, excluding: annotations.filter { $0.kind == .redact }.map(\.rect))
+    /// „Text kopieren“: Texterkennung auf dem fertigen Bild mit Zuschnitt und Zensur, wie auf der Karte. Was
+    /// verdeckt oder weggeschnitten ist, kann so nie mitkommen — auch kein knapp angeschnittenes Wort.
+    func renderedText() async -> String {
+        let promise = fullResolutionPromise()
+        guard let image = await promise.imageValue() else { return "" }
+        return await Task.detached(priority: .userInitiated) { TextLayout.plainText(TextLayout.lines(in: image)) }.value
     }
 
     var fullRect: CGRect { CGRect(x: 0, y: 0, width: base.width, height: base.height) }

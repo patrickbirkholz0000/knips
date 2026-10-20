@@ -857,7 +857,7 @@ private struct PrivacyPane: View {
                 RowDivider()
                 InfoLine(symbol: "checkmark.shield", text: "Geteilte Dateien sind immer die zensierte Fassung")
                 RowDivider()
-                InfoLine(symbol: "doc.on.clipboard", text: "„Text kopieren“ lässt zensierte Wörter weg")
+                InfoLine(symbol: "doc.on.clipboard", text: "„Text kopieren“ lässt Zensiertes und Weggeschnittenes weg")
                 RowDivider()
                 InfoLine(symbol: "link", text: "Aufnahmen per knips://-Link nur nach Rückfrage")
             }

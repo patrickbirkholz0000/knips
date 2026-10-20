@@ -223,7 +223,7 @@ import ScreenCaptureKit
         let output = settings.outputPromise(sourceScale: scale) { image }
         do {
             let item = try CaptureStore.shared.addImage(image, scale: scale, output: output)
-            if settings.copyToClipboard, source == .user { Clipboard.copy(output, fileURL: item.fileURL) }
+            if settings.copyToClipboard, source == .user { Clipboard.copy(output, fileURL: item.fileURL, item: item.id) }
             if settings.showQuickAccess { QuickAccessController.shared.show(item, on: screen) }
             if settings.openEditorAfterCapture { EditorWindowController.show(item) }
             return item

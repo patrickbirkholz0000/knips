@@ -19,6 +19,14 @@
   white-space: nowrap;
 }
 
+.k-wordmark--paper {
+  color: var(--k-ink);
+}
+
+.k-wordmark--paper .k-wordmark__lamp:not(.is-recording) {
+  background: var(--k-accent);
+}
+
 /* Punktloses ı mit eigener Lampe darüber. */
 .k-wordmark__i {
   position: relative;

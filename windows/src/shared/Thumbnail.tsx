@@ -29,7 +29,7 @@ export default function Thumbnail({ item, background = "rgb(26, 26, 26)", classN
     const Icon = item.kind === "image" ? ImageIcon : Film;
     return (
       <div className={className} style={style}>
-        <Icon size={28} color="rgba(255,255,255,0.4)" />
+        <Icon size={28} color="var(--k-ink-soft)" />
       </div>
     );
   }

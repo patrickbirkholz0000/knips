@@ -16,10 +16,14 @@ function apply() {
 export function startAppearance() {
   apply();
   media.addEventListener("change", apply);
-  api.getBootstrap().then((b) => {
-    current = b?.settings.appearance ?? "system";
-    apply();
-  });
+  // Fenster ohne Berechtigung für `get_bootstrap` (Pins, Leisten — immer dunkel) bleiben beim Systemmodus.
+  api
+    .getBootstrap()
+    .then((b) => {
+      current = b?.settings.appearance ?? "system";
+      apply();
+    })
+    .catch(() => {});
   events.bootstrapChanged((b) => {
     current = b.settings.appearance ?? "system";
     apply();

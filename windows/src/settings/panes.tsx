@@ -615,7 +615,7 @@ export function About({ boot }: { boot: Bootstrap }) {
         <span className="st-about__icon" aria-hidden="true">
           <BrandMark size={52} ink="var(--k-dark-button)" accent="var(--k-dark-accent)" />
         </span>
-        <Wordmark size={34} />
+        <Wordmark size={34} onPaper />
         <span className="st-about__ver">Version {boot.version}</span>
         <p>Freie Software (GPL) – ohne Konto, Aufnahmen bleiben auf deinem PC.</p>
       </Card>

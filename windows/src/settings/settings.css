@@ -467,13 +467,6 @@ html[data-view="settings"] body {
   background: linear-gradient(180deg, var(--k-dark-raised), var(--k-dark));
   box-shadow: var(--k-shadow-float);
 }
-/* Wortmarke auf Papier: Tinte statt Seitenleisten-Weiß, Lampe im Akzent des Modus. */
-.st-about .k-wordmark {
-  color: var(--k-ink);
-}
-.st-about .k-wordmark__lamp {
-  background: var(--k-accent);
-}
 .st-about__ver {
   font-family: var(--k-mono);
   font-size: 12px;

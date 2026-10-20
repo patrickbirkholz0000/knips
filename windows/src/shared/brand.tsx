@@ -37,9 +37,18 @@ export function BrandMark({
 }
 
 /** „knips“ in Kleinbuchstaben, Outfit halbfett; der i-Punkt ist die Aufnahmelampe (Königsblau, beim Video rot pulsierend). */
-export function Wordmark({ size = 20, recording = false }: { size?: number; recording?: boolean }) {
+export function Wordmark({
+  size = 20,
+  recording = false,
+  onPaper = false,
+}: {
+  size?: number;
+  recording?: boolean;
+  /** Auf heller Fläche (Papier): Tinte und Lampe im Akzent des Modus statt Seitenleisten-Weiß. */
+  onPaper?: boolean;
+}) {
   return (
-    <span className="k-wordmark" style={{ fontSize: size }} aria-label="Knips">
+    <span className={onPaper ? "k-wordmark k-wordmark--paper" : "k-wordmark"} style={{ fontSize: size }} aria-label="Knips">
       kn
       <span className="k-wordmark__i">
         ı<i className={recording ? "k-wordmark__lamp is-recording" : "k-wordmark__lamp"} />

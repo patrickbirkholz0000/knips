@@ -80,7 +80,7 @@ Alle zusammen: `scripts/selftest.ps1` (macht die CI).
 |---|---|
 | `detect` | Texterkennung + Auto-Zensur am Testbild (E-Mail, IBAN, Telefon, Schlüssel); dazu ein hohes (1×6) und ein breites (4×1) Bild aus Kopien des Testbilds: jede Kopie muss alle vier Arten liefern, keine doppelten Funde (Kacheln statt Verkleinern, `detect-hoch/breit-funde.png`) |
 | `output` | Ausgabe 1× PNG/JPEG, Original in voller Auflösung, Editor-Speichern, „Text kopieren“ ohne Zensiertes (Karte) und ohne Zensiertes/Weggeschnittenes (Editor-Regel `visible_text`); Speichern in eine blockierte Datei meldet einen Fehler und lässt sie unverändert |
-| `selection` | Auswahl-Overlay offscreen (Bereich, Fenstermodus, Aufnahme) |
+| `selection` | Auswahl-Overlay offscreen (Bereich, Fenstermodus, Aufnahme, Text, Scroll, kleine Auswahl) und Aufnahmerahmen (`render_frame_offscreen`: Video Aufnahme-Rot, Scroll Königsblau hell); Pixelprüfung der Farben aus `overlay/brand.rs` (einzige Stelle für Overlay-Farben in Rust, Werte wie `tokens.css`) |
 | `capture` | echte Standbilder aller Monitore, Fensterliste, Fensteraufnahme, Bereichsaufnahme (nur Maße) |
 | `record [s]` | echte Bildschirmaufnahme mit kreisender Maus, Dauer und Größe; Export der Aufnahme ≥ 24 fps (Datei wird gelöscht) |
 | `track` | mitlaufender Balken in scrollendem Testvideo deckt zu jedem Zeitpunkt ab |

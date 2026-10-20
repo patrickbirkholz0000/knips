@@ -60,6 +60,8 @@ enum Brand {
         /// Helles Königsblau auf dunklem Grund (wie das Overlay).
         static let accent = rgb(0x9AA6FF)
         static let record = rgb(0xFF7A66)
+        /// „Kopiert“, Häkchen auf dunklem Grund.
+        static let success = rgb(0x4CC58E)
         /// Primärknopf auf dunklem Grund: Papier mit Tinte als Schrift.
         static let button = rgb(0xF4F5F7)
         static let buttonInk = rgb(0x15161A)

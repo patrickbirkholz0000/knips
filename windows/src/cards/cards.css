@@ -6,7 +6,7 @@
   position: fixed; left: 0; bottom: 0;
   font-family: var(--k-font); color: var(--k-dark-ink);
   /* „erledigt“-Grün auf dunklem Grund; tokens.css hat dafür (noch) kein --k-dark-success. */
-  --cards-success: var(--k-dark-success, #4cc58e);
+  --cards-success: var(--k-dark-success);
 }
 .card-pos {
   position: absolute; left: 0; bottom: 0; width: 236px; height: 148px;

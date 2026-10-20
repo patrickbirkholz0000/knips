@@ -3,7 +3,7 @@
 .hud-wrap {
   width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
   font-family: var(--k-font);
-  --hud-success: var(--k-dark-success, #4cc58e); /* tokens.css hat (noch) kein --k-dark-success */
+  --hud-success: var(--k-dark-success);
 }
 .hud {
   display: inline-flex; align-items: center; gap: 9px; height: 38px; max-width: 504px; padding: 0 16px 0 13px;

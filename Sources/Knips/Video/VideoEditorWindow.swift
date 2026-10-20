@@ -38,17 +38,14 @@ import SwiftUI
         self.model = model
         let window = NSWindow(contentRect: .zero, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = CanvasView.background
+        window.applyEditorChrome()
         window.isReleasedWhenClosed = false
         window.title = model.item.title
-        window.minSize = NSSize(width: 900, height: 600)
+        window.minSize = NSSize(width: EditorChrome.minWidth, height: 600)
         super.init(window: window)
         window.delegate = self
         let canvas = VideoCanvasView(model: model)
-        window.contentView = NSHostingView(rootView: VideoEditorRoot(model: model, canvas: canvas, actions: VideoEditorActions(
+        let host = NSHostingView(rootView: VideoEditorRoot(model: model, canvas: canvas, actions: VideoEditorActions(
             save: { [weak self] in self?.save(close: false) },
             done: { [weak self] in self?.save(close: true) },
             copy: { [weak self] in self?.copyFile() },
@@ -57,10 +54,13 @@ import SwiftUI
                 NSWorkspace.shared.activateFileViewerSelecting([self.model.item.fileURL])
             }
         )))
+        // Nur die Mindestgröße kommt aus SwiftUI; die Leisten passen sich der Breite an (ViewThatFits).
+        host.sizingOptions = [.minSize]
+        window.contentView = host
         let vf = NSScreen.withMouse.visibleFrame
         let scale = CGFloat(max(1, model.item.scale))
-        let w = min(max(model.videoSize.width / scale + 80, 900), vf.width * 0.9)
-        let h = min(max(model.videoSize.height / scale + 260, 600), vf.height * 0.9)
+        let w = min(max(model.videoSize.width / scale + 96, 980), vf.width * 0.9)
+        let h = min(max(model.videoSize.height / scale + 300, 600), vf.height * 0.9)
         window.setContentSize(NSSize(width: w, height: h))
         window.center()
     }
@@ -107,6 +107,10 @@ import SwiftUI
         }
     }
 
+    // Im Vollbild läge die leere Werkzeugleiste als eigenes Fenster über der oberen Leiste — dort ausblenden.
+    func windowWillEnterFullScreen(_ notification: Notification) { window?.toolbar?.isVisible = false }
+    func windowDidExitFullScreen(_ notification: Notification) { window?.toolbar?.isVisible = true }
+
     func windowWillClose(_ notification: Notification) {
         model.shutdown()
         Self.open[model.item.id] = nil
@@ -127,6 +131,8 @@ struct VideoEditorActions {
 final class VideoCanvasView: NSView {
     let model: VideoEditorModel
     private let playerLayer = AVPlayerLayer()
+    /// Leichter Schatten unter dem Video (wie unter dem Bild im Bild-Editor).
+    private let shadowLayer = CALayer()
     private let overlayView = VideoOverlayView()
     private var cancellables: Set<AnyCancellable> = []
     private var draft: CGRect?
@@ -139,7 +145,9 @@ final class VideoCanvasView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         clipsToBounds = true
-        layer?.backgroundColor = CanvasView.background.cgColor
+        applyColors()
+        shadowLayer.shadowOffset = CGSize(width: 0, height: -3)
+        layer?.addSublayer(shadowLayer)
         playerLayer.player = model.player
         playerLayer.videoGravity = .resizeAspect
         layer?.addSublayer(playerLayer)
@@ -157,12 +165,31 @@ final class VideoCanvasView: NSView {
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyColors()
+        overlayView.needsDisplay = true
+    }
+
+    /// Bühne `fill` mit Linie und Radius wie im Bild-Editor; Schatten im Dunkeln kräftiger.
+    private func applyColors() {
+        applyStageLayerStyle()
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = Brand.fill.cgColor
+            shadowLayer.backgroundColor = Brand.surface.cgColor
+        }
+        shadowLayer.shadowOpacity = dark ? 0.45 : 0.12
+        shadowLayer.shadowRadius = dark ? 9 : 7
+    }
+
     override func layout() {
         super.layout()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         // Gleicher Rand wie `videoRect`, sonst sitzen die Rahmen neben der Zensur.
         playerLayer.frame = bounds.insetBy(dx: 16, dy: 16)
+        shadowLayer.frame = videoRect
         CATransaction.commit()
         overlayView.frame = bounds
         overlayView.needsDisplay = true
@@ -182,9 +209,10 @@ final class VideoCanvasView: NSView {
     }
 
     /// Zeichnet Rahmen der aktiven Felder, die Auswahl mit Griffen und das Feld, das gerade gezogen wird.
+    /// Alles in Königsblau — Rot heißt bei Knips nur „es nimmt auf“.
     func drawOverlay(_ ctx: CGContext) {
         ctx.setLineWidth(1.5)
-        ctx.setStrokeColor(NSColor.systemRed.withAlphaComponent(0.85).cgColor)
+        ctx.setStrokeColor(Brand.accent.withAlphaComponent(0.85).cgColor)
         ctx.setLineDash(phase: 0, lengths: [5, 4])
         for r in model.redactions where r.id != model.selectedID && model.isActive(r) {
             ctx.stroke(toView(r.rect(at: model.currentTime)))
@@ -193,12 +221,12 @@ final class VideoCanvasView: NSView {
         if let sel = model.selected {
             let vr = toView(sel.rect(at: model.currentTime))
             let alpha: CGFloat = model.isActive(sel) ? 1 : 0.45
-            ctx.setStrokeColor(NSColor.controlAccentColor.withAlphaComponent(alpha).cgColor)
+            ctx.setStrokeColor(Brand.accent.withAlphaComponent(alpha).cgColor)
             ctx.setLineWidth(2)
             ctx.stroke(vr)
             for c in [CGPoint(x: vr.minX, y: vr.minY), CGPoint(x: vr.maxX, y: vr.minY), CGPoint(x: vr.minX, y: vr.maxY), CGPoint(x: vr.maxX, y: vr.maxY)] {
                 let h = CGRect(x: c.x - 5, y: c.y - 5, width: 10, height: 10)
-                ctx.setFillColor(NSColor.white.cgColor)
+                ctx.setFillColor(Brand.Dark.ink.cgColor)
                 ctx.fillEllipse(in: h)
                 ctx.setLineWidth(1.5)
                 ctx.strokeEllipse(in: h)
@@ -206,9 +234,9 @@ final class VideoCanvasView: NSView {
         }
         if let draft {
             let v = toView(draft)
-            ctx.setFillColor(NSColor.systemRed.withAlphaComponent(0.25).cgColor)
+            ctx.setFillColor(Brand.accent.withAlphaComponent(0.2).cgColor)
             ctx.fill(v)
-            ctx.setStrokeColor(NSColor.white.cgColor)
+            ctx.setStrokeColor(Brand.accent.cgColor)
             ctx.setLineWidth(1.5)
             ctx.stroke(v)
         }
@@ -327,156 +355,224 @@ private struct VideoCanvasHost: NSViewRepresentable {
 
 // MARK: - SwiftUI
 
+/// Video-Editor (docs/design.md, „Video-Editor“): wie der Bild-Editor — oben Zensur-Stil und Aktionen
+/// (Export rechts oben), in der Mitte die Bühne, unten die Zeitleiste als weiße Karte.
 struct VideoEditorRoot: View {
     @ObservedObject var model: VideoEditorModel
-    @ObservedObject private var settings = AppSettings.shared
     let canvas: VideoCanvasView
     let actions: VideoEditorActions
 
     var body: some View {
         VStack(spacing: 0) {
-            toolbar
-            Rectangle().fill(Color.white.opacity(0.07)).frame(height: 1)
+            VideoEditorToolbar(model: model, actions: actions)
             ZStack(alignment: .bottom) {
                 VideoCanvasHost(canvas: canvas)
                 if let busy = model.busy {
-                    HStack(spacing: 10) {
-                        ProgressView(value: model.progress ?? 0).frame(width: 120)
-                        Text(busy).font(.system(size: 12.5, weight: .semibold))
-                    }
-                    .padding(.horizontal, 14).padding(.vertical, 9)
-                    .background(Capsule().fill(Color.black.opacity(0.8)))
-                    .foregroundStyle(.white)
-                    .padding(.bottom, 16)
+                    EditorHUD(text: busy, progress: model.progress ?? 0).padding(.bottom, 16)
                 } else if let toast = model.toast {
-                    Pill(text: toast, symbol: "checkmark.circle.fill", spinning: false).padding(.bottom, 16)
+                    EditorHUD(text: toast, symbol: "checkmark.circle.fill").padding(.bottom, 16)
                 }
             }
-            VStack(spacing: 10) {
-                HStack(spacing: 12) {
-                    Button { model.togglePlay() } label: {
-                        Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 15, weight: .semibold))
-                            .frame(width: 34, height: 34)
-                            .background(Circle().fill(Color.white.opacity(0.12)))
-                            .foregroundStyle(.white)
-                    }
-                    .buttonStyle(.plain)
-                    .keyboardShortcut(.space, modifiers: [])
-                    Text("\(Format.preciseDuration(model.currentTime)) / \(Format.preciseDuration(model.duration))")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.75))
-                        .frame(width: 128, alignment: .leading)
-                    TimelineBar(model: model)
-                }
-                selectionBar
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(Color(white: 0.13))
+            .padding(.horizontal, EditorChrome.margin)
+            VideoTimelineCard(model: model)
+                .padding(EditorChrome.margin)
         }
-        .background(Color(nsColor: CanvasView.background))
+        .background(Color.brand(Brand.canvas))
         .ignoresSafeArea()
-    }
-
-    private var toolbar: some View {
-        HStack(spacing: 10) {
-            Color.clear.frame(width: 64)
-            Image(systemName: "eye.slash").foregroundStyle(.white.opacity(0.8))
-            Text("Rechteck ziehen = zensieren")
-                .font(.system(size: 12.5, weight: .medium))
-                .foregroundStyle(.white.opacity(0.7))
-                .lineLimit(1)
-                .layoutPriority(-1)
-            HStack(spacing: 2) {
-                ForEach(RedactStyle.allCases) { s in
-                    let on = (model.selected?.style ?? model.style) == s
-                    Button { model.setStyle(s) } label: {
-                        Label(s.title, systemImage: s.symbol)
-                            .font(.system(size: 12, weight: .medium))
-                            .fixedSize()
-                            .padding(.horizontal, 9).frame(height: 26)
-                            .background(RoundedRectangle(cornerRadius: 7).fill(on ? Color.white.opacity(0.18) : .clear))
-                            .foregroundStyle(.white.opacity(on ? 1 : 0.75))
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(3)
-            .background(RoundedRectangle(cornerRadius: 9).fill(Color.white.opacity(0.06)))
-            Spacer(minLength: 8)
-            if settings.showAutoRedact {
-                Button { model.autoRedact() } label: { Label("Auto-Zensur", systemImage: "wand.and.stars") }
-                    .buttonStyle(ToolbarButtonStyle(prominent: false))
-                    .disabled(model.busy != nil)
-                    .help("Erkennt E-Mails, IBANs, Telefonnummern, Schlüssel usw. in Einzelbildern (alle 0,5 s) und legt Zensurfelder an.")
-            }
-            Button { model.undo() } label: { Image(systemName: "arrow.uturn.backward") }
-                .buttonStyle(ToolbarButtonStyle(prominent: false))
-                .disabled(!model.canUndo)
-                .keyboardShortcut("z", modifiers: .command)
-            Button { model.exportGIF() } label: { Label("GIF", systemImage: "photo.stack") }
-                .buttonStyle(ToolbarButtonStyle(prominent: false))
-                .disabled(model.busy != nil)
-                .help("Als GIF exportieren (\(AppSettings.shared.gifFPS) fps, max. \(AppSettings.shared.gifWidth) px breit)")
-            Button { actions.reveal() } label: { Image(systemName: "folder") }
-                .buttonStyle(ToolbarButtonStyle(prominent: false))
-            Button { actions.copy() } label: { Label("Kopieren", systemImage: "doc.on.doc") }
-                .buttonStyle(ToolbarButtonStyle(prominent: false))
-                .disabled(model.busy != nil)
-            Button("Fertig") { actions.done() }
-                .buttonStyle(ToolbarButtonStyle(prominent: true))
-                .disabled(model.busy != nil)
-                .keyboardShortcut(.return, modifiers: .command)
-        }
-        .padding(.horizontal, 12)
-        .frame(height: EditorToolbar.height)
-        .background(Color(white: 0.13))
-    }
-
-    @ViewBuilder private var selectionBar: some View {
-        HStack(spacing: 8) {
-            if let sel = model.selected, let index = model.redactions.firstIndex(where: { $0.id == sel.id }) {
-                Text("Zensur \(index + 1)\(sel.auto ? " (auto)" : "")\(sel.track != nil ? " · folgt" : "")")
-                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
-                Text("\(Format.preciseDuration(sel.start)) – \(Format.preciseDuration(sel.end))")
-                    .font(.system(size: 12, weight: .medium, design: .monospaced)).foregroundStyle(.white.opacity(0.7))
-                Button("Ab hier") { model.selectedStartHere() }.buttonStyle(ToolbarButtonStyle(prominent: false))
-                    .help("Zensur beginnt an der aktuellen Abspielposition")
-                Button("Bis hier") { model.selectedEndHere() }.buttonStyle(ToolbarButtonStyle(prominent: false))
-                    .help("Zensur endet an der aktuellen Abspielposition")
-                Button("Ganze Länge") { model.selectedWholeClip() }.buttonStyle(ToolbarButtonStyle(prominent: false))
-                if sel.track == nil {
-                    Button { model.followSelected() } label: { Label("Folgen", systemImage: "scope") }
-                        .buttonStyle(ToolbarButtonStyle(prominent: false))
-                        .disabled(model.busy != nil)
-                        .help("Balken folgt dem Inhalt darunter, z. B. beim Scrollen — ab der aktuellen Position vor und zurück.")
-                } else {
-                    Button { model.unfollowSelected() } label: { Label("Fest", systemImage: "pin") }
-                        .buttonStyle(ToolbarButtonStyle(prominent: false))
-                        .help("Balken bleibt an der aktuellen Stelle stehen")
-                }
-                Button { model.deleteSelected() } label: { Label("Löschen", systemImage: "trash") }
-                    .buttonStyle(ToolbarButtonStyle(prominent: false))
-            } else {
-                Text(model.redactions.isEmpty
-                     ? "Gelbe Griffe kürzen das Video. Leertaste spielt ab, ← → springen einzelne Bilder."
-                     : "\(model.redactions.count) Zensurfeld\(model.redactions.count == 1 ? "" : "er") — anklicken, um Zeitraum oder Stil zu ändern.")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.55))
-            }
-            Spacer()
-            if model.trimStart > 0.001 || model.trimEnd < model.duration - 0.001 {
-                Text("Gekürzt auf \(Format.preciseDuration(model.trimEnd - model.trimStart))")
-                    .font(.system(size: 12, weight: .medium)).foregroundStyle(.yellow.opacity(0.85))
-            }
-        }
-        .frame(height: 28)
     }
 }
 
-/// Zeitleiste mit Vorschaubildern, gelben Kürzungs-Griffen, Abspielkopf und Zensur-Spuren.
+/// Obere Leiste: Zensur (Hinweis + Stil) als Gruppe, rechts Widerrufen, Ordner, GIF, Kopieren, Fertig.
+private struct VideoEditorToolbar: View {
+    @ObservedObject var model: VideoEditorModel
+    @ObservedObject private var settings = AppSettings.shared
+    let actions: VideoEditorActions
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Color.clear.frame(width: EditorChrome.trafficLights)
+            ViewThatFits(in: .horizontal) {
+                row(hint: true, labels: true)
+                row(hint: false, labels: true)
+                row(hint: false, labels: false)
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(height: EditorChrome.topBarHeight)
+        .background { shortcuts }
+    }
+
+    /// ⌘Z und ⌘⏎ außerhalb von ViewThatFits, damit jedes Kürzel genau einmal gilt (nicht je Fassung der Leiste).
+    private var shortcuts: some View {
+        ZStack {
+            Button("Widerrufen") { model.undo() }
+                .keyboardShortcut("z", modifiers: .command)
+                .disabled(!model.canUndo)
+            Button("Fertig") { actions.done() }
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(model.busy != nil)
+        }
+        .opacity(0)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private func row(hint: Bool, labels: Bool) -> some View {
+        HStack(spacing: 10) {
+            redactGroup(hint: hint, labels: labels)
+            if settings.showAutoRedact {
+                Button { model.autoRedact() } label: {
+                    if labels { Label("Auto-Zensur", systemImage: "wand.and.stars") } else { Image(systemName: "wand.and.stars") }
+                }
+                .buttonStyle(BrandButtonStyle(kind: .secondary))
+                .disabled(model.busy != nil)
+                .help("Erkennt E-Mails, IBANs, Telefonnummern, Schlüssel usw. in Einzelbildern (alle 0,5 s) und legt Zensurfelder an.")
+                .accessibilityLabel("Auto-Zensur")
+            }
+            Spacer(minLength: 12)
+            HStack(spacing: 2) {
+                ChromeToolButton(symbol: "arrow.uturn.backward", enabled: model.canUndo, help: "Widerrufen (⌘Z)") { model.undo() }
+                ChromeToolButton(symbol: "folder", help: "Im Finder zeigen", action: actions.reveal)
+            }
+            Button { model.exportGIF() } label: { Label("GIF", systemImage: "photo.stack") }
+                .buttonStyle(BrandButtonStyle(kind: .secondary))
+                .disabled(model.busy != nil)
+                .help("Als GIF exportieren (\(settings.gifFPS) fps, max. \(settings.gifWidth) px breit)")
+            Button { actions.copy() } label: { Label("Kopieren", systemImage: "doc.on.doc") }
+                .buttonStyle(BrandButtonStyle(kind: .secondary))
+                .disabled(model.busy != nil)
+                .help("Videodatei kopieren")
+            Button("Fertig") { actions.done() }
+                .buttonStyle(BrandButtonStyle(kind: .primary))
+                .disabled(model.busy != nil)
+                .help("Als MP4 speichern und schließen (⌘⏎)")
+        }
+    }
+
+    private func redactGroup(hint: Bool, labels: Bool) -> some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 7) {
+                Image(systemName: "eye.slash").font(.system(size: 14, weight: .medium)).foregroundStyle(Color.brand(Brand.accent))
+                Text(hint ? "Rechteck ziehen = zensieren" : "Zensieren")
+                    .font(Brand.font(13, .medium))
+                    .foregroundStyle(Color.brand(Brand.ink))
+                    .fixedSize()
+            }
+            .padding(.leading, 8)
+            ChromeDivider()
+            BrandSegment(items: RedactStyle.allCases.map { .init(value: $0, title: labels ? $0.title : nil, symbol: $0.symbol, help: $0.title) },
+                         selection: model.selected?.style ?? model.style, height: 28) { model.setStyle($0) }
+        }
+        .frame(height: EditorChrome.toolSize)
+        .chromeGroup()
+    }
+}
+
+/// Zeitleiste als weiße Karte: Abspielen, Zeit in Mono, Vorschaubilder mit Kürzen-Griffen (Tinte) und
+/// Zensurbereichen (Königsblau), darunter die Auswahl.
+private struct VideoTimelineCard: View {
+    @ObservedObject var model: VideoEditorModel
+
+    private var trimmed: Bool { model.trimStart > 0.001 || model.trimEnd < model.duration - 0.001 }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 14) {
+                Button { model.togglePlay() } label: {
+                    Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                        .background(Circle().fill(Color.brand(Brand.buttonFill)))
+                        .foregroundStyle(Color.brand(Brand.buttonInk))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.space, modifiers: [])
+                .help(model.isPlaying ? "Anhalten (Leertaste)" : "Abspielen (Leertaste)")
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 0) {
+                        Text(Format.preciseDuration(model.currentTime)).foregroundStyle(Color.brand(Brand.ink))
+                        Text(" / \(Format.preciseDuration(model.duration))").foregroundStyle(Color.brand(Brand.inkSoft))
+                    }
+                    .font(Brand.mono(12, .medium))
+                    if trimmed {
+                        Text("gekürzt auf \(Format.preciseDuration(model.trimEnd - model.trimStart))")
+                            .font(Brand.mono(11))
+                            .foregroundStyle(Color.brand(Brand.inkSoft))
+                    }
+                }
+                .fixedSize()
+                .frame(minWidth: 128, alignment: .leading)
+                TimelineBar(model: model)
+            }
+            Rectangle().fill(Color.brand(Brand.line)).frame(height: 1)
+            ViewThatFits(in: .horizontal) {
+                selectionBar(compact: false)
+                selectionBar(compact: true)
+            }
+            .frame(height: 28)
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: Brand.Radius.card, style: .continuous).fill(Color.brand(Brand.surface)))
+        .overlay(RoundedRectangle(cornerRadius: Brand.Radius.card, style: .continuous).strokeBorder(Color.brand(Brand.line)))
+    }
+
+    @ViewBuilder private func selectionBar(compact: Bool) -> some View {
+        HStack(spacing: 8) {
+            if let sel = model.selected, let index = model.redactions.firstIndex(where: { $0.id == sel.id }) {
+                Text("Zensur \(index + 1)\(sel.auto ? " (auto)" : "")\(sel.track != nil ? " · folgt" : "")")
+                    .font(Brand.font(13, .semibold))
+                    .foregroundStyle(Color.brand(Brand.ink))
+                    .fixedSize()
+                Text("\(Format.preciseDuration(sel.start)) – \(Format.preciseDuration(sel.end))")
+                    .font(Brand.mono(11.5))
+                    .foregroundStyle(Color.brand(Brand.inkSoft))
+                    .fixedSize()
+                    .padding(.trailing, 4)
+                Button("Ab hier") { model.selectedStartHere() }
+                    .buttonStyle(BrandButtonStyle(kind: .secondary, height: 28))
+                    .help("Zensur beginnt an der aktuellen Abspielposition")
+                Button("Bis hier") { model.selectedEndHere() }
+                    .buttonStyle(BrandButtonStyle(kind: .secondary, height: 28))
+                    .help("Zensur endet an der aktuellen Abspielposition")
+                Button("Ganze Länge") { model.selectedWholeClip() }
+                    .buttonStyle(BrandButtonStyle(kind: .secondary, height: 28))
+                if sel.track == nil {
+                    Button { model.followSelected() } label: { label("Folgen", "scope", compact: compact) }
+                        .buttonStyle(BrandButtonStyle(kind: .secondary, height: 28))
+                        .disabled(model.busy != nil)
+                        .help("Balken folgt dem Inhalt darunter, z. B. beim Scrollen — ab der aktuellen Position vor und zurück.")
+                        .accessibilityLabel("Folgen")
+                } else {
+                    Button { model.unfollowSelected() } label: { label("Fest", "pin", compact: compact) }
+                        .buttonStyle(BrandButtonStyle(kind: .secondary, height: 28))
+                        .help("Balken bleibt an der aktuellen Stelle stehen")
+                        .accessibilityLabel("Fest")
+                }
+                Spacer(minLength: 8)
+                Button { model.deleteSelected() } label: { label("Löschen", "trash", compact: compact) }
+                    .buttonStyle(BrandButtonStyle(kind: .quiet, height: 28))
+                    .help("Zensur löschen (⌫)")
+                    .accessibilityLabel("Löschen")
+            } else {
+                Text(model.redactions.isEmpty
+                     ? "Die Griffe an der Zeitleiste kürzen das Video. Leertaste spielt ab, ← → springen einzelne Bilder."
+                     : "\(model.redactions.count) Zensurfeld\(model.redactions.count == 1 ? "" : "er") — anklicken, um Zeitraum oder Stil zu ändern.")
+                    .font(Brand.font(12.5))
+                    .foregroundStyle(Color.brand(Brand.inkSoft))
+                    .lineLimit(compact ? 2 : 1)
+                    .fixedSize(horizontal: !compact, vertical: false)
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    @ViewBuilder private func label(_ title: String, _ symbol: String, compact: Bool) -> some View {
+        if compact { Image(systemName: symbol) } else { Label(title, systemImage: symbol) }
+    }
+}
+
+/// Zeitleiste mit Vorschaubildern, Kürzen-Griffen in Tinte, Abspielkopf in Tinte und Zensur-Spuren in Königsblau.
 struct TimelineBar: View {
     @ObservedObject var model: VideoEditorModel
     @State private var trimDragStart: (Double, Double)?
@@ -498,18 +594,23 @@ struct TimelineBar: View {
                         }
                     }
                     .frame(width: w, height: 40, alignment: .leading)
-                    .background(Color.white.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .background(Color.brand(Brand.fill))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 0).onChanged { v in
                         model.seek(to: Double(max(0, min(v.location.x, w)) / w) * d)
                     })
-                    // Außerhalb der Kürzung abdunkeln
-                    Rectangle().fill(Color.black.opacity(0.6)).frame(width: max(0, x(model.trimStart)), height: 40).allowsHitTesting(false)
-                    Rectangle().fill(Color.black.opacity(0.6)).frame(width: max(0, w - x(model.trimEnd)), height: 40)
+                    // Außerhalb der Kürzung: Papier-Schleier (wird nicht gespeichert)
+                    Rectangle().fill(Color.brand(Brand.surface).opacity(0.72))
+                        .frame(width: max(0, x(model.trimStart)), height: 40)
+                        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 8, bottomLeadingRadius: 8, style: .continuous))
+                        .allowsHitTesting(false)
+                    Rectangle().fill(Color.brand(Brand.surface).opacity(0.72))
+                        .frame(width: max(0, w - x(model.trimEnd)), height: 40)
+                        .clipShape(UnevenRoundedRectangle(bottomTrailingRadius: 8, topTrailingRadius: 8, style: .continuous))
                         .offset(x: x(model.trimEnd)).allowsHitTesting(false)
-                    RoundedRectangle(cornerRadius: 6)
-                        .strokeBorder(Color.yellow, lineWidth: 2)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.brand(Brand.ink), lineWidth: 2)
                         .frame(width: max(4, x(model.trimEnd) - x(model.trimStart)), height: 40)
                         .offset(x: x(model.trimStart))
                         .allowsHitTesting(false)
@@ -519,28 +620,28 @@ struct TimelineBar: View {
                             model.setTrim(start: (trimDragStart?.0 ?? 0) + Double(v.translation.width / w) * d)
                             model.seek(to: model.trimStart)
                         }.onEnded { _ in trimDragStart = nil })
+                        .help("Anfang kürzen")
                     trimHandle(left: false).offset(x: x(model.trimEnd) - 6)
                         .gesture(DragGesture().onChanged { v in
                             if trimDragStart == nil { trimDragStart = (model.trimStart, model.trimEnd); model.checkpoint() }
                             model.setTrim(end: (trimDragStart?.1 ?? d) + Double(v.translation.width / w) * d)
                             model.seek(to: model.trimEnd)
                         }.onEnded { _ in trimDragStart = nil })
-                    Rectangle().fill(Color.white).frame(width: 2, height: 48)
-                        .shadow(color: .black.opacity(0.6), radius: 1)
-                        .offset(x: x(model.currentTime) - 1)
-                        .allowsHitTesting(false)
+                        .help("Ende kürzen")
+                    playhead.offset(x: x(model.currentTime) - 5).allowsHitTesting(false)
                 }
                 .frame(height: 48)
                 // Zensur-Spuren
                 ZStack(alignment: .leading) {
-                    Rectangle().fill(Color.white.opacity(0.05)).frame(width: w, height: 8)
+                    Capsule().fill(Color.brand(Brand.fill)).frame(width: w, height: 8)
                     ForEach(model.redactions) { r in
                         let selected = r.id == model.selectedID
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(selected ? Color.accentColor : Color.red.opacity(0.75))
-                            .frame(width: max(4, x(r.end) - x(r.start)), height: 8)
+                        Capsule()
+                            .fill(Color.brand(Brand.accent).opacity(selected ? 1 : 0.4))
+                            .frame(width: max(6, x(r.end) - x(r.start)), height: 8)
                             .offset(x: x(r.start))
                             .onTapGesture { model.selectedID = r.id; model.seek(to: max(r.start, min(model.currentTime, r.end))) }
+                            .help("Zensur — anklicken zum Auswählen")
                     }
                 }
                 .frame(height: 8)
@@ -549,12 +650,24 @@ struct TimelineBar: View {
         .frame(height: 60)
     }
 
+    /// Abspielkopf: Tinte mit Papier-Saum, damit er auf hellen und dunklen Vorschaubildern sichtbar bleibt.
+    private var playhead: some View {
+        VStack(spacing: 0) {
+            Circle().fill(Color.brand(Brand.ink)).frame(width: 9, height: 9)
+                .overlay(Circle().strokeBorder(Color.brand(Brand.surface), lineWidth: 1.5))
+            Rectangle().fill(Color.brand(Brand.ink)).frame(width: 2, height: 41)
+                .background(Rectangle().fill(Color.brand(Brand.surface)).frame(width: 4))
+                .padding(.top, -1)
+        }
+        .frame(width: 10, height: 48, alignment: .top)
+    }
+
     private func trimHandle(left: Bool) -> some View {
-        RoundedRectangle(cornerRadius: 3)
-            .fill(Color.yellow)
+        RoundedRectangle(cornerRadius: 4, style: .continuous)
+            .fill(Color.brand(Brand.ink))
             .frame(width: 12, height: 44)
             .overlay(Image(systemName: left ? "chevron.compact.left" : "chevron.compact.right")
-                .font(.system(size: 10, weight: .heavy)).foregroundStyle(.black.opacity(0.7)))
+                .font(.system(size: 10, weight: .heavy)).foregroundStyle(Color.brand(Brand.surface)))
             .contentShape(Rectangle())
     }
 }

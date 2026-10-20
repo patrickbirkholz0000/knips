@@ -54,13 +54,13 @@ Alle zusammen: `scripts/selftest.ps1` (macht die CI).
 | `track` | mitlaufender Balken in scrollendem Testvideo deckt zu jedem Zeitpunkt ab |
 | `video` | MP4-Export mit Kürzen + Balken, GIF-Export, Auto-Zensur im Video; Quelle mit variabler Bildrate (wie eine Aufnahme, Ø 9 fps): wirksam ≈ 30 fps, Export ≥ 24 fps, jedes Exportbild zeigt das Quellbild seiner Zeit |
 | `perf` | Zeiten: Standbild, 1×+PNG, Texterkennung |
-| `hotkeys` | Kürzel über RegisterHotKey und Tastatur-Hook mit simulierten Tastendrücken (auch Druck, Win-Kombination) |
+| `hotkeys` | Kürzel über RegisterHotKey und Tastatur-Hook mit simulierten Tastendrücken (auch Druck, Win-Kombination); Tastennamen und AltGr-Erkennung auf dem deutschen und US-Layout (`probe_layout` lädt sie kurz) |
 | `overlay` | das echte Auswahl-Overlay mit simulierter Maus/Tastatur: Ziehen, Umschalt-Quadrat, Esc, Eingabe, Leertaste + Fensterklick — nur auf Rechnern ohne Nutzer (CI) |
 | `clipboard` | echte Zwischenablage: Bild verzögert anbieten (PNG/JPEG) und zurücklesen — nur für die CI |
 | `telemetry` | Nutzungsstatistik gegen einen lokalen Server (127.0.0.1): in Sandbox/CI aus, ohne Zustimmung nichts, Zustimmung → Ereignisse → Senden (Nutzlast, Erlaubt-Liste, Deckel 10000) → Zähler zurückgesetzt, Fehler behält Zähler, Widerruf löscht Kennung + Zähler; Nutzlast als `telemetry-payload.json` |
 | `render` | Renderer der Oberfläche — gleiche Dokumente wie `SelfTest.render` auf dem Mac (Vergleich: `tests/reference/mac-render-*.png`) |
 | `ui` | alle Fenster mit Beispieldaten, je ein Bild (Vergleich: `tests/reference/mac-ui/`), auch `einwilligung.png`, `link-rueckfrage.png` und Allgemein/Datenschutz/Über Knips nach unten gescrollt (`…-unten.png`) |
-| `links` | Rückfrage vor knips://fullscreen/last/record (wie `links` auf dem Mac): ohne Einstellung erst Rückfrage, weiterer Link verfällt, Esc/Schließen/Abbrechen = nichts, Aufnehmen erst nach der Schutzzeit (Rust und Oberfläche), „Nicht mehr fragen“ nur mit Aufnehmen, Stoppen und eigener Weg direkt; mit Einstellung direkt; Schalter in Allgemein. Ausführen ist durch eine Liste ersetzt, nimmt nie auf. Bilder: `link-rueckfrage-*.png`, `link-einstellung-allgemein.png` |
+| `links` | Rückfrage vor knips://fullscreen/last/record (wie `links` auf dem Mac): ohne Einstellung erst Rückfrage, weiterer Link verfällt, Esc/Schließen/Abbrechen = nichts, Aufnehmen erst nach der Schutzzeit (Rust und Oberfläche), gehaltene ⏎ / Wiederholungen / ⏎ ohne Loslassen / ⏎ direkt nach Tippen bestätigen nichts, „Nicht mehr fragen“ vor der Schutzzeit gesperrt und nur mit Aufnehmen, Stoppen und eigener Weg direkt; zweiter Start (`app::second_instance` → Deep-Link-Plugin) und Erststart mit `knips://pin` (Kindprozess) je genau ein Aufruf; mit Einstellung direkt; Schalter in Allgemein. Ausführen ist durch eine Liste ersetzt, nimmt nie auf. Bilder: `link-rueckfrage-*.png`, `link-einstellung-allgemein.png` |
 | `nomedia` | Windows N/KN ohne Media Feature Pack (simuliert, `KNIPS_TEST_NO_MEDIA`): Importtabelle der knips.exe (mfplat/mfreadwrite/mf nur verzögert), alle Videofunktionen melden den Hinweis statt abzustürzen, Video-Kürzel zeigt Hinweis statt Auswahl, Screenshot geht; Bilder `einstellungen-aufnahme-ohne-media.png`, `menu-ohne-media.png` |
 | `oldwin` | Windows vor 10 2004 (simuliert, `KNIPS_TEST_OLD_WINDOWS`): kein `WDA_EXCLUDEFROMCAPTURE`, eigene Fenster für das Standbild ausgeblendet und danach wieder sichtbar, Aufnahmerahmen ohne Ausschluss |
 
@@ -76,7 +76,9 @@ native-tls = SChannel, eigener Thread, 30 s nach Start und alle 6 h, höchstens 
 Zustand in `settings.json` (`telemetryConsent`, `…InstallId`, `…Counts`, `…LastSent`; die Oberfläche
 kann ihn über `set_settings` nicht ändern). Frage `#/consent` beim Start nach der Druck-Tasten-Frage,
 Schalter unter Einstellungen → Datenschutz. Nie in Selbsttests, Sandbox oder CI (`CI`/`GITHUB_ACTIONS`);
-Feature `dev` nur mit `KNIPS_TELEMETRY=1` (Kanal „dev“); `KNIPS_TELEMETRY_URL` ersetzt das Ziel.
+Feature `dev` nur mit `KNIPS_TELEMETRY=1` (Kanal „dev“); nur dort ersetzt `KNIPS_TELEMETRY_URL` das Ziel, und
+nur durch `https://…` oder `http://` auf 127.0.0.1/localhost (`knips_core::telemetry::endpoint_override_allowed`).
+Weitergabe-Builds lesen die Variable nie. `telemetry_count` aus der Oberfläche nimmt nur `censor_manual`/`censor_smart`.
 Gezählt wird, wo die Aktion fertig ist: `capture_*` (coordinator.rs, scroll.rs), `recording_start/saved`,
 `editor_open`/`video_editor_open` (neues Fenster), `censor_auto` (Erkennung), `censor_manual`/`censor_smart`
 (Editor über `telemetry_count`), `export_png/jpeg` (Speichern im Editor), `export_mp4` (Video-Export mit
@@ -87,13 +89,38 @@ Gezählt wird, wo die Aktion fertig ist: `capture_*` (coordinator.rs, scroll.rs)
 
 `knips://area|window|fullscreen|record|last|text|scroll|pin|menu|history|settings` kommen über Deep Link,
 zweiten Start oder Startargument immer als „von außen“ (`app::handle_url` → `links.rs`, Regeln in
-`knips_core::links`). Was sofort aufnimmt — `fullscreen`, `last`, `record` (nur Start) — fragt erst nach:
-Fenster „Aufnahme per Link?“ (`#/link-confirm/<befehl>`, Label `link-confirm-<n>`, schwebend, Texte wie auf
-dem Mac); „Aufnehmen“ (⏎) wirkt erst nach 0,6 s (Oberfläche und Rust prüfen), „Abbrechen“/Esc/Schließen
-verwirft, „Nicht mehr fragen“ gilt nur mit „Aufnehmen“. Höchstens eine Rückfrage zur Zeit, weitere Links
-verfallen solange. Einstellungen → Allgemein → „Aufnahmen per Link ohne Rückfrage“
+`knips_core::links`). Jeder Link läuft genau einmal: Zweiter Start → `single-instance` (OHNE sein Feature
+`deep-link`) → `app::second_instance` → Deep-Link-Plugin (`handle_cli_arguments`: genau ein Argument, Schema
+`knips`) → `on_open_url` → `handle_url`. Erststart: Das Plugin meldet das Argument in seinem eigenen Setup,
+bevor `on_open_url` angemeldet ist (ungehört) — `app::first_start` führt es aus. Mit dem Feature `deep-link`
+liefe jeder Link beim zweiten Start doppelt (Menü auf und zu, zwei Pins, zwei Aufnahmen).
+
+Was sofort aufnimmt — `fullscreen`, `last`, `record` (nur Start) — fragt erst nach: Fenster „Aufnahme per
+Link?“ (`#/link-confirm/<befehl>`, Label `link-confirm-<n>`, schwebend, Texte wie auf dem Mac). Schutzzeit
+0,6 s ab Sichtbarkeit: Die Oberfläche fragt `link_confirm_shown`, bis Rust das Fenster als sichtbar bestätigt;
+erst ab da zählen Rust (`LinkGate::shown`) und die Oberfläche. Vorher nimmt Rust kein „Aufnehmen“ an.
+Oberfläche: jede getippte Taste (außer ⏎/Esc/Tab/Umschalttasten) startet die Schutzzeit neu; ⏎ zählt nur als
+frischer Druck (keine Wiederholung, und war ⏎ vor Ablauf unten, erst nach dem Loslassen); der Browser löst
+Knöpfe per ⏎ nie selbst aus; ⏎ auf „Abbrechen“ = Abbrechen; „Nicht mehr fragen“ ist vor der Schutzzeit
+gesperrt und gilt nur mit „Aufnehmen“. Esc/Schließen/„Abbrechen“ verwerfen immer. Höchstens eine Rückfrage zur
+Zeit; weitere Links verfallen und holen sie NICHT erneut nach vorn (Mac: schon — unter Windows würde das den
+Fokus mitten ins Tippen ziehen). Einstellungen → Allgemein → „Aufnahmen per Link ohne Rückfrage“
 (`linkCaptureWithoutConfirm`, Standard aus). Kürzel, Menü-Panel, Taskleisten-Symbol und Selbsttests rufen
 `Coordinator::perform` direkt auf, ohne Rückfrage; Stoppen einer Aufnahme läuft auch per Link direkt.
+
+**IPC nur so weit wie nötig.** `build.rs` listet alle eigenen Befehle (`AppManifest::commands` → Berechtigungen
+`allow-<befehl>`, generiert in `src-tauri/permissions/autogenerated/`, nicht eingecheckt). Damit darf jedes
+Fenster nur, was ihm `capabilities/windows.json` erlaubt (je Label: `settings`, `menu`, `cards`, `history`,
+`pin-*`, Leisten, `consent`, `link-confirm-*`, `editor-*`, `video-*`; alle nur Ereignisse empfangen, nicht
+senden). **Neuer Befehl = in `generate_handler!`, `build.rs` und der passenden Capability eintragen**, sonst
+lehnt Tauri ihn ab. Test-Befehle (`selftest_probe`, `selftest_report`) erlaubt erst `selftest::after_setup`
+zur Laufzeit. `set_settings`: nur Felder aus `SETTINGS_WINDOW_FIELDS` (Einstellungsfenster) bzw.
+`EDITOR_WINDOW_FIELDS` (`redactStyle`, Editoren), geprüft von `Settings::patched` (Typen, Auswahlwerte,
+Bereiche); Ablageordner nach `check_save_folder` (Laufwerkspfad, kein UNC-/Gerätepfad, kein `..`, keine
+Gerätenamen) und muss als Ordner existieren — Fehler zeigt Einstellungen → Ablage an. `open_save_folder` öffnet
+nur Ordner (`shell::open_folder`, Verb „explore“). Asset-Protokoll: `items` und `temp` ganz, aus dem
+Ablageordner nur die Dateien eigener Aufnahmen (`allow_item_files`). Einstellungs-Bereich (`pane`) nur aus
+`SETTINGS_PANES`, Werkzeug (`item_open`, `set_editor_prefs`) nur aus `EDITOR_TOOLS`.
 
 `open_url` öffnet nur `https://github.com/patrickbirkholz0000/knips…`, `https://knips.velno.ai…` und
 `ms-settings:…` (`knips_core::links::allowed_external_url`). CSP in `tauri.conf.json`: Skripte nur `'self'`,
@@ -124,6 +151,14 @@ Video starten/stoppen. „Mac-Belegung“ in den Einstellungen: Win+Umschalt+4/2
 dem Bildschirmausschnitt — Knips fragt beim ersten Start einmal, ob es die Taste übernehmen darf
 (`HKCU\Control Panel\Keyboard\PrintScreenKeyForSnippingEnabled`), und fängt sie sonst per Hook ab.
 
+Strg+Alt ist unter Windows dasselbe wie AltGr: Eine aufgenommene Kombination, die auf dem aktuellen oder einem
+anderen installierten Layout ein Zeichen tippt (deutsch Strg+Alt+Q = „@“, +E = „€“), lehnt Knips ab
+(`knips_platform::hotkeys::altgr_char` per `ToUnicodeEx`, Meldung in Einstellungen → Tastaturkürzel,
+Ereignis `hotkey-recorded` mit `result: "rejected"`). Schon gespeicherte Kürzel bleiben. Tastennamen: Zeichentasten
+(OEM 0xBA–0xE2) wie auf dem aktuellen Layout beschriftet (`hotkeys::key_name`, `MapVirtualKeyExW`; US „;“ statt
+„Ü“), Buchstaben/Ziffern nach dem Virtual-Key, Sondertasten deutsch; die Attrappe nimmt die deutschen Namen
+aus `knips_core::settings::key_name`.
+
 ## Ablage
 
 Wie auf dem Mac: Ablage `Bilder\Knips` (immer die gerenderte, zensierte Fassung, standardmäßig 1×),
@@ -143,6 +178,8 @@ CI 20.10.2026 (Medien/Verträglichkeit): alle 17 Selbsttests grün, neu `nomedia
 dem Installer lädt mfplat/mfreadwrite/mf nur verzögert (`llvm-readobj --coff-imports`: nur unter `DelayImport`);
 Aufnahme mit bewegter Maus wirksam 30 fps (vorher als 2,4 fps exportiert), VFR-Testvideo Ø 8,9 → Export 30 fps.
 Nicht in der CI prüfbar: echte N-Edition, echtes Windows vor 2004, Mikrofon ohne Freigabe.
+CI 20.10.2026 abends: alle 15 grün mit Capabilities je Fenster (alle Fenster-Bilder vollständig), Links genau
+einmal (zweiter Start und Erststart), gehärteter Rückfrage und Layout-Prüfung (deutsch/US) in `hotkeys`.
 Noch am Gerät zu testen: Tastendrücke auf echter Tastatur (Hook neben anderen Tools), Mikrofon,
 Ziehen aus den Karten in andere Apps, Einfügen in fremde Apps, mehrere Monitore mit gemischter Skalierung.
 

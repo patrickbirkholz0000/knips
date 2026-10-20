@@ -34,6 +34,55 @@ use crate::wm;
 
 const WINDOW_TESTS: [&str; 5] = ["ui", "render", "links", "nomedia", "oldwin"];
 
+/// Kindprozess von `links`: Knips mit `knips://pin` als einzigem Argument gestartet. Nach dem Start (und
+/// einer Pause, in der eine verspätete zweite Meldung ankäme) muss genau ein Aufruf angekommen sein.
+fn start_link_result() -> Result<()> {
+    std::thread::sleep(Duration::from_millis(2000));
+    let calls = START_CALLS.lock().clone();
+    println!("Erststart mit knips://pin → {calls:?}");
+    if calls != [HotkeyAction::PinClipboard] {
+        bail!("Erststart: erwartet genau [PinClipboard], bekommen {calls:?}");
+    }
+    Ok(())
+}
+
+/// Startet Knips als eigenen Prozess wie nach einem Klick auf `knips://pin`, solange Knips noch nicht läuft
+/// (eigene Sandbox, Ausführen ersetzt). Liefert `true`, wenn der Link genau einmal ausgeführt wurde.
+fn start_link_child(out: &Path) -> Result<bool> {
+    use std::io::Read;
+    let dir = out.join("erststart");
+    std::fs::create_dir_all(&dir)?;
+    let mut child = std::process::Command::new(std::env::current_exe()?)
+        .arg("knips://pin")
+        .env("KNIPS_TEST_DIR", dir.join("sandbox"))
+        .env("KNIPS_SELFTEST", format!("startlink|{}", dir.display()))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    let mut stdout = child.stdout.take().context("keine Ausgabe des Kindprozesses")?;
+    let reader = std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = stdout.read_to_string(&mut text);
+        text
+    });
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break Some(status);
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let text = reader.join().unwrap_or_default();
+    for line in text.lines().filter(|l| l.starts_with("Erststart") || l.starts_with("OK") || l.starts_with("FEHLER")) {
+        println!("     [Kindprozess] {line}");
+    }
+    Ok(status.is_some_and(|s| s.success()))
+}
+
 /// `Some(code)`: Test ist durch. `None`: Fenstertest — die App startet normal und
 /// `after_setup` übernimmt.
 pub fn run(args: &[String]) -> Option<i32> {
@@ -504,6 +553,44 @@ fn hotkeys_test() -> Result<()> {
     if rx.recv_timeout(Duration::from_millis(800)).is_ok() {
         missing.push("nach dem Abmelden ausgelöst".into());
     }
+
+    // Tastennamen und AltGr je Layout (unabhängig vom Layout des Rechners): Zeichentasten heißen wie ihre
+    // Beschriftung, Strg+Alt-Kombinationen, die ein Zeichen tippen, werden erkannt.
+    let ctrl_alt = MOD_CONTROL | MOD_ALT;
+    let vks = [0xBA, 0xC0, 0xDE, 0xDB, 0xBF, 0xDC, 0x51, VK_SNAPSHOT];
+    let combos = [
+        KeyCombo::new(0x51, ctrl_alt),
+        KeyCombo::new(0x45, ctrl_alt),
+        KeyCombo::new(0x37, ctrl_alt),
+        KeyCombo::new(0x78, ctrl_alt),
+        KeyCombo::new(0x50, ctrl_alt),
+        KeyCombo::new(0x51, MOD_CONTROL | MOD_SHIFT),
+        KeyCombo::new(0x51, ctrl_alt | MOD_WIN),
+    ];
+    let some = |s: &str| Some(s.to_string());
+    let layouts = [
+        ("00000407", "deutsch", ["Ü", "Ö", "Ä", "ß", "#", "^", "Q", "Druck"], [some("@"), some("€"), some("{"), None, None, None, None]),
+        ("00000409", "US", [";", "`", "'", "[", "/", "\\", "Q", "Druck"], [None, None, None, None, None, None, None]),
+    ];
+    for (klid, name, want_names, want_chars) in layouts {
+        match hotkeys::probe_layout(klid, &vks, &combos) {
+            Ok((names, chars)) => {
+                let names_ok = names.iter().map(String::as_str).eq(want_names.iter().copied());
+                let chars_ok = chars == want_chars;
+                println!("   {} Layout {name}: Namen {names:?}", if names_ok { "ok    " } else { "FALSCH" });
+                println!("   {} Layout {name}: AltGr {chars:?}", if chars_ok { "ok    " } else { "FALSCH" });
+                if !names_ok || !chars_ok {
+                    missing.push(format!("Layout {name}"));
+                }
+            }
+            Err(err) => {
+                println!("   FALSCH Layout {name} nicht ladbar: {err:#}");
+                missing.push(format!("Layout {name} nicht ladbar"));
+            }
+        }
+    }
+    let current: Vec<String> = vks.iter().map(|vk| hotkeys::key_name(*vk)).collect();
+    println!("   Namen auf dem Layout dieses Rechners: {current:?}");
     if !missing.is_empty() {
         bail!("Kürzel: {}", missing.join(", "));
     }
@@ -730,8 +817,13 @@ fn telemetry_test(out: &Path) -> Result<()> {
     let stored: Vec<&str> = raw.as_object().map(|o| o.keys().filter(|k| k.starts_with("telemetry")).map(String::as_str).collect()).unwrap_or_default();
     expect(raw["telemetryConsent"] == true && raw["telemetryInstallId"] == id.as_str(), &format!("in settings.json: {stored:?}"));
     expect(SettingsStore::load().telemetry() == settings.telemetry(), "nach Neustart derselbe Zustand");
-    let _ = settings.patch(&serde_json::json!({ "telemetryConsent": false, "telemetryInstallId": "x", "playSound": true }));
-    expect(settings.telemetry().telemetry_install_id.as_deref() == Some(id.as_str()), "Einstellungen der Oberfläche ändern die Statistik nicht");
+    let refused = settings
+        .patch(&serde_json::json!({ "telemetryConsent": false, "telemetryInstallId": "x", "playSound": true }), &knips_core::settings::SETTINGS_WINDOW_FIELDS)
+        .is_err();
+    expect(
+        refused && settings.telemetry().telemetry_install_id.as_deref() == Some(id.as_str()),
+        "Einstellungen der Oberfläche ändern die Statistik nicht (abgelehnt)",
+    );
 
     // 9. Widerruf: Kennung und offene Zähler sofort weg, danach nichts mehr.
     t.count("copy_text");
@@ -912,10 +1004,27 @@ fn video(out: &Path) -> Result<()> {
 
 // ------------------------------------------------------------------ Fenstertests (ui, render)
 
+/// Ausführen ersetzen, bevor `app::first_start` die Startargumente abarbeitet — nur im Kindprozess des
+/// Selbsttests `links` (Erststart mit `knips://pin`, siehe `start_link_child`).
+pub fn before_start_links(_app: &AppHandle) {
+    if std::env::var("KNIPS_SELFTEST").is_ok_and(|s| s.starts_with("startlink|")) {
+        let busy: crate::links::BusyFn = Arc::new(|| false);
+        crate::app::knips().links.set_test_hooks(Some((Arc::new(|a| START_CALLS.lock().push(a)), busy)));
+    }
+}
+
+/// Was der Kindprozess beim Erststart ausgeführt hätte.
+static START_CALLS: parking_lot::Mutex<Vec<HotkeyAction>> = parking_lot::Mutex::new(Vec::new());
+
 pub fn after_setup(app: &AppHandle) {
     let Ok(spec) = std::env::var("KNIPS_SELFTEST") else { return };
     let Some((test, out)) = spec.split_once('|') else { return };
     let (test, out) = (test.to_string(), PathBuf::from(out));
+    // Test-Befehle (Proben aus Fenstern, Bericht des Renderers) gibt es nur in Selbsttests — erst hier erlaubt.
+    let capability = tauri::ipc::CapabilityBuilder::new("selftest").windows(["*"]).permission("allow-selftest-probe").permission("allow-selftest-report");
+    if let Err(err) = app.add_capability(capability) {
+        println!("FEHLER: Selbsttest-Capability: {err}");
+    }
     let app = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(1500));
@@ -925,6 +1034,7 @@ pub fn after_setup(app: &AppHandle) {
             "links" => links(&app, &out),
             "nomedia" => crate::selftest_media::nomedia(&app, &out),
             "oldwin" => crate::selftest_media::oldwin(&app, &out),
+            "startlink" => start_link_result(),
             _ => Ok(()),
         };
         let code = match result {
@@ -1176,10 +1286,25 @@ fn links_steps(app: &AppHandle, out: &Path, calls: &parking_lot::Mutex<Vec<Hotke
     let click = |w: &WebviewWindow, act: &str| {
         probe(w, &format!("(setTimeout(() => document.querySelector('[data-act={act}]').click(), 50), 'ok')"), Duration::from_secs(3))
     };
+    // Taste drücken und loslassen.
     let key = |w: &WebviewWindow, name: &str| {
         probe(
             w,
-            &format!("(setTimeout(() => window.dispatchEvent(new KeyboardEvent('keydown', {{ key: '{name}', bubbles: true }})), 50), 'ok')"),
+            &format!(
+                "(setTimeout(() => {{ for (const t of ['keydown', 'keyup']) window.dispatchEvent(new KeyboardEvent(t, {{ key: '{name}', bubbles: true }})); }}, 50), 'ok')"
+            ),
+            Duration::from_secs(3),
+        )
+    };
+    // Einzelne Tastenereignisse sofort, der Reihe nach: (Art, Taste, Wiederholung).
+    let keys = |w: &WebviewWindow, events: &[(&str, &str, bool)]| {
+        let list: Vec<String> = events.iter().map(|(t, k, r)| format!("['{t}', '{k}', {r}]")).collect();
+        probe(
+            w,
+            &format!(
+                "([{}].forEach(([t, key, repeat]) => window.dispatchEvent(new KeyboardEvent(t, {{ key, repeat, bubbles: true }}))), 'ok')",
+                list.join(", ")
+            ),
             Duration::from_secs(3),
         )
     };
@@ -1222,27 +1347,56 @@ fn links_steps(app: &AppHandle, out: &Path, calls: &parking_lot::Mutex<Vec<Hotke
     let seen = take();
     check("Aufnehmen vor der Schutzzeit wirkt nicht (Rust)", !early && k.links.pending().map(|p| p.0) == Some(last.clone()) && seen.is_empty(), &seen);
     let (_, last_w) = wait_prompt(app, Immediate::Last)?;
-    // Oberfläche: ⏎ sofort nach dem Öffnen — nur prüfbar, solange die Schutzzeit noch läuft.
+    // Oberfläche: ⏎ sofort nach dem Öffnen und gehalten (kein Loslassen) — nur prüfbar, solange die
+    // Schutzzeit noch läuft.
     let pressed = probe(
         &last_w,
         "(() => { const b = document.querySelector('[data-act=confirm]'); if (!b.disabled) return 'scharf'; \
          window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); return 'gedrückt'; })()",
         Duration::from_secs(3),
     )?;
+    let still_open = || k.links.pending().map(|p| p.0) == Some(last.clone());
     if pressed == "gedrückt" {
         let seen = take();
-        check("⏎ vor der Schutzzeit bestätigt nichts (Oberfläche)", k.links.pending().map(|p| p.0) == Some(last.clone()) && seen.is_empty(), &seen);
+        check("⏎ vor der Schutzzeit bestätigt nichts (Oberfläche)", still_open() && seen.is_empty(), &seen);
+        armed();
+        // Weiter gehalten: Tastenwiederholungen nach Ablauf der Schutzzeit.
+        keys(&last_w, &[("keydown", "Enter", true), ("keydown", "Enter", true), ("keydown", "Enter", true)])?;
+        let seen = take();
+        check("gehaltene ⏎ (Wiederholungen) bestätigt nichts", still_open() && seen.is_empty(), &seen);
+        // Neuer Druck ohne Loslassen dazwischen (Wiederholung ohne Kennzeichen).
+        keys(&last_w, &[("keydown", "Enter", false)])?;
+        let seen = take();
+        check("⏎ ohne Loslassen seit vor der Schutzzeit bestätigt nichts", still_open() && seen.is_empty(), &seen);
+        keys(&last_w, &[("keyup", "Enter", false)])?;
     } else {
-        println!("   (Schutzzeit schon abgelaufen, als die Oberfläche bereit war — ⏎-Prüfung der Oberfläche übersprungen)");
+        println!("   (Schutzzeit schon abgelaufen, als die Oberfläche bereit war — ⏎-Prüfungen vor der Schutzzeit übersprungen)");
+        armed();
     }
+    // Weitertippen: Jede andere Taste startet die Schutzzeit neu; ⏎ direkt danach wirkt nicht.
+    keys(&last_w, &[("keydown", "a", false), ("keyup", "a", false), ("keydown", "Enter", false), ("keyup", "Enter", false)])?;
+    let disarmed = probe(&last_w, "document.querySelector('[data-act=confirm]').disabled", Duration::from_secs(3))?;
+    let seen = take();
+    check("Tippen startet die Schutzzeit neu, ⏎ direkt danach bestätigt nichts", still_open() && seen.is_empty() && disarmed == "true", &seen);
     armed();
     key(&last_w, "Enter")?;
     let resolved = wait_resolved(&last);
     let seen = take();
-    check("⏎ = Aufnehmen → letzter Bereich", resolved && seen == [A::CaptureLastArea] && !setting(), &seen);
+    check("losgelassen, dann ⏎ = Aufnehmen → letzter Bereich", resolved && seen == [A::CaptureLastArea] && !setting(), &seen);
 
     link("record");
     let (record, record_w) = wait_prompt(app, Immediate::Record)?;
+    // „Nicht mehr fragen“ ist vor der Schutzzeit gesperrt (nur prüfbar, solange sie noch läuft).
+    let early_tick = probe(
+        &record_w,
+        "(() => { const c = document.querySelector('[data-act=dont-ask]'); if (!c.disabled) return 'scharf'; c.click(); return String(c.checked); })()",
+        Duration::from_secs(3),
+    )?;
+    if early_tick == "scharf" {
+        println!("   (Schutzzeit schon abgelaufen — Prüfung „Nicht mehr fragen“ vorher übersprungen)");
+    } else {
+        check("„Nicht mehr fragen“ vor der Schutzzeit nicht wählbar", early_tick == "false", &[]);
+    }
     armed();
     shoot(app, &record, out, "link-rueckfrage-record.png")?;
     let ticked = tick(&record_w)?;
@@ -1282,10 +1436,40 @@ fn links_steps(app: &AppHandle, out: &Path, calls: &parking_lot::Mutex<Vec<Hotke
     let seen = take();
     check("eigener Weg (Selbsttest) ohne Rückfrage", seen == [A::CaptureFullscreen] && k.links.pending().is_none(), &seen);
 
+    // Zweiter Start, während Knips läuft: derselbe Weg wie im Plugin `single-instance` (Rückruf mit den
+    // Argumenten des neuen Prozesses → Deep-Link-Plugin → on_open_url → handle_url). Jeder Link genau einmal.
+    println!("Zweiter Start (Single-Instance → Deep-Link):");
+    let exe = r"C:\Program Files\Knips\knips.exe".to_string();
+    crate::app::second_instance(app, &[exe.clone(), "knips://pin".into()]);
+    let seen = take();
+    check("knips://pin per zweitem Start genau einmal", seen == [A::PinClipboard] && k.links.pending().is_none(), &seen);
+    crate::app::second_instance(app, &[exe.clone(), "knips://area/".into()]);
+    let seen = take();
+    check("knips://area/ per zweitem Start genau einmal", seen == [A::CaptureArea], &seen);
+    crate::app::second_instance(app, &[exe.clone(), "knips://fullscreen".into()]);
+    let (second, second_w) = wait_prompt(app, Immediate::Fullscreen)?;
+    let one_window = app.webview_windows().keys().filter(|l| l.starts_with(crate::links::LABEL_PREFIX)).count() == 1;
+    let seen = take();
+    check("knips://fullscreen per zweitem Start: genau eine Rückfrage, nichts aufgenommen", seen.is_empty() && one_window, &seen);
+    key(&second_w, "Escape")?;
+    let resolved = wait_resolved(&second);
+    let seen = take();
+    check("… und Esc verwirft sie", resolved && seen.is_empty(), &seen);
+    // Kein Link oder nicht als einziges Argument: nichts (wie das Deep-Link-Plugin es verlangt).
+    crate::app::second_instance(app, &[exe.clone()]);
+    crate::app::second_instance(app, &[exe.clone(), "--flag".into(), "knips://pin".into()]);
+    crate::app::second_instance(app, &[exe.clone(), "https://example.com/knips://pin".into()]);
+    let seen = take();
+    check("zweiter Start ohne knips://-Link als einziges Argument tut nichts", seen.is_empty() && k.links.pending().is_none(), &seen);
+    // Erster Start mit knips://pin (Kindprozess): Das Plugin meldet das Argument beim Start ungehört,
+    // `app::first_start` führt es aus — zusammen genau einmal.
+    let once = start_link_child(out)?;
+    check("Erststart mit knips://pin genau einmal (Kindprozess)", once, &[]);
+
     link("fullscreen");
     let (remember, remember_w) = wait_prompt(app, Immediate::Fullscreen)?;
+    armed(); // „Nicht mehr fragen“ ist erst nach der Schutzzeit wählbar
     let ticked = tick(&remember_w)?;
-    armed();
     click(&remember_w, "confirm")?;
     let resolved = wait_resolved(&remember);
     let seen = take();

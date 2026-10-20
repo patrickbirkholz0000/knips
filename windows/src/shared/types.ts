@@ -280,8 +280,10 @@ export interface PinInfo {
 
 export interface HotkeyRecorded {
   action: HotkeyAction;
-  result: "combo" | "remove" | "cancel";
+  /** "rejected": Die Kombination tippt auf einem installierten Layout ein Zeichen (Strg+Alt = AltGr), siehe `message`. */
+  result: "combo" | "remove" | "cancel" | "rejected";
   combo: KeyCombo | null;
+  message: string | null;
 }
 
 export interface Progress {

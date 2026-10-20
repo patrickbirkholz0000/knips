@@ -209,6 +209,11 @@ export const api = {
 
   // Rückfrage vor Aufnahmen per knips://-Link (`#/link-confirm/<befehl>`)
   /**
+   * Oberfläche bereit. true, sobald Rust das Fenster als sichtbar bestätigt — ab da läuft die Schutzzeit;
+   * false: noch nicht sichtbar, gleich noch einmal fragen.
+   */
+  linkConfirmShown: () => call<boolean>("link_confirm_shown"),
+  /**
    * „Aufnehmen“ (`approved`) oder „Abbrechen“; „Nicht mehr fragen“ zählt nur mit „Aufnehmen“. Gilt nur aus dem
    * Fenster der Rückfrage. Liefert false, wenn nichts passiert ist (Schutzzeit läuft noch). Schließt das Fenster.
    */

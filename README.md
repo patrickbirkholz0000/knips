@@ -54,6 +54,21 @@ Die Oberfläche ist auf Deutsch. [English version below](#english).
   Zensur später noch ändern lässt.
 - PNG oder JPEG, standardmäßig in Bildschirmgröße (1×), auf Wunsch in voller Auflösung.
 
+## Systemvoraussetzungen
+
+**macOS:** macOS 14 Sonoma oder neuer, Apple Silicon und Intel. Mikrofon in Aufnahmen und
+Klick-Hervorhebung ab macOS 15.
+
+**Windows:** Windows 10 ab Version 2004 (empfohlen 22H2) oder Windows 11, 64 Bit (x64).
+
+- Windows 11 auf ARM läuft über die x64-Emulation (nicht getestet). Windows 10 auf ARM wird nicht
+  unterstützt.
+- N- und KN-Editionen: Screenshots gehen, für Videos braucht es das Media Feature Pack.
+- Microsoft Edge WebView2: Fehlt sie, lädt der Installer sie nach. Dafür ist Internet nötig.
+- HEVC-Videos brauchen die HEVC-Videoerweiterungen.
+
+Die Oberfläche gibt es auf beiden Systemen nur auf Deutsch.
+
 ## Download & Installation
 
 Fertige Pakete gibt es unter [Releases](https://github.com/patrickbirkholz0000/knips/releases/latest).
@@ -262,6 +277,17 @@ React (Windows 10 and 11). The user interface is in German.
   auto-censoring, export as MP4 or GIF.
 - Saved and shared files are always the censored version; the original is kept separately (30 days by
   default) so you can change the censoring later.
+
+### System requirements
+
+- **macOS:** macOS 14 Sonoma or later, Apple Silicon and Intel. Microphone in recordings and click
+  highlights need macOS 15.
+- **Windows:** Windows 10 version 2004 or later (22H2 recommended) or Windows 11, 64-bit (x64).
+  Windows 11 on ARM runs via x64 emulation (not tested); Windows 10 on ARM is not supported. N and KN
+  editions: screenshots work, video needs the Media Feature Pack. Microsoft Edge WebView2 is required;
+  if it is missing, the installer downloads it, which needs an internet connection. HEVC videos need
+  the HEVC Video Extensions.
+- The user interface is German only, on both systems.
 
 ### Download & installation
 

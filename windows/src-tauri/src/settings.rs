@@ -58,18 +58,23 @@ impl SettingsStore {
         snapshot
     }
 
-    /// Teiländerung aus der Oberfläche (JSON-Objekt mit beliebigen Feldern von `Settings`).
-    /// Felder der Nutzungsstatistik lassen sich so nicht ändern (nur über `telemetry_set_consent`).
-    pub fn patch(&self, patch: &Value) -> Result<Settings> {
-        let current = serde_json::to_value(self.get())?;
-        let mut merged = current;
-        if let (Some(target), Some(source)) = (merged.as_object_mut(), patch.as_object()) {
-            for (k, v) in source.iter().filter(|(k, _)| !k.starts_with("telemetry")) {
-                target.insert(k.clone(), v.clone());
-            }
+    /// Teiländerung aus der Oberfläche: nur Felder aus `allowed` (je Fenster, siehe `commands::set_settings`),
+    /// geprüft von `Settings::patched` (Typen, Auswahlwerte, Bereiche, Pfadregeln); ein neuer Ablageordner
+    /// muss außerdem als Ordner existieren. Fehler ändern nichts. Kürzel, interne Merker und die
+    /// Nutzungsstatistik lassen sich so nie ändern.
+    pub fn patch(&self, patch: &Value, allowed: &[&str]) -> std::result::Result<Settings, String> {
+        let current = self.get();
+        let next = current.patched(patch, allowed)?;
+        if next.save_folder != current.save_folder {
+            check_folder_exists(next.save_folder.trim())?;
         }
-        let next: Settings = serde_json::from_value(merged)?;
-        Ok(self.update(|s| *s = next))
+        // Unter der Sperre noch einmal auf den neuesten Stand anwenden (Kürzel könnten sich inzwischen
+        // geändert haben) — nur die Felder aus `patch` ändern sich.
+        Ok(self.update(|s| {
+            if let Ok(next) = s.patched(patch, allowed) {
+                *s = next;
+            }
+        }))
     }
 
     pub fn telemetry(&self) -> TelemetryState {
@@ -116,16 +121,43 @@ impl SettingsStore {
         &self.path
     }
 
-    /// Aufgelöster Ablageordner (leer = Standard).
+    /// Aufgelöster Ablageordner (leer = Standard). Ein Eintrag, der die Pfadregeln nicht erfüllt (z. B. von
+    /// Hand in `settings.json` geschrieben: Netzwerk- oder Gerätepfad), gilt als leer.
     pub fn save_folder(&self) -> PathBuf {
         if paths::test_root().is_some() {
             return paths::default_save_folder();
         }
         let s = self.value.read();
-        if s.save_folder.trim().is_empty() {
+        let folder = s.save_folder.trim();
+        if folder.is_empty() || check_folder_rules(folder).is_err() {
             paths::default_save_folder()
         } else {
-            PathBuf::from(&s.save_folder)
+            PathBuf::from(folder)
         }
+    }
+}
+
+/// Pfadregeln für den Ablageordner: unter Windows `knips_core::settings::check_save_folder` (Laufwerkspfad,
+/// kein UNC-/Gerätepfad), in der Attrappe nur „absolut“.
+fn check_folder_rules(folder: &str) -> std::result::Result<(), String> {
+    if cfg!(windows) {
+        knips_core::settings::check_save_folder(folder)
+    } else if folder.is_empty() || std::path::Path::new(folder).is_absolute() {
+        Ok(())
+    } else {
+        Err("Dieser Ordner geht nicht als Ablage: nur vollständige Pfade.".into())
+    }
+}
+
+/// Neuer Ablageordner aus der Oberfläche: Pfadregeln, und es muss ihn als Ordner geben (keine Datei).
+fn check_folder_exists(folder: &str) -> std::result::Result<(), String> {
+    check_folder_rules(folder)?;
+    if folder.is_empty() {
+        return Ok(());
+    }
+    match std::fs::metadata(folder) {
+        Ok(meta) if meta.is_dir() => Ok(()),
+        Ok(_) => Err("Dieser Ordner geht nicht als Ablage: Das ist eine Datei, kein Ordner.".into()),
+        Err(_) => Err("Dieser Ordner geht nicht als Ablage: Es gibt ihn nicht.".into()),
     }
 }

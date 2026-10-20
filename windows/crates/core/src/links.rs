@@ -7,14 +7,16 @@
 //! einer laufenden Aufnahme laufen direkt. Kürzel, Menü und Taskleisten-Symbol kommen hier nie vorbei.
 //!
 //! `LinkGate` ist nur die Entscheidungslogik (ohne Fenster, ohne Uhr): höchstens eine Rückfrage zur
-//! Zeit, „Aufnehmen“ erst nach `ARM_DELAY`, „Nicht mehr fragen“ nur zusammen mit „Aufnehmen“.
+//! Zeit, „Aufnehmen“ erst `ARM_DELAY` nachdem die Rückfrage sichtbar ist (`shown`), „Nicht mehr fragen“
+//! nur zusammen mit „Aufnehmen“.
 
 use std::time::{Duration, Instant};
 
 use crate::settings::HotkeyAction;
 
-/// „Aufnehmen“ wirkt erst nach dieser Schutzzeit: ein Klick oder ⏎, der gerade für eine andere App
-/// gedacht war, als das Fenster aufging, bestätigt nichts.
+/// „Aufnehmen“ wirkt erst nach dieser Schutzzeit, gemessen ab dem Moment, in dem die Rückfrage sichtbar
+/// ist: ein Klick oder ⏎, der gerade für eine andere App gedacht war, als das Fenster aufging, bestätigt
+/// nichts.
 pub const ARM_DELAY: Duration = Duration::from_millis(600);
 
 /// Befehle, die ohne Rückfrage sofort aufnehmen würden.
@@ -87,7 +89,8 @@ pub enum Request {
     Perform(HotkeyAction),
     /// Rückfrage `id` öffnen.
     Ask { id: u32, kind: Immediate },
-    /// Verworfen: Rückfrage `open` ist noch offen (sie wird wieder nach vorn geholt).
+    /// Verworfen: Rückfrage `open` ist noch offen. Sie bleibt, wie sie ist — ein weiterer Link holt sie
+    /// nicht nach vorn (sonst bekäme sie bei jedem Link den Fokus, mitten ins Tippen hinein).
     Dropped { open: u32, open_kind: Immediate },
 }
 
@@ -96,7 +99,8 @@ pub enum Request {
 pub enum Decision {
     /// Keine offene Rückfrage mit dieser Kennung (schon beantwortet oder geschlossen).
     Stale,
-    /// „Aufnehmen“ vor Ablauf der Schutzzeit — nichts passiert, die Rückfrage bleibt offen.
+    /// „Aufnehmen“, bevor die Rückfrage sichtbar war oder vor Ablauf der Schutzzeit danach — nichts
+    /// passiert, die Rückfrage bleibt offen.
     NotArmed,
     Cancelled(Immediate),
     /// Aufnehmen; `remember` = „Nicht mehr fragen“ war angehakt.
@@ -107,7 +111,8 @@ pub enum Decision {
 struct Pending {
     id: u32,
     kind: Immediate,
-    opened: Instant,
+    /// Seit wann die Rückfrage sichtbar ist (`None`: noch nicht gemeldet).
+    shown: Option<Instant>,
 }
 
 #[derive(Default, Debug)]
@@ -119,7 +124,7 @@ pub struct LinkGate {
 impl LinkGate {
     /// `from_link`: über einen knips://-Link von außen (nur eigene Wege übergeben `false`).
     /// `without_confirm`: Einstellung „Aufnahmen per Link ohne Rückfrage“.
-    pub fn request(&mut self, kind: Immediate, from_link: bool, without_confirm: bool, recording_busy: bool, now: Instant) -> Request {
+    pub fn request(&mut self, kind: Immediate, from_link: bool, without_confirm: bool, recording_busy: bool) -> Request {
         // Stoppen nimmt nichts Neues auf — ohne Rückfrage.
         if kind == Immediate::Record && recording_busy {
             return Request::Perform(HotkeyAction::ToggleRecording);
@@ -132,14 +137,28 @@ impl LinkGate {
         }
         self.next_id = self.next_id.wrapping_add(1).max(1);
         let id = self.next_id;
-        self.pending = Some(Pending { id, kind, opened: now });
+        self.pending = Some(Pending { id, kind, shown: None });
         Request::Ask { id, kind }
     }
 
-    /// „Aufnehmen“ (`approved`) oder „Abbrechen“/Esc aus der Rückfrage `id`.
+    /// Rückfrage `id` ist jetzt sichtbar (Fenster gezeigt, Oberfläche bereit): Ab hier läuft die
+    /// Schutzzeit. Gilt nur beim ersten Mal; `false`, wenn es keine offene Rückfrage `id` gibt.
+    pub fn shown(&mut self, id: u32, now: Instant) -> bool {
+        match self.pending.as_mut().filter(|p| p.id == id) {
+            Some(open) => {
+                open.shown.get_or_insert(now);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// „Aufnehmen“ (`approved`) oder „Abbrechen“/Esc aus der Rückfrage `id`. Aufnehmen erst, wenn die
+    /// Rückfrage seit mindestens `ARM_DELAY` sichtbar ist.
     pub fn decide(&mut self, id: u32, approved: bool, dont_ask_again: bool, now: Instant) -> Decision {
         let Some(open) = self.pending.filter(|p| p.id == id) else { return Decision::Stale };
-        if approved && now.saturating_duration_since(open.opened) < ARM_DELAY {
+        let armed = open.shown.is_some_and(|shown| now.saturating_duration_since(shown) >= ARM_DELAY);
+        if approved && !armed {
             return Decision::NotArmed;
         }
         self.pending = None;
@@ -210,10 +229,11 @@ mod tests {
     fn asks_once_and_drops_further_links() {
         let mut gate = LinkGate::default();
         let t = Instant::now();
-        let Request::Ask { id, kind } = gate.request(Immediate::Fullscreen, true, false, false, t) else { panic!("keine Rückfrage") };
+        let Request::Ask { id, kind } = gate.request(Immediate::Fullscreen, true, false, false) else { panic!("keine Rückfrage") };
         assert_eq!(kind, Immediate::Fullscreen);
-        assert_eq!(gate.request(Immediate::Last, true, false, false, t), Request::Dropped { open: id, open_kind: Immediate::Fullscreen });
+        assert_eq!(gate.request(Immediate::Last, true, false, false), Request::Dropped { open: id, open_kind: Immediate::Fullscreen });
         assert_eq!(gate.pending(), Some((id, Immediate::Fullscreen)));
+        // Abbrechen geht immer, auch bevor die Rückfrage sichtbar war.
         assert_eq!(gate.decide(id, false, true, t), Decision::Cancelled(Immediate::Fullscreen));
         assert_eq!(gate.pending(), None);
         assert_eq!(gate.decide(id, true, false, later(t, 900)), Decision::Stale);
@@ -223,40 +243,60 @@ mod tests {
     fn approve_only_after_arm_delay() {
         let mut gate = LinkGate::default();
         let t = Instant::now();
-        let Request::Ask { id, .. } = gate.request(Immediate::Last, true, false, false, t) else { panic!() };
+        let Request::Ask { id, .. } = gate.request(Immediate::Last, true, false, false) else { panic!() };
+        assert!(gate.shown(id, t));
         assert_eq!(gate.decide(id, true, false, t), Decision::NotArmed);
         assert_eq!(gate.decide(id, true, false, later(t, 599)), Decision::NotArmed);
         assert_eq!(gate.pending(), Some((id, Immediate::Last)));
         assert_eq!(gate.decide(id + 1, true, false, later(t, 700)), Decision::Stale);
         assert_eq!(gate.decide(id, true, false, later(t, 600)), Decision::Approved { kind: Immediate::Last, remember: false });
         // neue Rückfrage, neue Kennung
-        let Request::Ask { id: id2, .. } = gate.request(Immediate::Fullscreen, true, false, false, t) else { panic!() };
+        let Request::Ask { id: id2, .. } = gate.request(Immediate::Fullscreen, true, false, false) else { panic!() };
         assert_ne!(id, id2);
+        assert!(gate.shown(id2, t));
         assert_eq!(gate.decide(id2, true, true, later(t, 800)), Decision::Approved { kind: Immediate::Fullscreen, remember: true });
+    }
+
+    #[test]
+    fn arm_delay_counts_from_shown() {
+        let mut gate = LinkGate::default();
+        let t = Instant::now();
+        let Request::Ask { id, .. } = gate.request(Immediate::Fullscreen, true, false, false) else { panic!() };
+        // Noch nie sichtbar: Aufnehmen wirkt nie, egal wie lange die Anfrage her ist.
+        assert_eq!(gate.decide(id, true, false, later(t, 10_000)), Decision::NotArmed);
+        // Erst nach 5 s sichtbar (langsamer Start): Schutzzeit ab da, nicht ab der Anfrage.
+        assert!(gate.shown(id, later(t, 5_000)));
+        assert_eq!(gate.decide(id, true, false, later(t, 5_400)), Decision::NotArmed);
+        // Eine zweite Meldung „sichtbar“ verschiebt nichts (und verkürzt nichts).
+        assert!(gate.shown(id, later(t, 5_500)));
+        assert_eq!(gate.decide(id, true, false, later(t, 5_600)), Decision::Approved { kind: Immediate::Fullscreen, remember: false });
+        // Meldungen für erledigte oder fremde Rückfragen zählen nicht.
+        assert!(!gate.shown(id, later(t, 6_000)));
+        let Request::Ask { id: id2, .. } = gate.request(Immediate::Last, true, false, false) else { panic!() };
+        assert!(!gate.shown(id2 + 1, t));
+        assert_eq!(gate.decide(id2, true, false, later(t, 9_000)), Decision::NotArmed);
     }
 
     #[test]
     fn close_cancels() {
         let mut gate = LinkGate::default();
-        let t = Instant::now();
-        let Request::Ask { id, .. } = gate.request(Immediate::Record, true, false, false, t) else { panic!() };
+        let Request::Ask { id, .. } = gate.request(Immediate::Record, true, false, false) else { panic!() };
         assert_eq!(gate.closed(id + 7), None);
         assert_eq!(gate.closed(id), Some(Immediate::Record));
         assert_eq!(gate.closed(id), None);
-        assert!(matches!(gate.request(Immediate::Record, true, false, false, t), Request::Ask { .. }));
+        assert!(matches!(gate.request(Immediate::Record, true, false, false), Request::Ask { .. }));
     }
 
     #[test]
     fn direct_paths() {
         let mut gate = LinkGate::default();
-        let t = Instant::now();
         // Stoppen einer laufenden Aufnahme: immer direkt
-        assert_eq!(gate.request(Immediate::Record, true, false, true, t), Request::Perform(HotkeyAction::ToggleRecording));
+        assert_eq!(gate.request(Immediate::Record, true, false, true), Request::Perform(HotkeyAction::ToggleRecording));
         // eigener Weg (kein Link von außen)
-        assert_eq!(gate.request(Immediate::Fullscreen, false, false, false, t), Request::Perform(HotkeyAction::CaptureFullscreen));
+        assert_eq!(gate.request(Immediate::Fullscreen, false, false, false), Request::Perform(HotkeyAction::CaptureFullscreen));
         // Einstellung „ohne Rückfrage“
         for kind in Immediate::ALL {
-            assert_eq!(gate.request(kind, true, true, false, t), Request::Perform(kind.action()));
+            assert_eq!(gate.request(kind, true, true, false), Request::Perform(kind.action()));
         }
         assert_eq!(gate.pending(), None);
     }

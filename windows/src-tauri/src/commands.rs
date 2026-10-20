@@ -52,16 +52,27 @@ pub fn get_bootstrap() -> Bootstrap {
     knips().bootstrap()
 }
 
+/// Fenster, die `set_settings` aufrufen, und welche Felder sie ändern dürfen: das Einstellungsfenster die
+/// Einstellungen der Oberfläche, Bild-/Video-Editor nur den Zensurstil, alle anderen nichts. Die
+/// Capabilities (`capabilities/*.json`) lassen den Befehl ohnehin nur aus diesen Fenstern zu.
+fn settings_fields_for(label: &str) -> &'static [&'static str] {
+    use knips_core::settings::{EDITOR_WINDOW_FIELDS, SETTINGS_WINDOW_FIELDS};
+    if label == "settings" {
+        &SETTINGS_WINDOW_FIELDS
+    } else if label.starts_with("editor-") || label.starts_with("video-") {
+        &EDITOR_WINDOW_FIELDS
+    } else {
+        &[]
+    }
+}
+
 #[tauri::command]
-pub fn set_settings(patch: Value) -> Res<Settings> {
+pub fn set_settings(window: WebviewWindow, patch: Value) -> Res<Settings> {
     let k = knips();
     let before = k.settings.get();
-    let after = k.settings.patch(&patch).map_err(err)?;
+    let after = k.settings.patch(&patch, settings_fields_for(window.label())).inspect_err(|e| log::warn!("set_settings aus {}: {e}", window.label()))?;
     if before.hotkeys != after.hotkeys || before.disabled_hotkeys != after.disabled_hotkeys {
         hotkeys::apply();
-    }
-    if before.save_folder != after.save_folder {
-        k.allow_asset_dirs();
     }
     if before.quick_access_auto_hide != after.quick_access_auto_hide || before.quick_access_seconds != after.quick_access_seconds {
         k.cards.reschedule_all();
@@ -84,6 +95,9 @@ pub fn set_editor_prefs(patch: Value) -> Res<()> {
         }
     }
     let prefs: EditorPrefs = serde_json::from_value(merged).map_err(err)?;
+    if prefs.tool.as_deref().is_some_and(|t| !knips_core::settings::EDITOR_TOOLS.contains(&t)) {
+        return Err("Unbekanntes Werkzeug".into());
+    }
     k.settings.update(|s| s.editor = prefs);
     Ok(())
 }
@@ -222,6 +236,7 @@ pub fn item_delete(id: String) -> Res<()> {
 #[tauri::command]
 pub fn item_open(app: AppHandle, id: String, tool: Option<String>) -> Res<()> {
     let id = parse_id(&id)?;
+    let tool = tool.filter(|t| knips_core::settings::EDITOR_TOOLS.contains(&t.as_str()));
     let app2 = app.clone();
     std::thread::spawn(move || open_item(&app2, id, tool));
     Ok(())
@@ -329,12 +344,14 @@ pub fn open_image_file(app: AppHandle) {
     std::thread::spawn(|| knips().coordinator.open_image_file());
 }
 
+/// Ablageordner im Explorer öffnen — nur als Ordner (`shell::open_folder`), nie über die Standard-App eines
+/// beliebigen Pfads: Ein Programm oder eine Datei an dieser Stelle würde sonst gestartet.
 #[tauri::command]
 pub fn open_save_folder(app: AppHandle) -> Res<()> {
     crate::menu::close(&app);
     let folder = knips().settings.save_folder();
     crate::paths::ensure(&folder);
-    knips_platform::shell::open_path(&folder).map_err(err)
+    knips_platform::shell::open_folder(&folder).map_err(err)
 }
 
 #[tauri::command]
@@ -344,15 +361,22 @@ pub fn open_settings(app: AppHandle, pane: Option<String>) {
     std::thread::spawn(move || show_settings(&app2, pane));
 }
 
+/// Bereiche des Einstellungsfensters (`Pane` in src/settings/Settings.tsx). Andere Werte für `pane` werden
+/// ignoriert — sie landen sonst in der Adresse und im ausgeführten Skript.
+pub const SETTINGS_PANES: [&str; 8] = ["general", "shortcuts", "recording", "redaction", "export", "storage", "privacy", "about"];
+
 pub fn show_settings(app: &AppHandle, pane: Option<String>) {
     count("settings_open");
+    let pane = pane.filter(|p| SETTINGS_PANES.contains(&p.as_str()));
     let route = match &pane {
         Some(p) => format!("settings/{p}"),
         None => "settings".into(),
     };
     if let Some(w) = wm::get(app, "settings") {
         if pane.is_some() {
-            let _ = w.eval(format!("location.hash = '#/{route}'"));
+            // Als JSON-Text eingesetzt: auch ohne die Liste oben nie Teil des Skripts selbst.
+            let hash = serde_json::to_string(&format!("#/{route}")).unwrap_or_default();
+            let _ = w.eval(format!("location.hash = {hash}"));
         }
         wm::present(&w);
         return;
@@ -647,13 +671,24 @@ pub fn telemetry_set_consent(app: AppHandle, consent: bool) {
     });
 }
 
-/// Ereignis aus der Oberfläche (Balken gezogen, Klick auf Text). Unbekannte Namen verwirft Rust.
+/// Ereignis aus der Oberfläche: nur die beiden, die allein der Editor sieht (Balken gezogen, Klick auf
+/// Text). Alles andere zählt Rust dort, wo es passiert — die Oberfläche kann keine Zähler aufblähen.
 #[tauri::command]
 pub fn telemetry_count(event: String) {
-    count(&event);
+    if matches!(event.as_str(), "censor_manual" | "censor_smart") {
+        count(&event);
+    }
 }
 
 // ------------------------------------------------------------------ knips://-Links
+
+/// Das Fenster „Aufnahme per Link?“ meldet: Oberfläche bereit. Ab dem Moment, in dem es auch wirklich
+/// sichtbar ist, läuft die Schutzzeit (`true`); vorher `false`, die Oberfläche fragt dann erneut.
+#[tauri::command]
+pub fn link_confirm_shown(window: WebviewWindow) -> bool {
+    let visible = window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false);
+    knips().links.shown(window.label(), visible)
+}
 
 /// Antwort aus dem Fenster „Aufnahme per Link?“. Zählt nur aus genau diesem Fenster; `false`, wenn
 /// nichts passiert ist (Schutzzeit läuft noch).

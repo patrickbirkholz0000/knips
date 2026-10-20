@@ -9,7 +9,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// Ziel der Pings; `KNIPS_TELEMETRY_URL` ersetzt es (Tests gegen einen lokalen Server).
+/// Ziel der Pings. Nur Entwickler-Builds (Feature `dev`) lassen es per `KNIPS_TELEMETRY_URL` ersetzen,
+/// und nur durch eine Adresse, die `endpoint_override_allowed` erlaubt.
 pub const ENDPOINT: &str = "https://knips.velno.ai/v1/ping";
 /// Was gesendet wird — verlinkt in Einstellungen → Datenschutz.
 pub const INFO_URL: &str = "https://github.com/patrickbirkholz0000/knips#datenschutz";
@@ -251,9 +252,72 @@ pub fn new_install_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// Darf `KNIPS_TELEMETRY_URL` (nur Entwickler-Builds) das Ziel ersetzen? Nur `https://` mit Rechnername, oder
+/// `http://` auf diesen Rechner (127.0.0.1, localhost, [::1]) für einen lokalen Test-Server. Keine
+/// Leerzeichen, Steuerzeichen, Zugangsdaten (`user@`) oder Rückstriche.
+pub fn endpoint_override_allowed(url: &str) -> bool {
+    if url.is_empty() || url.len() > 2048 || url.chars().any(|c| c.is_whitespace() || c.is_control() || c == '\\') {
+        return false;
+    }
+    let (rest, loopback_only) = if let Some(rest) = url.strip_prefix("https://") {
+        (rest, false)
+    } else if let Some(rest) = url.strip_prefix("http://") {
+        (rest, true)
+    } else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() || authority.contains('@') {
+        return false;
+    }
+    // Rechnername ohne Port (IPv6 in eckigen Klammern).
+    let host = if let Some(v6) = authority.strip_prefix('[') {
+        match v6.split_once(']') {
+            Some((h, port)) if port.is_empty() || port.starts_with(':') => h,
+            _ => return false,
+        }
+    } else {
+        authority.split(':').next().unwrap_or("")
+    };
+    if host.is_empty() {
+        return false;
+    }
+    !loopback_only || matches!(host.to_ascii_lowercase().as_str(), "127.0.0.1" | "localhost" | "::1")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn endpoint_override() {
+        for ok in [
+            ENDPOINT,
+            "https://knips-staging.example.workers.dev/v1/ping",
+            "https://example.com:8443/v1/ping",
+            "http://127.0.0.1:8787/v1/ping",
+            "http://localhost:8787/v1/ping",
+            "http://[::1]:8787/v1/ping",
+        ] {
+            assert!(endpoint_override_allowed(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "http://knips.velno.ai/v1/ping",
+            "http://example.com/v1/ping",
+            "http://127.0.0.1.evil.example/v1/ping",
+            "http://localhost@evil.example/v1/ping",
+            "https://user:pw@example.com/v1/ping",
+            "https:///v1/ping",
+            "https://exa mple.com",
+            "https://example.com\\x",
+            "file:///C:/Windows/win.ini",
+            "ftp://example.com",
+            "javascript:alert(1)",
+        ] {
+            assert!(!endpoint_override_allowed(bad), "{bad}");
+        }
+    }
 
     fn info() -> ClientInfo {
         ClientInfo {

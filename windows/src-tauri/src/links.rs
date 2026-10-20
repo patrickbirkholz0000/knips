@@ -86,28 +86,33 @@ impl Links {
         let k = knips();
         let without_confirm = k.settings.get().link_capture_without_confirm;
         let busy = self.recording_busy();
-        let request = self.gate.lock().request(kind, from_link, without_confirm, busy, Instant::now());
+        let request = self.gate.lock().request(kind, from_link, without_confirm, busy);
         match request {
             Request::Perform(action) => self.perform(action),
             Request::Ask { id, kind } => {
                 log::info!("knips://{}: Rückfrage", kind.name());
                 show(&k.app, id, kind);
             }
+            // Die offene Rückfrage bleibt, wo sie ist (schwebt ohnehin über allem). Nicht erneut den Fokus
+            // holen: Eine Seite, die Links nachschiebt, könnte sie sonst mitten ins Tippen nach vorn holen.
             Request::Dropped { open, open_kind } => {
-                log::info!("knips://{} verworfen: Rückfrage für knips://{} ist noch offen", kind.name(), open_kind.name());
-                let app = k.app.clone();
-                std::thread::spawn(move || {
-                    if let Some(w) = wm::get(&app, &label(open)) {
-                        wm::present(&w);
-                    }
-                });
+                log::info!("knips://{} verworfen: Rückfrage {} für knips://{} ist noch offen", kind.name(), label(open), open_kind.name());
             }
         }
     }
 
-    /// Antwort aus dem Fenster `label`: „Aufnehmen“ (`approved`, wirkt erst nach der Schutzzeit) oder
-    /// „Abbrechen“/Esc. „Nicht mehr fragen“ gilt nur zusammen mit „Aufnehmen“. `false`: nichts passiert
-    /// (Schutzzeit läuft noch, oder die Rückfrage ist schon erledigt).
+    /// Die Oberfläche des Fensters `label` ist bereit und meldet „sichtbar“. Zählt nur, wenn das Fenster
+    /// wirklich gezeigt wird (`visible`, von Windows) — ab da läuft die Schutzzeit. `false`: noch nicht
+    /// sichtbar oder keine offene Rückfrage; die Oberfläche fragt dann gleich noch einmal.
+    pub fn shown(&self, label: &str, visible: bool) -> bool {
+        let Some(id) = id_of(label) else { return false };
+        visible && self.gate.lock().shown(id, Instant::now())
+    }
+
+    /// Antwort aus dem Fenster `label`: „Aufnehmen“ (`approved`, wirkt erst, wenn die Rückfrage seit der
+    /// Schutzzeit sichtbar ist) oder „Abbrechen“/Esc. „Nicht mehr fragen“ gilt nur zusammen mit
+    /// „Aufnehmen“. `false`: nichts passiert (nicht sichtbar, Schutzzeit läuft noch, oder die Rückfrage
+    /// ist schon erledigt).
     pub fn decide(&self, label: &str, approved: bool, dont_ask_again: bool) -> bool {
         let Some(id) = id_of(label) else { return false };
         let decision = self.gate.lock().decide(id, approved, dont_ask_again, Instant::now());
@@ -164,7 +169,8 @@ impl Links {
     }
 }
 
-/// Rückfrage zeigen: schwebend, mittig auf dem Bildschirm mit der Maus, mit Fokus.
+/// Rückfrage zeigen: schwebend, mittig auf dem Bildschirm mit der Maus, mit Fokus (wie auf dem Mac, damit
+/// Esc und ⏎ wirken). Die Schutzzeit beginnt erst, wenn die Oberfläche „sichtbar“ meldet (`shown`).
 fn show(app: &AppHandle, id: u32, kind: Immediate) {
     let app = app.clone();
     std::thread::spawn(move || {

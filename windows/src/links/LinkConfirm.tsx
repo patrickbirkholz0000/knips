@@ -1,7 +1,13 @@
 // Fenster „Aufnahme per Link?“ (`#/link-confirm/<fullscreen|last|record>`), wie LinkConfirmView in
 // LinkCommands.swift: Jede App und jede Webseite kann knips://-Links öffnen, deshalb fragt Knips nach, bevor
 // ein Link sofort aufnimmt. „Aufnehmen“ (⏎) wirkt erst nach der Schutzzeit, „Abbrechen“/Esc/Schließen
-// verwirft, „Nicht mehr fragen“ gilt nur zusammen mit „Aufnehmen“. Rust prüft die Schutzzeit noch einmal.
+// verwirft, „Nicht mehr fragen“ gilt nur zusammen mit „Aufnehmen“.
+//
+// Schutzzeit: beginnt erst, wenn Rust bestätigt, dass das Fenster sichtbar ist (`linkConfirmShown`), und
+// beginnt neu, sobald hier getippt wird (wer gerade in einer anderen App schrieb, als die Rückfrage den Fokus
+// bekam, bestätigt nichts mit dem nächsten ⏎). ⏎ zählt nur als frischer Druck: keine Tastenwiederholung,
+// und war ⏎ schon vor Ablauf der Schutzzeit unten, muss die Taste erst einmal losgelassen werden. Rust prüft
+// die Schutzzeit noch einmal.
 import { useEffect, useRef, useState } from "react";
 import { api } from "../shared/ipc";
 import "./link-confirm.css";
@@ -14,6 +20,9 @@ const MESSAGES: Record<string, string> = {
   last: "Eine andere App oder Webseite möchte über einen knips://-Link sofort den zuletzt aufgenommenen Bereich erneut aufnehmen.",
   record: "Eine andere App oder Webseite möchte über einen knips://-Link eine Bildschirmaufnahme (Video) starten.",
 };
+
+/** Tasten, die die Schutzzeit nicht neu starten (Bedienung der Rückfrage selbst, reine Umschalttasten). */
+const CONTROL_KEYS = new Set(["Enter", "Escape", "Tab", "Shift", "Control", "Alt", "AltGraph", "Meta", "CapsLock"]);
 
 export default function LinkConfirm({ params }: { params: string[]; query?: URLSearchParams }) {
   const message = MESSAGES[params[0]] ?? MESSAGES.fullscreen;
@@ -35,22 +44,88 @@ export default function LinkConfirm({ params }: { params: string[]; query?: URLS
 
   useEffect(() => {
     document.title = "Aufnahme per Link?";
-    const timer = window.setTimeout(() => setArmed(true), ARM_DELAY_MS);
-    const key = (e: KeyboardEvent) => {
+    let alive = true;
+    let visible = false;
+    let armTimer = 0;
+    let pollTimer = 0;
+    // Tasten, die gedrückt waren, ohne zu zählen (zu früh oder Wiederholung): erst nach dem Loslassen
+    // zählt ein neuer Druck.
+    const held = new Set<string>();
+
+    const arm = () => {
+      window.clearTimeout(armTimer);
+      state.current.armed = false;
+      setArmed(false);
+      if (!visible) return;
+      armTimer = window.setTimeout(() => {
+        state.current.armed = true;
+        setArmed(true);
+      }, ARM_DELAY_MS);
+    };
+
+    // Bis Rust „sichtbar“ bestätigt, alle 100 ms nachfragen (das Fenster entsteht unsichtbar).
+    const report = () => {
+      void api
+        .linkConfirmShown()
+        .then((ok) => {
+          if (!alive) return;
+          if (ok) {
+            visible = true;
+            arm();
+          } else pollTimer = window.setTimeout(report, 100);
+        })
+        .catch(() => alive && (pollTimer = window.setTimeout(report, 300)));
+    };
+    report();
+
+    /** Frischer Druck nach Ablauf der Schutzzeit? Sonst bis zum Loslassen gesperrt. */
+    const fresh = (e: KeyboardEvent) => {
+      if (e.repeat || !state.current.armed || held.has(e.key)) {
+        held.add(e.key);
+        return false;
+      }
+      return true;
+    };
+
+    const keydown = (e: KeyboardEvent) => {
+      const target = e.target instanceof HTMLElement ? e.target : null;
       if (e.key === "Escape") {
         e.preventDefault();
         decide(false);
-      } else if (e.key === "Enter") {
-        // Auf einem Knopf mit Fokus löst ⏎ wie unter Windows üblich diesen Knopf aus (z. B. „Abbrechen“).
-        if (e.target instanceof HTMLButtonElement) return;
-        e.preventDefault();
-        decide(true);
+        return;
       }
+      if (e.key === "Enter") {
+        e.preventDefault(); // Knöpfe nie vom Browser auslösen lassen (der wiederholt bei gehaltener Taste)
+        // Auf einem Knopf mit Fokus löst ⏎ wie unter Windows üblich diesen Knopf aus — „Abbrechen“ immer.
+        if (target?.dataset.act === "cancel") {
+          decide(false);
+          return;
+        }
+        if (!fresh(e)) return;
+        held.add(e.key);
+        decide(true);
+        return;
+      }
+      if (e.key === " " && target?.dataset.act) {
+        // Leertaste auf einem Knopf: „Abbrechen“ immer, „Aufnehmen“ und „Nicht mehr fragen“ nur als
+        // frischer Druck (der Browser klickt beim Loslassen).
+        if (target.dataset.act === "cancel") return;
+        if (!fresh(e)) e.preventDefault();
+        return;
+      }
+      if (!CONTROL_KEYS.has(e.key)) arm(); // getippt → Schutzzeit von vorn
     };
-    window.addEventListener("keydown", key);
+    const keyup = (e: KeyboardEvent) => {
+      if (held.delete(e.key) && e.key === " ") e.preventDefault(); // kein Klick aus gesperrtem Druck
+    };
+    window.addEventListener("keydown", keydown, true);
+    window.addEventListener("keyup", keyup, true);
     return () => {
-      window.clearTimeout(timer);
-      window.removeEventListener("keydown", key);
+      alive = false;
+      window.clearTimeout(armTimer);
+      window.clearTimeout(pollTimer);
+      window.removeEventListener("keydown", keydown, true);
+      window.removeEventListener("keyup", keyup, true);
     };
   }, []);
 
@@ -63,8 +138,8 @@ export default function LinkConfirm({ params }: { params: string[]; query?: URLS
       <p className="lc-msg">{message}</p>
       <p className="lc-hint">Hast du das nicht selbst ausgelöst, klicke auf „Abbrechen“.</p>
       <div className="lc-row">
-        <label className="lc-check">
-          <input type="checkbox" data-act="dont-ask" checked={dontAskAgain} onChange={(e) => setDontAskAgain(e.target.checked)} />
+        <label className={`lc-check${armed ? "" : " off"}`}>
+          <input type="checkbox" data-act="dont-ask" checked={dontAskAgain} disabled={!armed} onChange={(e) => setDontAskAgain(e.target.checked)} />
           Nicht mehr fragen
         </label>
         <button className="lc-btn" data-act="cancel" onClick={() => decide(false)}>

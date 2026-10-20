@@ -47,13 +47,10 @@ import SwiftUI
         self.model = EditorModel(item: item, base: base, document: document, initialTool: tool)
         let window = NSWindow(contentRect: .zero, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = CanvasView.background
+        window.applyEditorChrome()
         window.isReleasedWhenClosed = false
         window.title = item.title
-        window.minSize = NSSize(width: 1140, height: 520)
+        window.minSize = NSSize(width: EditorChrome.minWidth, height: 520)
         super.init(window: window)
         window.delegate = self
 
@@ -67,7 +64,10 @@ import SwiftUI
             reveal: { [weak self] in self?.reveal() }
         )
         let root = EditorRootView(model: model, canvas: canvas, actions: actions)
-        window.contentView = NSHostingView(rootView: root)
+        let host = NSHostingView(rootView: root)
+        // Nur die Mindestgröße kommt aus SwiftUI; die Werkzeugleiste passt sich der Breite an (ViewThatFits).
+        host.sizingOptions = [.minSize]
+        window.contentView = host
         window.setContentSize(Self.initialSize(for: item, base: base))
         window.center()
         window.setFrameAutosaveName("")
@@ -78,8 +78,9 @@ import SwiftUI
     private static func initialSize(for item: CaptureItem, base: CGImage) -> NSSize {
         let scale = CGFloat(max(1, item.scale))
         let vf = (NSScreen.withMouse).visibleFrame
-        let w = CGFloat(base.width) / scale + 64, h = CGFloat(base.height) / scale + 64 + EditorToolbar.height
-        return NSSize(width: min(max(w, 1140), vf.width * 0.9), height: min(max(h, 560), vf.height * 0.9))
+        let chrome = EditorChrome.topBarHeight + EditorChrome.propertiesHeight + EditorChrome.statusHeight
+        let w = CGFloat(base.width) / scale + 64 + 2 * EditorChrome.margin, h = CGFloat(base.height) / scale + 64 + chrome
+        return NSSize(width: min(max(w, 1100), vf.width * 0.9), height: min(max(h, 560), vf.height * 0.9))
     }
 
     // MARK: Aktionen
@@ -158,6 +159,10 @@ import SwiftUI
         return true
     }
 
+    // Im Vollbild läge die leere Werkzeugleiste als eigenes Fenster über der oberen Leiste — dort ausblenden.
+    func windowWillEnterFullScreen(_ notification: Notification) { window?.toolbar?.isVisible = false }
+    func windowDidExitFullScreen(_ notification: Notification) { window?.toolbar?.isVisible = true }
+
     func windowWillClose(_ notification: Notification) {
         Self.open[item.id] = nil
         DockPresence.windowClosed()
@@ -179,6 +184,8 @@ private struct CanvasHost: NSViewRepresentable {
     func updateNSView(_ nsView: CanvasView, context: Context) {}
 }
 
+/// Bild-Editor (docs/design.md, „Editor (Bild)“): oben Werkzeuge und Aktionen, darunter die Eigenschaften des
+/// Werkzeugs, in der Mitte die Bühne (`fill`) mit dem Bild, unten Zoom und Maße in Mono.
 struct EditorRootView: View {
     @ObservedObject var model: EditorModel
     let canvas: CanvasView
@@ -187,279 +194,283 @@ struct EditorRootView: View {
     var body: some View {
         VStack(spacing: 0) {
             EditorToolbar(model: model, actions: actions)
-            Rectangle().fill(Color.white.opacity(0.07)).frame(height: 1)
+            EditorPropertiesBar(model: model, actions: actions)
             ZStack(alignment: .bottom) {
                 CanvasHost(canvas: canvas)
                 if let busy = model.busy {
-                    Pill(text: busy, symbol: nil, spinning: true).padding(.bottom, 20)
+                    EditorHUD(text: busy, spinning: true).padding(.bottom, 18)
                 } else if let toast = model.toast {
-                    Pill(text: toast, symbol: "checkmark.circle.fill", spinning: false)
-                        .padding(.bottom, 20)
+                    EditorHUD(text: toast, symbol: "checkmark.circle.fill")
+                        .padding(.bottom, 18)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
             .animation(.spring(duration: 0.3), value: model.toast)
-            .overlay(alignment: .bottomTrailing) { ZoomControl(model: model, canvas: canvas).padding(14) }
+            .padding(.horizontal, EditorChrome.margin)
+            EditorStatusBar(model: model, canvas: canvas)
         }
-        .background(Color(nsColor: CanvasView.background))
+        .background(Color.brand(Brand.canvas))
         .ignoresSafeArea()
     }
 }
 
-struct Pill: View {
-    let text: String
-    let symbol: String?
-    let spinning: Bool
+/// Obere Leiste: Werkzeuge als eine Gruppe, rechts Widerrufen, „Text kopieren“, „Kopieren“, „Fertig“.
+/// Wird das Fenster schmal, fallen erst die Beschriftungen der Aktionen, dann die der Werkzeuge weg.
+struct EditorToolbar: View {
+    static let height = EditorChrome.topBarHeight
+    @ObservedObject var model: EditorModel
+    @ObservedObject private var settings = AppSettings.shared
+    let actions: EditorActions
+
+    /// Zeichenwerkzeuge zwischen Zensur (vorne, beschriftet) und Zuschneiden (hinten).
+    private static let drawingTools = EditorTool.allCases.filter { $0 != .redact && $0 != .crop }
 
     var body: some View {
-        HStack(spacing: 8) {
-            if spinning { ProgressView().controlSize(.small) }
-            if let symbol { Image(systemName: symbol).foregroundStyle(.green) }
-            Text(text).font(.system(size: 12.5, weight: .semibold))
+        HStack(spacing: 10) {
+            Color.clear.frame(width: EditorChrome.trafficLights)
+            if model.tool == .crop {
+                cropBar
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    row(toolLabels: true, actionLabels: true)
+                    row(toolLabels: true, actionLabels: false)
+                    row(toolLabels: false, actionLabels: false)
+                }
+            }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(Capsule().fill(Color.black.opacity(0.78)))
-        .overlay(Capsule().strokeBorder(Color.white.opacity(0.1)))
-        .foregroundStyle(.white)
+        .padding(.horizontal, 12)
+        .frame(height: Self.height)
+        .background { shortcuts }
+    }
+
+    /// ⌘⏎ außerhalb von ViewThatFits, damit das Kürzel genau einmal gilt (nicht je Fassung der Leiste).
+    /// Beim Zuschneiden gibt es „Fertig“ nicht — wie bisher.
+    @ViewBuilder private var shortcuts: some View {
+        if model.tool != .crop {
+            Button("Fertig") { actions.done() }
+                .keyboardShortcut(.return, modifiers: .command)
+                .opacity(0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func row(toolLabels: Bool, actionLabels: Bool) -> some View {
+        HStack(spacing: 10) {
+            tools(labels: toolLabels)
+            Spacer(minLength: 12)
+            rightActions(labels: actionLabels)
+        }
+    }
+
+    private func tools(labels: Bool) -> some View {
+        HStack(spacing: 2) {
+            toolButton(.redact, title: labels ? EditorTool.redact.title : nil)
+            if settings.showAutoRedact {
+                ChromeToolButton(symbol: "wand.and.stars", title: labels ? "Auto-Zensur" : nil, enabled: model.busy == nil,
+                                 help: "Auto-Zensur: findet E-Mails, IBANs, Telefonnummern, Kartennummern und API-Schlüssel und zensiert sie — lokal, ohne Cloud.") {
+                    model.autoRedact()
+                }
+            }
+            ChromeDivider()
+            ForEach(Self.drawingTools) { toolButton($0) }
+            ChromeDivider()
+            toolButton(.crop)
+        }
+        .chromeGroup()
+    }
+
+    private func toolButton(_ tool: EditorTool, title: String? = nil) -> some View {
+        ChromeToolButton(symbol: tool.symbol, title: title, active: model.tool == tool,
+                         help: "\(tool.title) (\(String(tool.key).uppercased()))") {
+            if tool == .crop { model.startCrop() } else { model.tool = tool }
+        }
+    }
+
+    private func rightActions(labels: Bool) -> some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 2) {
+                ChromeToolButton(symbol: "arrow.uturn.backward", enabled: model.canUndo, help: "Widerrufen (⌘Z)") { model.undo() }
+                ChromeToolButton(symbol: "arrow.uturn.forward", enabled: model.canRedo, help: "Wiederholen (⇧⌘Z)") { model.redo() }
+            }
+            Button(action: actions.copyText) {
+                if labels {
+                    Label("Text kopieren", systemImage: "text.viewfinder")
+                } else {
+                    Image(systemName: "text.viewfinder").font(.system(size: 13.5, weight: .medium))
+                }
+            }
+            .buttonStyle(BrandButtonStyle(kind: .secondary))
+            .help("Text kopieren — ohne Zensiertes und Weggeschnittenes")
+            .accessibilityLabel("Text kopieren")
+            Button { actions.copy() } label: { Label("Kopieren", systemImage: "doc.on.doc") }
+                .buttonStyle(BrandButtonStyle(kind: .secondary))
+                .help("Kopieren (⌘C)")
+            Button("Fertig") { actions.done() }
+                .buttonStyle(BrandButtonStyle(kind: .primary))
+                .help("Speichern und schließen (⌘⏎)")
+        }
+    }
+
+    private var cropBar: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 7) {
+                Image(systemName: "crop").font(.system(size: 14, weight: .medium)).foregroundStyle(Color.brand(Brand.accent))
+                Text("Zuschneiden").font(Brand.font(13, .semibold)).foregroundStyle(Color.brand(Brand.ink))
+            }
+            .padding(.horizontal, 10)
+            .frame(height: EditorChrome.toolSize)
+            .chromeGroup()
+            Spacer(minLength: 12)
+            Button("Zurücksetzen") { model.resetCrop() }.buttonStyle(BrandButtonStyle(kind: .quiet))
+            Button("Abbrechen") { model.cancelCrop() }.buttonStyle(BrandButtonStyle(kind: .secondary))
+            Button("Übernehmen") { model.applyCrop() }.buttonStyle(BrandButtonStyle(kind: .primary))
+        }
     }
 }
 
-struct EditorToolbar: View {
-    static let height: CGFloat = 52
+/// Zweite Leiste: Eigenschaften des Werkzeugs bzw. der Auswahl (Zensur-Stil oder Farbe, Stärke, Füllung),
+/// rechts Rahmen und Anpinnen. Beim Zuschneiden steht hier, wie es geht.
+struct EditorPropertiesBar: View {
     @ObservedObject var model: EditorModel
-    @ObservedObject private var settings = AppSettings.shared
     let actions: EditorActions
 
     private var activeKind: AnnotationKind? { model.selected?.kind ?? model.tool.annotationKind }
 
     var body: some View {
         HStack(spacing: 10) {
-            Color.clear.frame(width: 64) // Ampel-Knöpfe
             if model.tool == .crop {
-                cropControls
-            } else {
-                tools
-                divider
-                styleControls
-            }
-            Spacer(minLength: 8)
-            if model.tool != .crop { rightActions }
-        }
-        .padding(.horizontal, 12)
-        .frame(height: Self.height)
-        .background(Color(white: 0.13))
-    }
-
-    private var divider: some View {
-        Rectangle().fill(Color.white.opacity(0.12)).frame(width: 1, height: 22)
-    }
-
-    private var tools: some View {
-        HStack(spacing: 2) {
-            ForEach(EditorTool.allCases) { tool in
-                Button {
-                    if tool == .crop { model.startCrop() } else { model.tool = tool }
-                } label: {
-                    Image(systemName: tool.symbol)
-                        .font(.system(size: 13.5, weight: .medium))
-                        .frame(width: 30, height: 28)
-                        .background(RoundedRectangle(cornerRadius: 7).fill(model.tool == tool ? Color.accentColor : .clear))
-                        .foregroundStyle(model.tool == tool ? .white : Color.white.opacity(0.82))
-                        .contentShape(Rectangle())
+                HStack(spacing: 6) {
+                    Text("Rahmen ziehen ·")
+                    KeyCap(symbol: "return")
+                    Text("übernimmt ·")
+                    KeyCap(key: "Esc")
+                    Text("bricht ab")
                 }
-                .buttonStyle(.plain)
-                .help("\(tool.title) (\(String(tool.key).uppercased()))")
-            }
-        }
-        .padding(3)
-        .background(RoundedRectangle(cornerRadius: 9).fill(Color.white.opacity(0.06)))
-    }
-
-    @ViewBuilder private var styleControls: some View {
-        if activeKind == .redact {
-            Text("Klick auf Text = Zeile · ⌥ = Wort")
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(.white.opacity(0.55))
+                .font(Brand.font(12.5))
+                .foregroundStyle(Color.brand(Brand.inkSoft))
                 .fixedSize()
-                .help("Klick auf eine Textzeile legt einen Balken darüber, ⌥-Klick nur über ein Wort. Beim Ziehen wird der Balken bis zum Wortende erweitert — ⌥ beim Ziehen schaltet das ab.")
-            HStack(spacing: 2) {
-                ForEach(RedactStyle.allCases) { style in
-                    let on = (model.selected?.kind == .redact ? model.selected?.redactStyle : model.redactStyle) == style
-                    Button { model.setRedactStyle(style) } label: {
-                        Label(style.title, systemImage: style.symbol)
-                            .font(.system(size: 11.5, weight: .medium))
-                            .fixedSize()
-                            .padding(.horizontal, 7)
-                            .frame(height: 26)
-                            .background(RoundedRectangle(cornerRadius: 7).fill(on ? Color.white.opacity(0.18) : .clear))
-                            .foregroundStyle(.white.opacity(on ? 1 : 0.75))
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
+                Spacer(minLength: 0)
+            } else {
+                HStack(spacing: 8) { properties }
+                    .padding(.horizontal, 6)
+                    .frame(height: 28)
+                    .chromeGroup()
+                Spacer(minLength: 10)
+                HStack(spacing: 2) {
+                    FrameButton(model: model)
+                    ChromeToolButton(symbol: "pin", size: 28, help: "Anpinnen (schwebt über allen Fenstern)", action: actions.pin)
                 }
+                .chromeGroup()
             }
-            .padding(3)
-            .background(RoundedRectangle(cornerRadius: 9).fill(Color.white.opacity(0.06)))
+        }
+        .frame(height: 36)
+        .padding(.horizontal, EditorChrome.margin)
+        .padding(.bottom, EditorChrome.propertiesHeight - 36)
+    }
+
+    @ViewBuilder private var properties: some View {
+        if activeKind == .redact {
+            ChromeOverline(text: "Zensur")
+            BrandSegment(items: RedactStyle.allCases.map { .init(value: $0, title: $0.title, symbol: $0.symbol) },
+                         selection: model.selected?.kind == .redact ? model.selected?.redactStyle : model.redactStyle,
+                         height: 24) { model.setRedactStyle($0) }
         } else {
-            HStack(spacing: 5) {
-                ForEach(RGBA.palette, id: \.self) { c in
-                    let on = (model.selected?.color ?? model.color) == c
-                    Button { model.setColor(c) } label: {
-                        Circle()
-                            .fill(Color(nsColor: c.nsColor))
-                            .frame(width: 17, height: 17)
-                            .overlay(Circle().strokeBorder(Color.white.opacity(c == .black ? 0.35 : 0.15), lineWidth: 1))
-                            .padding(3)
-                            .overlay(Circle().strokeBorder(Color.white.opacity(on ? 0.95 : 0), lineWidth: 2))
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                }
+            ChromeOverline(text: "Farbe")
+            HStack(spacing: 0) {
+                ForEach(RGBA.palette, id: \.self) { swatch($0) }
             }
             if activeKind != .highlight {
-                divider
-                HStack(spacing: 2) {
-                    ForEach(StrokeSize.allCases) { s in
-                        let on = (model.selected?.size ?? model.size) == s
-                        Button { model.setSize(s) } label: {
-                            Text(s.title)
-                                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
-                                .frame(width: 26, height: 24)
-                                .background(RoundedRectangle(cornerRadius: 6).fill(on ? Color.white.opacity(0.18) : .clear))
-                                .foregroundStyle(.white.opacity(on ? 1 : 0.7))
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(3)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.06)))
+                ChromeDivider()
+                ChromeOverline(text: "Stärke")
+                BrandSegment(items: StrokeSize.allCases.map { .init(value: $0, title: $0.title, mono: true) },
+                             selection: model.selected?.size ?? model.size, height: 24) { model.setSize($0) }
             }
             if activeKind == .rectangle || activeKind == .ellipse {
+                ChromeDivider()
                 let on = model.selected?.filled ?? model.filled
-                Button { model.setFilled(!on) } label: {
-                    Image(systemName: on ? "square.fill" : "square")
-                        .frame(width: 28, height: 26)
-                        .background(RoundedRectangle(cornerRadius: 7).fill(on ? Color.white.opacity(0.18) : .clear))
-                        .foregroundStyle(.white.opacity(0.85))
-                        .contentShape(Rectangle())
+                ChromeToolButton(symbol: on ? "square.fill" : "square", title: "Gefüllt", active: on, size: 28, help: "Gefüllt") {
+                    model.setFilled(!on)
                 }
-                .buttonStyle(.plain)
-                .help("Gefüllt")
             }
         }
     }
 
-    private var cropControls: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "crop").foregroundStyle(.white.opacity(0.8))
-            Text("Zuschneiden — Rahmen ziehen, ⏎ übernimmt, Esc bricht ab")
-                .font(.system(size: 12.5, weight: .medium))
-                .foregroundStyle(.white.opacity(0.75))
-            Button("Zurücksetzen") { model.resetCrop() }.buttonStyle(ToolbarButtonStyle(prominent: false))
-            Button("Abbrechen") { model.cancelCrop() }.buttonStyle(ToolbarButtonStyle(prominent: false))
-            Button("Übernehmen") { model.applyCrop() }.buttonStyle(ToolbarButtonStyle(prominent: true))
-        }
-    }
-
-    private var rightActions: some View {
-        HStack(spacing: 6) {
-            if settings.showAutoRedact {
-                Button { model.autoRedact() } label: {
-                    Label("Auto-Zensur", systemImage: "wand.and.stars")
-                }
-                .buttonStyle(ToolbarButtonStyle(prominent: false))
-                .help("Findet E-Mails, IBANs, Telefonnummern, Kartennummern und API-Schlüssel und zensiert sie — lokal, ohne Cloud.")
-                .disabled(model.busy != nil)
-            }
-
-            HStack(spacing: 0) {
-                iconButton("arrow.uturn.backward", help: "Widerrufen (⌘Z)", enabled: model.canUndo) { model.undo() }
-                iconButton("arrow.uturn.forward", help: "Wiederholen (⇧⌘Z)", enabled: model.canRedo) { model.redo() }
-            }
-            FrameButton(model: model)
-            iconButton("text.viewfinder", help: "Text kopieren — ohne Zensiertes und Weggeschnittenes", enabled: true, action: actions.copyText)
-            iconButton("pin", help: "Anpinnen (schwebt über allen Fenstern)", enabled: true, action: actions.pin)
-            Button { actions.copy() } label: { Label("Kopieren", systemImage: "doc.on.doc") }
-                .buttonStyle(ToolbarButtonStyle(prominent: false))
-                .help("Kopieren (⌘C)")
-            Button("Fertig") { actions.done() }
-                .buttonStyle(ToolbarButtonStyle(prominent: true))
-                .keyboardShortcut(.return, modifiers: .command)
-        }
-    }
-
-    private func iconButton(_ symbol: String, help: String, enabled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 13, weight: .medium))
-                .frame(width: 30, height: 28)
-                .foregroundStyle(.white.opacity(enabled ? 0.85 : 0.3))
+    /// Farbe für Anmerkungen — bleibt bunt (Inhalt, nicht Oberfläche).
+    private func swatch(_ c: RGBA) -> some View {
+        let on = (model.selected?.color ?? model.color) == c
+        return Button { model.setColor(c) } label: {
+            Circle()
+                .fill(Color(nsColor: c.nsColor))
+                .frame(width: 16, height: 16)
+                .overlay(Circle().strokeBorder(Color.brand(Brand.inkSoft).opacity(0.5), lineWidth: c == .white || c == .black ? 1 : 0))
+                .padding(3)
+                .overlay(Circle().strokeBorder(Color.brand(Brand.ink), lineWidth: on ? 2 : 0))
+                .frame(width: 26, height: 28)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(!enabled)
-        .help(help)
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
 
-struct ToolbarButtonStyle: ButtonStyle {
-    var prominent: Bool
-    @Environment(\.isEnabled) private var isEnabled
+/// Untere Leiste: Zoom und Maße der gespeicherten Datei in Mono, rechts ein Hinweis zum Werkzeug.
+struct EditorStatusBar: View {
+    @ObservedObject var model: EditorModel
+    let canvas: CanvasView
 
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 12.5, weight: .semibold))
-            .labelStyle(.titleAndIcon)
-            .fixedSize()
-            .padding(.horizontal, 11)
-            .frame(height: 28)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(prominent ? Color.accentColor : Color.white.opacity(configuration.isPressed ? 0.2 : 0.1))
-            )
-            .foregroundStyle(.white.opacity(isEnabled ? 1 : 0.4))
-            .opacity(configuration.isPressed ? 0.85 : 1)
+    var body: some View {
+        HStack(spacing: 12) {
+            ZoomControl(model: model, canvas: canvas)
+            let size = model.outputSize
+            Text("\(Int(size.width)) × \(Int(size.height)) px")
+                .font(Brand.mono(11.5))
+                .foregroundStyle(Color.brand(Brand.inkSoft))
+                .fixedSize()
+                .help("Größe der gespeicherten Datei in Pixeln")
+            Spacer(minLength: 12)
+            if model.tool != .crop, (model.selected?.kind ?? model.tool.annotationKind) == .redact {
+                Text("Klick auf Text = Zeile · ⌥ = Wort")
+                    .font(Brand.font(12.5))
+                    .foregroundStyle(Color.brand(Brand.inkSoft))
+                    .fixedSize()
+                    .help("Klick auf eine Textzeile legt einen Balken darüber, ⌥-Klick nur über ein Wort. Beim Ziehen wird der Balken bis zum Wortende erweitert — ⌥ beim Ziehen schaltet das ab.")
+            }
+        }
+        .padding(.horizontal, EditorChrome.margin)
+        .frame(height: EditorChrome.statusHeight)
     }
 }
 
-/// Zoom unten rechts: −, Prozent (Klick: Einpassen ↔ 100 %), +.
+/// Zoom: −, Prozent in Mono (Klick: Einpassen ↔ 100 %), +.
 private struct ZoomControl: View {
     @ObservedObject var model: EditorModel
     let canvas: CanvasView
 
     var body: some View {
         HStack(spacing: 0) {
-            button("minus", help: "Verkleinern (⌘−)") { canvas.zoomOut() }
+            ChromeToolButton(symbol: "minus", size: 24, help: "Verkleinern (⌘−)") { canvas.zoomOut() }
             Button {
                 if model.zoom == nil { canvas.zoomActualSize() } else { canvas.zoomToFit() }
             } label: {
-                Text(model.zoom == nil ? "Einpassen · \(model.zoomPercent) %" : "\(model.zoomPercent) %")
-                    .font(.system(size: 11.5, weight: .semibold).monospacedDigit())
-                    .frame(minWidth: 52)
-                    .padding(.horizontal, 6)
-                    .frame(height: 26)
-                    .contentShape(Rectangle())
+                HStack(spacing: 5) {
+                    if model.zoom == nil {
+                        Text("Einpassen").font(Brand.font(12, .medium)).foregroundStyle(Color.brand(Brand.inkSoft))
+                    }
+                    Text("\(model.zoomPercent) %").font(Brand.mono(11.5, .medium)).foregroundStyle(Color.brand(Brand.ink))
+                }
+                .fixedSize()
+                .padding(.horizontal, 8)
+                .frame(minWidth: 56, minHeight: 24)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(model.zoom == nil ? "Originalgröße (⌘1)" : "Einpassen (⌘0) · Leertaste + Ziehen verschiebt")
-            button("plus", help: "Vergrößern (⌘+) · auch Trackpad-Zoom oder ⌘ + Scrollen") { canvas.zoomIn() }
+            ChromeToolButton(symbol: "plus", size: 24, help: "Vergrößern (⌘+) · auch Trackpad-Zoom oder ⌘ + Scrollen") { canvas.zoomIn() }
         }
-        .foregroundStyle(.white.opacity(0.9))
-        .background(Capsule().fill(Color.black.opacity(0.62)))
-        .overlay(Capsule().strokeBorder(Color.white.opacity(0.12)))
-    }
-
-    private func button(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 11, weight: .bold))
-                .frame(width: 28, height: 26)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.brand(Brand.surface)))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Color.brand(Brand.line)))
     }
 }
 
@@ -469,59 +480,73 @@ private struct FrameButton: View {
     @State private var open = false
 
     var body: some View {
-        Button { open.toggle() } label: {
-            Image(systemName: model.frame == nil ? "square.on.square.dashed" : "square.on.square.fill")
-                .font(.system(size: 13, weight: .medium))
-                .frame(width: 30, height: 28)
-                .foregroundStyle(model.frame == nil ? Color.white.opacity(0.85) : Color.accentColor)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("Hintergrund und Rahmen")
-        .popover(isPresented: $open, arrowEdge: .bottom) { FramePanel(model: model) }
+        ChromeToolButton(symbol: model.frame == nil ? "square.on.square.dashed" : "square.on.square.fill", title: "Rahmen",
+                         active: model.frame != nil, size: 28, help: "Hintergrund und Rahmen") { open.toggle() }
+            .popover(isPresented: $open, arrowEdge: .bottom) { FramePanel(model: model) }
     }
 }
 
-private struct FramePanel: View {
+/// Inhalt des Rahmen-Popovers (auch im Selbsttest `live` fotografiert).
+struct FramePanel: View {
     @ObservedObject var model: EditorModel
 
     private var style: FrameStyle { model.frame ?? EditorModel.lastFrameStyle }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Toggle("Hintergrund und Rahmen", isOn: Binding(get: { model.frame != nil }, set: { model.setFrame($0 ? style : nil) }))
-                .toggleStyle(.switch)
-                .font(.system(size: 13, weight: .semibold))
-            HStack(spacing: 8) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    ChromeOverline(text: "Rahmen")
+                    Text("Hintergrund und Rahmen").font(Brand.font(15, .semibold)).foregroundStyle(Color.brand(Brand.ink))
+                }
+                Spacer(minLength: 0)
+                Toggle("Hintergrund und Rahmen", isOn: Binding(get: { model.frame != nil }, set: { model.setFrame($0 ? style : nil) }))
+                    .toggleStyle(BrandSwitchStyle())
+                    .labelsHidden()
+            }
+            HStack(spacing: 6) {
                 ForEach(FrameStyle.gradients.indices, id: \.self) { i in
                     let colors = FrameStyle.gradients[i].colors.map { Color(nsColor: $0.nsColor) }
+                    let on = model.frame?.gradient == i
                     Button { update { $0.gradient = i } } label: {
                         RoundedRectangle(cornerRadius: 7, style: .continuous)
                             .fill(LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing))
-                            .frame(width: 30, height: 30)
-                            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .strokeBorder(model.frame?.gradient == i ? Color.primary : Color.primary.opacity(0.12), lineWidth: model.frame?.gradient == i ? 2.5 : 1))
+                            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color.brand(Brand.line)))
+                            .frame(width: 28, height: 28)
+                            .padding(3)
+                            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .strokeBorder(Color.brand(Brand.ink), lineWidth: on ? 2 : 0))
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .help(FrameStyle.gradients[i].name)
+                    .accessibilityLabel(FrameStyle.gradients[i].name)
                 }
             }
-            Picker("Abstand", selection: Binding(get: { style.padding }, set: { v in update { $0.padding = v } })) {
-                Text("Klein").tag(24.0)
-                Text("Mittel").tag(48.0)
-                Text("Groß").tag(80.0)
+            row("Abstand") {
+                BrandSegment(items: [.init(value: 24.0, title: "Klein"), .init(value: 48.0, title: "Mittel"), .init(value: 80.0, title: "Groß")],
+                             selection: style.padding) { v in update { $0.padding = v } }
             }
-            .pickerStyle(.segmented)
-            Picker("Ecken", selection: Binding(get: { style.cornerRadius }, set: { v in update { $0.cornerRadius = v } })) {
-                Text("Eckig").tag(0.0)
-                Text("Rund").tag(12.0)
-                Text("Sehr rund").tag(24.0)
+            row("Ecken") {
+                BrandSegment(items: [.init(value: 0.0, title: "Eckig"), .init(value: 12.0, title: "Rund"), .init(value: 24.0, title: "Sehr rund")],
+                             selection: style.cornerRadius) { v in update { $0.cornerRadius = v } }
             }
-            .pickerStyle(.segmented)
-            Toggle("Schatten", isOn: Binding(get: { style.shadow }, set: { v in update { $0.shadow = v } }))
+            row("Schatten") {
+                Toggle("Schatten", isOn: Binding(get: { style.shadow }, set: { v in update { $0.shadow = v } }))
+                    .toggleStyle(BrandSwitchStyle())
+                    .labelsHidden()
+            }
         }
         .padding(16)
-        .frame(width: 300)
+        .frame(width: 320)
+    }
+
+    private func row<Control: View>(_ title: String, @ViewBuilder control: () -> Control) -> some View {
+        HStack(spacing: 12) {
+            Text(title).font(Brand.font(13, .medium)).foregroundStyle(Color.brand(Brand.ink)).fixedSize()
+            Spacer(minLength: 0)
+            control()
+        }
     }
 
     /// Jede Änderung schaltet den Rahmen ein.

@@ -25,7 +25,6 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
     private var editingID: UUID?
     private var textField: NSTextField?
     private var trackingArea: NSTrackingArea?
-    static let background = NSColor(srgbRed: 0.105, green: 0.105, blue: 0.115, alpha: 1)
 
     init(model: EditorModel) {
         self.model = model
@@ -34,6 +33,8 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
         layerContentsRedrawPolicy = .onSetNeedsDisplay
         // Seit macOS 14 clippen Views nicht mehr von selbst — sonst übermalt die Fläche die Werkzeugleiste.
         clipsToBounds = true
+        // Bühne: `fill`-Fläche mit Radius und Linie wie eine Karte (docs/design.md, „Editor (Bild)“).
+        applyStageLayerStyle()
         model.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
@@ -48,6 +49,14 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyStageLayerStyle()
+        needsDisplay = true
+    }
+
+    private var isDark: Bool { effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua }
 
     // MARK: Geometrie
 
@@ -185,7 +194,7 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        Self.background.setFill()
+        Brand.fill.setFill()
         bounds.intersection(dirtyRect).fill()
 
         let vp = viewport, s = scaleFactor
@@ -207,9 +216,11 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
                 ctx.restoreGState()
             }
         } else {
+            // Leichter Schatten unter dem Bild (im Dunkeln kräftiger, sonst verschwindet er).
             ctx.saveGState()
-            ctx.setShadow(offset: CGSize(width: 0, height: -6), blur: 24, color: NSColor.black.withAlphaComponent(0.55).cgColor)
-            ctx.setFillColor(NSColor.black.cgColor)
+            ctx.setShadow(offset: CGSize(width: 0, height: 3), blur: isDark ? 18 : 14,
+                          color: NSColor.black.withAlphaComponent(isDark ? 0.45 : 0.12).cgColor)
+            ctx.setFillColor(Brand.surface.cgColor)
             ctx.fill(imageRect)
             ctx.restoreGState()
         }
@@ -235,7 +246,7 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
     private func drawSelection(_ a: Annotation, ctx: CGContext) {
         let box = toView(Renderer.bounds(of: a, scale: model.scale)).insetBy(dx: -4, dy: -4)
         ctx.saveGState()
-        ctx.setStrokeColor(NSColor.controlAccentColor.cgColor)
+        ctx.setStrokeColor(Brand.accent.cgColor)
         ctx.setLineWidth(1)
         ctx.setLineDash(phase: 0, lengths: [4, 3])
         if !a.isLineLike { ctx.stroke(box) }
@@ -243,10 +254,11 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
         for (_, p) in handles(for: a) { drawHandle(at: p, ctx: ctx) }
     }
 
+    /// Griff: weißer Punkt mit Königsblau-Rand (wie die Auswahl beim Aufnehmen).
     private func drawHandle(at p: CGPoint, ctx: CGContext) {
         let r = CGRect(x: p.x - 5, y: p.y - 5, width: 10, height: 10)
-        ctx.setFillColor(NSColor.white.cgColor)
-        ctx.setStrokeColor(NSColor.controlAccentColor.cgColor)
+        ctx.setFillColor(Brand.Dark.ink.cgColor)
+        ctx.setStrokeColor(Brand.accent.cgColor)
         ctx.setLineWidth(1.5)
         ctx.fillEllipse(in: r)
         ctx.strokeEllipse(in: r)
@@ -262,12 +274,12 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
         ctx.addPath(path)
         ctx.setFillColor(NSColor.black.withAlphaComponent(0.55).cgColor)
         ctx.fillPath(using: .evenOdd)
-        ctx.setStrokeColor(NSColor.white.cgColor)
+        // Rahmen und Drittel-Raster in hellem Königsblau — wie der Auswahlrahmen beim Aufnehmen.
+        ctx.setStrokeColor(Brand.Dark.accent.cgColor)
         ctx.setLineWidth(1.5)
         ctx.stroke(r)
-        // Drittel-Raster
-        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.35).cgColor)
-        ctx.setLineWidth(0.5)
+        ctx.setStrokeColor(Brand.Dark.accent.withAlphaComponent(0.55).cgColor)
+        ctx.setLineWidth(0.75)
         for i in 1...2 {
             let x = r.minX + r.width * CGFloat(i) / 3, y = r.minY + r.height * CGFloat(i) / 3
             ctx.move(to: CGPoint(x: x, y: r.minY)); ctx.addLine(to: CGPoint(x: x, y: r.maxY))
@@ -276,18 +288,30 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
         ctx.strokePath()
         ctx.restoreGState()
         for (_, p) in cropHandles(r) {
-            let h = CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)
-            ctx.setFillColor(NSColor.white.cgColor)
-            ctx.fill(h)
+            let h = CGRect(x: p.x - 4.5, y: p.y - 4.5, width: 9, height: 9)
+            let path = CGPath(roundedRect: h, cornerWidth: 2, cornerHeight: 2, transform: nil)
+            ctx.addPath(path)
+            ctx.setFillColor(Brand.Dark.ink.cgColor)
+            ctx.fillPath()
+            ctx.addPath(path)
+            ctx.setStrokeColor(Brand.accent.cgColor)
+            ctx.setLineWidth(1.5)
+            ctx.strokePath()
         }
+        // Größe als dunkle Pille in Mono (wie im Auswahl-Overlay).
         let label = "\(Int(draft.width)) × \(Int(draft.height))" as NSString
-        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold), .foregroundColor: NSColor.white]
+        let attrs: [NSAttributedString.Key: Any] = [.font: Brand.nsMono(11, .medium), .foregroundColor: Brand.Dark.ink]
         let size = label.size(withAttributes: attrs)
-        let bg = CGRect(x: r.midX - size.width / 2 - 8, y: max(4, r.minY - size.height - 12), width: size.width + 16, height: size.height + 6)
-        ctx.setFillColor(NSColor.black.withAlphaComponent(0.7).cgColor)
-        ctx.addPath(CGPath(roundedRect: bg, cornerWidth: bg.height / 2, cornerHeight: bg.height / 2, transform: nil))
+        let bg = CGRect(x: r.midX - size.width / 2 - 9, y: max(6, r.minY - size.height - 16), width: size.width + 18, height: size.height + 8)
+        let pill = CGPath(roundedRect: bg, cornerWidth: bg.height / 2, cornerHeight: bg.height / 2, transform: nil)
+        ctx.addPath(pill)
+        ctx.setFillColor(Brand.Dark.fill.withAlphaComponent(0.92).cgColor)
         ctx.fillPath()
-        label.draw(at: CGPoint(x: bg.minX + 8, y: bg.minY + 3), withAttributes: attrs)
+        ctx.addPath(pill)
+        ctx.setStrokeColor(Brand.Dark.line.cgColor)
+        ctx.setLineWidth(1)
+        ctx.strokePath()
+        label.draw(at: CGPoint(x: bg.minX + 9, y: bg.minY + 4), withAttributes: attrs)
     }
 
     // MARK: Griffe

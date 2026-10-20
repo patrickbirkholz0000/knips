@@ -116,9 +116,9 @@ export function Button({
 
 // ---------------------------------------------------------------- Kürzel
 
-/** Eine Tastenkappe (weiß, Linie, Mono). */
-export function KeyCap({ children, size }: { children: ReactNode; size?: "lg" }) {
-  return <kbd className={cx("k-key", size === "lg" && "k-key--lg")}>{children}</kbd>;
+/** Eine Tastenkappe (weiß, Linie, Mono); `tone="dark"` auf den immer dunklen Flächen (Menü, Pillen). */
+export function KeyCap({ children, size, tone }: { children: ReactNode; size?: "lg"; tone?: "dark" }) {
+  return <kbd className={cx("k-key", size === "lg" && "k-key--lg", tone === "dark" && "k-key--dark")}>{children}</kbd>;
 }
 
 /** „Strg+Umschalt+Druck“ → ["Strg", "Umschalt", "Druck"]; die Plus-Taste selbst bleibt erhalten („Strg++“). */
@@ -128,15 +128,17 @@ export function comboParts(label: string): string[] {
   return label.split("+").filter(Boolean);
 }
 
-/** Kürzel als Tastenkappen mit leisem „+“ dazwischen. */
-export function Keys({ combo, size }: { combo: string; size?: "lg" }) {
+/** Kürzel als Tastenkappen mit leisem „+“ dazwischen („Strg+Druck“ → [Strg] + [Druck]). */
+export function Keys({ combo, size, tone }: { combo: string; size?: "lg"; tone?: "dark" }) {
   const parts = comboParts(combo);
   return (
-    <span className={cx("k-keys", size === "lg" && "k-keys--lg")} aria-label={combo}>
+    <span className={cx("k-keys", size === "lg" && "k-keys--lg", tone === "dark" && "k-keys--dark")} aria-label={combo}>
       {parts.map((p, i) => (
         <span key={i} className="k-keys__part">
           {i > 0 && <span className="k-keys__plus">+</span>}
-          <KeyCap size={size}>{p}</KeyCap>
+          <KeyCap size={size} tone={tone}>
+            {p}
+          </KeyCap>
         </span>
       ))}
     </span>

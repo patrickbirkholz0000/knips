@@ -266,6 +266,15 @@
   font-size: 13.5px;
   box-shadow: inset 0 -2px 0 var(--k-line-strong), 0 1px 2px color-mix(in srgb, var(--k-dark) 6%, transparent);
 }
+.k-key--dark {
+  border-color: var(--k-dark-line);
+  background: var(--k-dark-raised);
+  color: var(--k-dark-ink);
+  box-shadow: inset 0 -1.5px 0 var(--k-dark-line);
+}
+.k-keys--dark .k-keys__plus {
+  color: var(--k-dark-muted);
+}
 .k-keys--lg .k-keys__plus {
   padding: 0 7px;
   font-size: 12px;

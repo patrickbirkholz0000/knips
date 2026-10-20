@@ -375,7 +375,12 @@ impl Target {
                 let text = format!("{} × {}", sel_px.w.round() as i64, sel_px.h.round() as i64);
                 let lh = SIZE_PILL_H;
                 let lw = f.text_width(&f.fmt_size, &text).ceil() + 2.0 * SIZE_PILL_PAD;
-                let (lx, ly) = layout::size_label_origin(sel, lw, lh, bw, bh);
+                // nie auf der Lupe (gleiche Bedingung wie Schritt 7)
+                let lupe: Vec<RectF> = match s.mouse {
+                    Some((mx, my)) if !s.window_mode => layout::loupe_bounds(layout::loupe_origin((mx as f64 * k, my as f64 * k), bw, bh)).to_vec(),
+                    _ => vec![],
+                };
+                let (lx, ly) = layout::size_label_origin_avoiding(sel, lw, lh, bw, bh, &lupe);
                 self.pill(&RectF::new(lx, ly, lw, lh), &f.fmt_size, &text);
             }
 
@@ -459,13 +464,16 @@ impl Target {
                 rt.PopAxisAlignedClip();
             }
 
-            // mittleres Pixel: Rahmen 1,5 pt innen
+            // mittleres Pixel: Rahmen 1,5 pt innen, mit dunklem Saum (sonst auf hellem Inhalt unsichtbar)
             let mid = RectF::new(ox + (size - cell) / 2.0, oy + (size - cell) / 2.0, cell, cell);
+            self.stroke(&mid.inset(0.75, 0.75), brand::HALO, 3.0);
             self.stroke(&mid.inset(0.75, 0.75), brand::LOUPE_RING, 1.5);
 
-            // Ring: 2 pt, innen im Kreis
-            self.set(brand::LOUPE_RING);
+            // Ring: 2 pt, innen im Kreis, mit dunklem Saum
             let ring = D2D1_ELLIPSE { radiusX: (size / 2.0 - 1.0) as f32, radiusY: (size / 2.0 - 1.0) as f32, ..ellipse };
+            self.set(brand::HALO);
+            rt.DrawEllipse(&ring, &self.solid, 4.0, None::<&ID2D1StrokeStyle>);
+            self.set(brand::LOUPE_RING);
             rt.DrawEllipse(&ring, &self.solid, 2.0, None::<&ID2D1StrokeStyle>);
 
             // Koordinaten unter der Lupe (Pixel im Standbild) als dunkle Pille in Mono

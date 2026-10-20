@@ -52,10 +52,11 @@ export default function MenuPanel(_: { params: string[]; query: URLSearchParams 
   }, []);
 
   const label = (a: HotkeyAction) => boot?.hotkeyLabels[a];
-  // In den schmalen Kacheln „Umschalt+“ als ⇧ kürzen; wird es trotzdem eng, kürzt sich das Kürzel, nie der Titel.
+  // In den schmalen Kacheln „Umschalt+“ zu „Umsch+“ kürzen (ein ⇧ wäre bei 1× und 9,5 px nicht lesbar); wird es
+  // trotzdem eng, kürzt sich das Kürzel, nie der Titel.
   const shortcut = (a: HotkeyAction) => {
     const l = label(a);
-    return l ? <span className="mp-shortcut">{l.replace("Umschalt+", "⇧+")}</span> : null;
+    return l ? <span className="mp-shortcut" title={l}>{l.replace("Umschalt+", "Umsch+")}</span> : null;
   };
   const tile = (title: string, icon: React.ReactNode, action: HotkeyAction | null, run: () => void, red = false, off?: string) => (
     <button className={"menu-tile" + (red ? " red" : "") + (off ? " off" : "")} onClick={run} title={off}>

@@ -134,6 +134,32 @@ pub fn size_label_origin(sel: RectF, lw: f64, lh: f64, bw: f64, bh: f64) -> (f64
     (x, y)
 }
 
+/// Wie `size_label_origin`, aber nie auf der Lupe oder ihrer Koordinaten-Pille (`avoid`). Das passiert,
+/// wenn man in die rechte untere Bildschirmecke zieht: Dann klappen Größe und Lupe beide nach innen.
+/// Ausweichen erst über die Auswahl, sonst links neben die Lupe; geht beides nicht, bleibt es beim Standard.
+pub fn size_label_origin_avoiding(sel: RectF, lw: f64, lh: f64, bw: f64, bh: f64, avoid: &[RectF]) -> (f64, f64) {
+    let (x, y) = size_label_origin(sel, lw, lh, bw, bh);
+    let free = |x: f64, y: f64| avoid.iter().all(|a| RectF::new(x, y, lw, lh).intersection(a).is_none());
+    if free(x, y) {
+        return (x, y);
+    }
+    let above = sel.y - 8.0 - lh;
+    if above >= 4.0 && free(x, above) {
+        return (x, above);
+    }
+    let left = avoid.iter().map(|a| a.x).fold(f64::INFINITY, f64::min) - 8.0 - lw;
+    if left >= 4.0 && free(left, y) {
+        return (left, y);
+    }
+    (x, y)
+}
+
+/// Was die Lupe belegt (Kreis und Koordinaten-Pille), mit 2 pt Luft — für `size_label_origin_avoiding`.
+pub fn loupe_bounds(origin: (f64, f64)) -> [RectF; 2] {
+    let circle = RectF::new(origin.0, origin.1, LOUPE_SIZE, LOUPE_SIZE);
+    [circle.inset(-2.0, -2.0), loupe_text_rect(origin).inset(-2.0, -2.0)]
+}
+
 pub const LOUPE_SIZE: f64 = 132.0;
 pub const LOUPE_PIXELS: i32 = 13;
 
@@ -354,6 +380,26 @@ mod tests {
         let sel = RectF::new(900.0, 100.0, 100.0, 30.0);
         let (x, _) = size_label_origin(sel, 80.0, 24.0, 1000.0, 800.0);
         assert_eq!(x, 916.0); // 4 Rand rechts
+    }
+
+    #[test]
+    fn size_label_avoids_loupe() {
+        let (bw, bh) = (1280.0, 800.0);
+        // Ziehen in die rechte untere Ecke: Lupe klappt nach oben links, Größe nach innen → Größe weicht aus
+        let sel = RectF::new(1220.0, 750.0, 50.0, 40.0);
+        let lupe = loupe_bounds(loupe_origin((1270.0, 790.0), bw, bh));
+        let (x, y) = size_label_origin_avoiding(sel, 70.0, 26.0, bw, bh, &lupe);
+        let r = RectF::new(x, y, 70.0, 26.0);
+        assert!(lupe.iter().all(|a| r.intersection(a).is_none()), "Größe liegt auf der Lupe: {r:?}");
+        assert!(x >= 4.0 && y >= 4.0 && r.right() <= bw && r.bottom() <= bh);
+        // große Auswahl, Zeiger in der Mitte: alles bleibt, wo es war
+        let sel = RectF::new(300.0, 380.0, 640.0, 300.0);
+        let lupe = loupe_bounds(loupe_origin((700.0, 520.0), bw, bh));
+        assert_eq!(size_label_origin_avoiding(sel, 97.0, 26.0, bw, bh, &lupe), size_label_origin(sel, 97.0, 26.0, bw, bh));
+        // Lupe über der Größe, darüber ist Platz → über die Auswahl
+        let sel = RectF::new(600.0, 300.0, 200.0, 200.0);
+        let lupe = [RectF::new(700.0, 500.0, 132.0, 40.0)];
+        assert_eq!(size_label_origin_avoiding(sel, 70.0, 26.0, bw, bh, &lupe), (730.0, 266.0));
     }
 
     #[test]

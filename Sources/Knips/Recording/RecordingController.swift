@@ -227,59 +227,41 @@ import SwiftUI
 
     // MARK: Fenster
 
-    private func makePanel(_ rect: NSRect, ignoresMouse: Bool) -> NSPanel {
-        let p = ClickablePanel(contentRect: rect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        p.isOpaque = false
-        p.backgroundColor = .clear
-        p.hasShadow = false
-        p.level = .statusBar
-        p.hidesOnDeactivate = false
-        p.ignoresMouseEvents = ignoresMouse
-        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        p.setFrame(rect, display: false)
-        return p
-    }
-
-    /// Gestrichelter Rahmen knapp außerhalb des Aufnahmebereichs (Knips-Fenster sind ohnehin nicht im Video).
+    /// Rahmen in Aufnahme-Rot knapp außerhalb des Aufnahmebereichs (Knips-Fenster sind ohnehin nicht im Video).
     private func showFrame(around rect: CGRect) {
         frameWindow?.orderOut(nil)   // nie zwei Rahmen: ein alter bliebe sonst für immer stehen
-        let outer = rect.insetBy(dx: -3, dy: -3)
-        let panel = makePanel(outer, ignoresMouse: true)
-        let view = NSView(frame: NSRect(origin: .zero, size: outer.size))
-        view.wantsLayer = true
-        let shape = CAShapeLayer()
-        shape.path = CGPath(rect: CGRect(origin: .zero, size: outer.size).insetBy(dx: 1, dy: 1), transform: nil)
-        shape.fillColor = nil
-        shape.strokeColor = NSColor.systemRed.cgColor
-        shape.lineWidth = 2
-        shape.lineDashPattern = [6, 4]
-        view.layer?.addSublayer(shape)
-        panel.contentView = view
+        let outer = rect.insetBy(dx: -AreaFrame.outset, dy: -AreaFrame.outset)
+        let panel = FloatingPanel.make(outer, ignoresMouse: true)
+        panel.contentView = AreaFrame.makeView(size: outer.size, color: Brand.Dark.record)
         panel.orderFrontRegardless()
         frameWindow = panel
     }
 
     private func showCountdown(in rect: CGRect) {
-        let size = CGSize(width: 150, height: 176)
+        let host = FirstMouseHostingView(rootView: CountdownView(controller: self))
+        let size = host.fittingSize
         let frame = NSRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2, width: size.width, height: size.height)
-        let panel = makePanel(frame, ignoresMouse: false)
-        panel.contentView = FirstMouseHostingView(rootView: CountdownView(controller: self))
+        let panel = FloatingPanel.make(frame, ignoresMouse: false)
+        panel.contentView = host
         panel.orderFrontRegardless()
         countdownPanel = panel
     }
 
     private func showControls(for rect: CGRect, fullScreen: Bool) {
-        let size = CGSize(width: 246, height: 44)
+        let host = FirstMouseHostingView(rootView: RecordingControlsView(controller: self))
+        // Die Pille ist kleiner als das Fenster: `RecordingBar.margin` rundherum für den Schatten.
+        let size = host.fittingSize
+        let m = RecordingBar.margin
         let vf = (screen ?? NSScreen.withMouse).visibleFrame
-        var origin = CGPoint(x: rect.midX - size.width / 2, y: rect.minY - size.height - 12)
-        if fullScreen || origin.y < vf.minY + 4 {
-            origin.y = rect.maxY + 12
-            if fullScreen || origin.y + size.height > vf.maxY - 4 { origin.y = max(vf.minY, rect.minY) + 16 }
+        var origin = CGPoint(x: rect.midX - size.width / 2, y: rect.minY - size.height - 12 + m)
+        if fullScreen || origin.y < vf.minY + 4 - m {
+            origin.y = rect.maxY + 12 - m
+            if fullScreen || origin.y + size.height > vf.maxY - 4 + m { origin.y = max(vf.minY, rect.minY) + 16 - m }
         }
-        origin.x = max(vf.minX + 8, min(origin.x, vf.maxX - size.width - 8))
-        let panel = makePanel(NSRect(origin: origin, size: size), ignoresMouse: false)
+        origin.x = max(vf.minX + 8 - m, min(origin.x, vf.maxX - size.width - 8 + m))
+        let panel = FloatingPanel.make(NSRect(origin: origin, size: size), ignoresMouse: false)
         panel.isMovableByWindowBackground = true
-        panel.contentView = FirstMouseHostingView(rootView: RecordingControlsView(controller: self))
+        panel.contentView = host
         panel.orderFrontRegardless()
         controlPanel = panel
     }
@@ -296,73 +278,122 @@ final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
 private struct CountdownView: View {
     @ObservedObject var controller: RecordingController
 
+    private var number: Int {
+        if case .countdown(let n) = controller.phase { return n }
+        return 0
+    }
+
     var body: some View {
-        VStack(spacing: 10) {
+        CountdownDial(number: number) { controller.stop(save: false) }
+    }
+}
+
+/// Countdown vor dem Video (docs/design.md): dunkle runde Fläche, große Mono-Ziffer, roter Ring für die
+/// verbleibenden Sekunden, darunter „Abbrechen“.
+struct CountdownDial: View {
+    /// 3, 2, 1 — 0 = noch nicht/nicht mehr im Countdown (Fläche ohne Ziffer).
+    let number: Int
+    var total = 3
+    var cancel: () -> Void
+
+    static let diameter: CGFloat = 132
+    /// Platz rundherum für den Schatten.
+    static let margin: CGFloat = 18
+
+    var body: some View {
+        VStack(spacing: 12) {
             ZStack {
-                Circle().fill(Color.black.opacity(0.72))
-                Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
-                if case .countdown(let n) = controller.phase {
-                    Text("\(n)")
-                        .font(.system(size: 64, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
+                Circle().inset(by: 9).stroke(Color.brand(Brand.Dark.line), lineWidth: 3)
+                Circle().inset(by: 9)
+                    .trim(from: 0, to: CGFloat(max(0, min(number, total))) / CGFloat(total))
+                    .stroke(Color.brand(Brand.Dark.record), style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                if number > 0 {
+                    Text("\(number)")
+                        .font(Brand.mono(58, .medium))
+                        .foregroundStyle(Color.brand(Brand.Dark.ink))
                         .contentTransition(.numericText(countsDown: true))
-                        .animation(.spring(duration: 0.3), value: n)
                 }
             }
-            .frame(width: 128, height: 128)
-            Button { controller.stop(save: false) } label: {
-                Text("Abbrechen")
-                    .font(.system(size: 12, weight: .semibold))
-                    .padding(.horizontal, 12)
-                    .frame(height: 26)
-                    .background(Capsule().fill(Color.black.opacity(0.72)))
-                    .foregroundStyle(.white)
-            }
-            .buttonStyle(.plain)
+            .frame(width: Self.diameter, height: Self.diameter)
+            .darkSurface(Circle())
+            .animation(.spring(duration: 0.35), value: number)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Aufnahme beginnt in \(number)")
+            Button(action: cancel) { Text("Abbrechen") }
+                .buttonStyle(DarkButtonStyle(kind: .raised, height: 28))
+                .darkSurface(Capsule(), shadow: true)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(Self.margin)
+        .environment(\.colorScheme, .dark)
     }
 }
 
 private struct RecordingControlsView: View {
     @ObservedObject var controller: RecordingController
-    @State private var blink = false
+    @ObservedObject private var settings = AppSettings.shared
+
+    /// Das Mikrofon nimmt nur ab macOS 15 mit auf (`ScreenRecorder`).
+    private var microphone: Bool {
+        guard settings.recordingMicrophone else { return false }
+        if #available(macOS 15.0, *) { return true }
+        return false
+    }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(Color.red)
-                .frame(width: 9, height: 9)
-                .opacity(blink ? 0.35 : 1)
-                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: blink)
-                .onAppear { blink = true }
-            Text(Format.duration(controller.elapsed))
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.white)
-                .frame(width: 44, alignment: .leading)
-            Button { controller.stop(save: true) } label: {
-                Label("Stopp", systemImage: "stop.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .padding(.horizontal, 12)
-                    .frame(height: 28)
-                    .background(Capsule().fill(Color.red))
-                    .foregroundStyle(.white)
+        RecordingBar(elapsed: controller.elapsed, microphone: microphone,
+                     stop: { controller.stop(save: true) }, discard: { controller.stop(save: false) })
+    }
+}
+
+/// Aufnahme-Leiste, solange ein Video läuft (docs/design.md, wie das Overlay): dunkle Pille, roter
+/// pulsierender Punkt, Zeit in Mono, Mikrofon (wenn es mit aufnimmt), Verwerfen, „Stopp“ als Papier-Knopf.
+struct RecordingBar: View {
+    var elapsed: TimeInterval
+    var microphone: Bool
+    var stop: () -> Void
+    var discard: () -> Void
+
+    /// Platz rundherum für den Schatten.
+    static let margin: CGFloat = 14
+
+    var body: some View {
+        HStack(spacing: 0) {
+            RecordDot(size: 8)
+            Text(Format.duration(elapsed))
+                .font(Brand.mono(14, .semibold))
+                .foregroundStyle(Color.brand(Brand.Dark.ink))
+                .lineLimit(1)
+                .fixedSize()
+                .frame(minWidth: 42, alignment: .leading)
+                .padding(.leading, 8)
+                .accessibilityLabel("Aufnahme läuft, \(Format.duration(elapsed))")
+            if microphone {
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(Color.brand(Brand.Dark.accent))
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(Color.brand(Brand.Dark.accentSoft)))
+                    .padding(.leading, 8)
+                    .help("Mikrofon nimmt mit auf")
+                    .accessibilityLabel("Mikrofon nimmt mit auf")
             }
-            .buttonStyle(.plain)
-            .help("Aufnahme beenden und speichern")
-            Button { controller.stop(save: false) } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(Color.white.opacity(0.14)))
-                    .foregroundStyle(.white)
-            }
-            .buttonStyle(.plain)
-            .help("Aufnahme verwerfen")
+            Spacer(minLength: 16)
+            Button(action: discard) { Image(systemName: "trash") }
+                .buttonStyle(DarkIconButtonStyle(size: 30, symbolSize: 11.5, filled: false, tint: Brand.Dark.muted))
+                .help("Aufnahme verwerfen")
+                .accessibilityLabel("Aufnahme verwerfen")
+            Button(action: stop) { Label("Stopp", systemImage: "stop.fill") }
+                .buttonStyle(DarkButtonStyle(kind: .primary, height: 30, fontSize: 13))
+                .help("Aufnahme beenden und speichern")
+                .padding(.leading, 6)
         }
-        .padding(.horizontal, 12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Capsule().fill(Color(white: 0.09).opacity(0.92)))
-        .overlay(Capsule().strokeBorder(Color.white.opacity(0.14)))
+        .padding(.leading, 14)
+        .padding(.trailing, 7)
+        .frame(height: 44)
+        .fixedSize()
+        .darkSurface(Capsule())
+        .padding(Self.margin)
+        .environment(\.colorScheme, .dark)
     }
 }

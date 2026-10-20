@@ -73,6 +73,7 @@ import Vision
             case "stitch": try stitch(out)
             case "ocr-bench": try ocrBench(out)
             case "robust": try robust(out)
+            case "chrome": try runAsync { try await chrome(out) }
             default:
                 print("Unbekannter Test \(args[0])")
                 return 2

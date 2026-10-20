@@ -315,45 +315,27 @@ struct RowProfile {
     }
     #endif
 
-    private func panelWindow(_ rect: NSRect, ignoresMouse: Bool) -> NSPanel {
-        let p = ClickablePanel(contentRect: rect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        p.isOpaque = false
-        p.backgroundColor = .clear
-        p.hasShadow = false
-        p.level = .statusBar
-        p.hidesOnDeactivate = false
-        p.ignoresMouseEvents = ignoresMouse
-        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        p.setFrame(rect, display: false)
-        return p
-    }
-
+    /// Rahmen in Königsblau knapp außerhalb des Bereichs (Knips-Fenster sind ohnehin nicht im Bild).
     private func showFrame(around rect: CGRect) {
-        let outer = rect.insetBy(dx: -3, dy: -3)
-        let p = panelWindow(outer, ignoresMouse: true)
-        let view = NSView(frame: NSRect(origin: .zero, size: outer.size))
-        view.wantsLayer = true
-        let shape = CAShapeLayer()
-        shape.path = CGPath(rect: CGRect(origin: .zero, size: outer.size).insetBy(dx: 1, dy: 1), transform: nil)
-        shape.fillColor = nil
-        shape.strokeColor = NSColor.controlAccentColor.cgColor
-        shape.lineWidth = 2
-        shape.lineDashPattern = [6, 4]
-        view.layer?.addSublayer(shape)
-        p.contentView = view
+        let outer = rect.insetBy(dx: -AreaFrame.outset, dy: -AreaFrame.outset)
+        let p = FloatingPanel.make(outer, ignoresMouse: true)
+        p.contentView = AreaFrame.makeView(size: outer.size, color: Brand.Dark.accent)
         p.orderFrontRegardless()
         frameWindow = p
     }
 
     private func showControls(below rect: CGRect) {
-        let size = CGSize(width: 380, height: 48)
+        let host = FirstMouseHostingView(rootView: ScrollControlsView(controller: self))
+        // Breite für den längsten Text, damit die Leiste beim Zählen nicht springt; `ScrollBar.margin` für den Schatten.
+        let size = host.fittingSize
+        let m = ScrollBar.margin
         let vf = (screen ?? NSScreen.withMouse).visibleFrame
-        var origin = CGPoint(x: rect.midX - size.width / 2, y: rect.minY - size.height - 12)
-        if origin.y < vf.minY + 4 { origin.y = min(rect.maxY + 12, vf.maxY - size.height - 4) }
-        origin.x = max(vf.minX + 8, min(origin.x, vf.maxX - size.width - 8))
-        let p = panelWindow(NSRect(origin: origin, size: size), ignoresMouse: false)
+        var origin = CGPoint(x: rect.midX - size.width / 2, y: rect.minY - size.height - 12 + m)
+        if origin.y < vf.minY + 4 - m { origin.y = min(rect.maxY + 12 - m, vf.maxY - size.height - 4 + m) }
+        origin.x = max(vf.minX + 8 - m, min(origin.x, vf.maxX - size.width - 8 + m))
+        let p = FloatingPanel.make(NSRect(origin: origin, size: size), ignoresMouse: false)
         p.isMovableByWindowBackground = true
-        p.contentView = FirstMouseHostingView(rootView: ScrollControlsView(controller: self))
+        p.contentView = host
         p.orderFrontRegardless()
         panel = p
     }
@@ -363,44 +345,70 @@ private struct ScrollControlsView: View {
     @ObservedObject var controller: ScrollCaptureController
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "arrow.down.to.line.compact")
+        ScrollBar(sections: controller.sections, height: controller.outputHeight, limitReached: controller.limitReached,
+                  done: { controller.finish(save: true) }, cancel: { controller.finish(save: false) })
+    }
+}
+
+/// Scroll-Leiste (docs/design.md): dunkle Pille mit Anleitung, Abschnitte und Höhe in Mono, „Fertig“ (Papier) und
+/// „Abbrechen“. Ist die Obergrenze erreicht, steht dort „Maximale Länge erreicht“.
+struct ScrollBar: View {
+    var sections: Int
+    /// Höhe in Pixeln, wie sie in der Datei herauskommt.
+    var height: Int
+    var limitReached: Bool
+    var done: () -> Void
+    var cancel: () -> Void
+
+    /// Platz rundherum für den Schatten.
+    static let margin: CGFloat = 14
+
+    /// „12 480 px“ — Tausender mit schmalem Leerzeichen.
+    static func pixels(_ value: Int) -> String {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.groupingSeparator = "\u{202F}"
+        f.usesGroupingSeparator = true
+        return (f.string(from: NSNumber(value: value)) ?? "\(value)") + " px"
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Image(systemName: limitReached ? "exclamationmark.circle.fill" : "arrow.down.to.line.compact")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.85))
-            VStack(alignment: .leading, spacing: 1) {
-                Text(controller.limitReached ? "Maximale Länge erreicht" : "Jetzt langsam nach unten scrollen")
-                    .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.brand(limitReached ? Brand.Dark.warn : Brand.Dark.accent))
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(Color.brand(limitReached ? Brand.Dark.warn.withAlphaComponent(0.14) : Brand.Dark.accentSoft)))
+            VStack(alignment: .leading, spacing: 2) {
+                // Beide Texte liegen übereinander: die Leiste ist so breit wie der längere und springt nie.
+                ZStack(alignment: .leading) {
+                    Text("Jetzt langsam nach unten scrollen").opacity(limitReached ? 0 : 1)
+                    Text("Maximale Länge erreicht").opacity(limitReached ? 1 : 0)
+                }
+                .font(Brand.font(13, .medium))
+                .foregroundStyle(Color.brand(Brand.Dark.ink))
+                .lineLimit(1)
+                .fixedSize()
+                Text("\(sections) Abschnitt\(sections == 1 ? "" : "e") · \(Self.pixels(height))")
+                    .font(Brand.mono(11))
+                    .foregroundStyle(Color.brand(Brand.Dark.muted))
                     .lineLimit(1)
                     .fixedSize()
-                Text("\(controller.sections) Abschnitt\(controller.sections == 1 ? "" : "e") · \(controller.outputHeight) px hoch")
-                    .font(.system(size: 11).monospacedDigit())
-                    .lineLimit(1)
-                    .fixedSize()
-                    .foregroundStyle(.white.opacity(0.6))
             }
-            .foregroundStyle(.white)
-            Spacer(minLength: 4)
-            Button { controller.finish(save: true) } label: {
-                Text("Fertig")
-                    .font(.system(size: 12, weight: .semibold))
-                    .padding(.horizontal, 12).frame(height: 28)
-                    .background(Capsule().fill(Color.white))
-                    .foregroundStyle(.black)
-            }
-            .buttonStyle(.plain)
-            Button { controller.finish(save: false) } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .bold))
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(Color.white.opacity(0.14)))
-                    .foregroundStyle(.white)
-            }
-            .buttonStyle(.plain)
-            .help("Abbrechen")
+            .padding(.leading, 10)
+            Spacer(minLength: 18)
+            Button(action: cancel) { Text("Abbrechen") }
+                .buttonStyle(DarkButtonStyle(kind: .ghost, height: 30, fontSize: 13))
+            Button(action: done) { Text("Fertig") }
+                .buttonStyle(DarkButtonStyle(kind: .primary, height: 30, fontSize: 13))
+                .padding(.leading, 4)
         }
-        .padding(.horizontal, 12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Capsule().fill(Color(red: 0.11, green: 0.11, blue: 0.12).opacity(0.95)))
-        .overlay(Capsule().strokeBorder(Color.white.opacity(0.12)))
+        .padding(.leading, 9)
+        .padding(.trailing, 8)
+        .frame(height: 48)
+        .fixedSize()
+        .darkSurface(Capsule())
+        .padding(Self.margin)
+        .environment(\.colorScheme, .dark)
     }
 }

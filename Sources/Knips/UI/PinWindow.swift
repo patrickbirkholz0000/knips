@@ -1,7 +1,9 @@
 import AppKit
+import SwiftUI
 
 /// Schwebendes Bild über allen Fenstern. Ziehen verschiebt, Scrollen ändert die Größe,
-/// Doppelklick oder Esc schließt.
+/// Doppelklick oder Esc schließt, ⌘C kopiert. Randlos mit Radius 10 und Schatten; beim Darüberfahren
+/// erscheint oben rechts eine kleine dunkle Pille (Größe in Mono, Kopieren, Schließen).
 @MainActor final class PinWindowController: NSWindowController, NSWindowDelegate {
     private static var pins: [PinWindowController] = []
     private let image: CGImage
@@ -16,7 +18,8 @@ import AppKit
 
     init(image: CGImage, scale: CGFloat) {
         self.image = image
-        var size = NSSize(width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale)
+        let natural = NSSize(width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale)
+        var size = natural
         let vf = NSScreen.withMouse.visibleFrame
         let f = min(1, vf.width * 0.6 / size.width, vf.height * 0.6 / size.height)
         size = NSSize(width: size.width * f, height: size.height * f)
@@ -28,11 +31,12 @@ import AppKit
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.appearance = Brand.Dark.appearance
         panel.contentAspectRatio = size
         panel.minSize = NSSize(width: 60, height: 60 * size.height / max(size.width, 1))
         super.init(window: panel)
         panel.delegate = self
-        let view = PinView(image: image)
+        let view = PinView(image: image, naturalWidth: natural.width)
         view.onClose = { [weak self] in self?.close() }
         panel.contentView = view
         panel.makeFirstResponder(view)
@@ -52,42 +56,87 @@ private final class PinPanel: NSPanel {
     override var canBecomeKey: Bool { true }
 }
 
-private final class PinView: NSView {
+/// Zustand der Pin-Steuerung (Größe in Prozent der Originalgröße).
+@MainActor final class PinControlsModel: ObservableObject {
+    @Published var percent = 100
+}
+
+/// Kleine dunkle Pille oben rechts auf einem angepinnten Bild.
+struct PinControls: View {
+    @ObservedObject var model: PinControlsModel
+    var copy: () -> Void
+    var close: () -> Void
+
+    var body: some View {
+        HStack(spacing: 2) {
+            Text("\(model.percent) %")
+                .font(Brand.mono(11, .medium))
+                .foregroundStyle(Color.brand(Brand.Dark.muted))
+                .fixedSize()
+                .padding(.leading, 9)
+                .padding(.trailing, 3)
+            Button(action: copy) { Image(systemName: "doc.on.doc") }
+                .buttonStyle(DarkIconButtonStyle(size: 24, symbolSize: 10.5, filled: false))
+                .help("Kopieren (⌘C)")
+            Button(action: close) { Image(systemName: "xmark") }
+                .buttonStyle(DarkIconButtonStyle(size: 24, symbolSize: 10.5, filled: false))
+                .help("Schließen (Esc)")
+        }
+        .padding(3)
+        .darkSurface(Capsule())
+        .environment(\.colorScheme, .dark)
+    }
+}
+
+final class PinView: NSView {
     let image: CGImage
     var onClose: (() -> Void)?
-    private let closeButton = NSButton()
+    private let naturalWidth: CGFloat
+    private let controlsModel = PinControlsModel()
+    private var controls: NSView!
     private var tracking: NSTrackingArea?
+    static let radius: CGFloat = 10
+    /// Abstand der Pille zum Bildrand (Platz für ihren Schatten bleibt im Bild).
+    private static let controlsInset: CGFloat = 8
 
-    init(image: CGImage) {
+    init(image: CGImage, naturalWidth: CGFloat) {
         self.image = image
+        self.naturalWidth = max(1, naturalWidth)
         super.init(frame: .zero)
         wantsLayer = true
         layer?.contents = image
         layer?.contentsGravity = .resize
-        layer?.cornerRadius = 8
+        layer?.cornerRadius = Self.radius
+        layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.15).cgColor
 
-        closeButton.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Schließen")
-        closeButton.isBordered = false
-        closeButton.contentTintColor = .white
-        closeButton.symbolConfiguration = .init(pointSize: 18, weight: .semibold)
-        closeButton.target = self
-        closeButton.action = #selector(closeTapped)
-        closeButton.alphaValue = 0
-        closeButton.wantsLayer = true
-        closeButton.layer?.shadowOpacity = 0.5
-        closeButton.layer?.shadowRadius = 3
-        addSubview(closeButton)
+        let model = controlsModel
+        let host = FirstMouseHostingView(rootView: PinControls(model: model, copy: { [weak self] in self?.copyImage() },
+                                                               close: { [weak self] in self?.onClose?() }))
+        host.appearance = Brand.Dark.appearance
+        host.alphaValue = 0
+        addSubview(host)
+        controls = host
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { nil }
 
     override func layout() {
         super.layout()
-        closeButton.frame = NSRect(x: 6, y: bounds.height - 30, width: 24, height: 24)
+        let percent = Int((bounds.width / naturalWidth * 100).rounded())
+        if controlsModel.percent != percent { controlsModel.percent = percent }
+        let size = controls.fittingSize
+        // Passt die Pille nicht ins Bild (sehr klein gezogen), bleibt sie unsichtbar; Esc/Doppelklick schließen weiter.
+        controls.isHidden = size.width + 2 * Self.controlsInset > bounds.width || size.height + 2 * Self.controlsInset > bounds.height
+        controls.frame = NSRect(x: bounds.maxX - size.width - Self.controlsInset, y: bounds.maxY - size.height - Self.controlsInset,
+                                width: size.width, height: size.height)
+        window?.invalidateShadow()
     }
+
+    #if KNIPS_DEV
+    /// Nur Selbsttest: Steuerung zeigen wie beim Darüberfahren.
+    func debugShowControls() { controls.alphaValue = 1 }
+    #endif
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -97,8 +146,8 @@ private final class PinView: NSView {
         tracking = t
     }
 
-    override func mouseEntered(with event: NSEvent) { closeButton.animator().alphaValue = 1 }
-    override func mouseExited(with event: NSEvent) { closeButton.animator().alphaValue = 0 }
+    override func mouseEntered(with event: NSEvent) { controls.animator().alphaValue = 1 }
+    override func mouseExited(with event: NSEvent) { controls.animator().alphaValue = 0 }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
@@ -123,13 +172,15 @@ private final class PinView: NSView {
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { onClose?(); return }
         if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "c" {
-            Clipboard.copy(image: image, fileURL: nil)
-            Telemetry.count(.copyImage)
-            HUD.show("Kopiert")
+            copyImage()
             return
         }
         super.keyDown(with: event)
     }
 
-    @objc private func closeTapped() { onClose?() }
+    private func copyImage() {
+        Clipboard.copy(image: image, fileURL: nil)
+        Telemetry.count(.copyImage)
+        HUD.show("Kopiert")
+    }
 }

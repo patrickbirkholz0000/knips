@@ -1451,8 +1451,8 @@ fn links_steps(app: &AppHandle, out: &Path, calls: &parking_lot::Mutex<Vec<Hotke
 
     link("fullscreen");
     let (remember, remember_w) = wait_prompt(app, Immediate::Fullscreen)?;
+    armed(); // „Nicht mehr fragen“ ist erst nach der Schutzzeit wählbar
     let ticked = tick(&remember_w)?;
-    armed();
     click(&remember_w, "confirm")?;
     let resolved = wait_resolved(&remember);
     let seen = take();

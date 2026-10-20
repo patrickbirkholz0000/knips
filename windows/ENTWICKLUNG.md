@@ -120,6 +120,10 @@ Oberfläche im Browser gegen die Mac-Referenzbilder, Ablage-Selbsttest mit Attra
 Auswahl-Overlays mit simulierter Maus. Fenster-Bilder aus der CI gegen die Mac-Referenzen durchgesehen.
 CI 20.10.2026 (Version 1.0.0): alle 15 Selbsttests grün, auch `links` (Rückfrage per Link) und alle Fenster
 unter der neuen CSP (Editor, Video-Editor, Verlauf, Karten laden Bilder/Videos über das Asset-Protokoll).
+CI 20.10.2026 (Medien/Verträglichkeit): alle 17 Selbsttests grün, neu `nomedia` und `oldwin`; die knips.exe aus
+dem Installer lädt mfplat/mfreadwrite/mf nur verzögert (`llvm-readobj --coff-imports`: nur unter `DelayImport`);
+Aufnahme mit bewegter Maus wirksam 30 fps (vorher als 2,4 fps exportiert), VFR-Testvideo Ø 8,9 → Export 30 fps.
+Nicht in der CI prüfbar: echte N-Edition, echtes Windows vor 2004, Mikrofon ohne Freigabe.
 Noch am Gerät zu testen: Tastendrücke auf echter Tastatur (Hook neben anderen Tools), Mikrofon,
 Ziehen aus den Karten in andere Apps, Einfügen in fremde Apps, mehrere Monitore mit gemischter Skalierung.
 

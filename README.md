@@ -73,17 +73,44 @@ Voraussetzung: macOS 14 (Sonoma) oder neuer, Apple Silicon oder Intel.
 
 ### Windows
 
-Voraussetzung: Windows 10 oder 11, 64 Bit.
+Voraussetzung: Windows 10 oder 11, 64 Bit. Knips installiert sich nur für deinen Benutzer und braucht
+keine Administratorrechte. Fehlt die Microsoft-WebView2-Laufzeit (unter Windows 11 vorinstalliert), lädt
+der Installer sie von Microsoft nach. Drei Wege, alle mit demselben Installer:
 
-1. `Knips_…_x64-setup.exe` laden und ausführen. Die Installation läuft nur für deinen Benutzer und
-   braucht keine Administratorrechte. Fehlt die Microsoft-WebView2-Laufzeit (unter Windows 11
-   vorinstalliert), lädt der Installer sie von Microsoft nach.
-2. **SmartScreen-Warnung:** Solange der Installer nicht signiert ist, meldet Windows „Der Computer wurde
-   durch Windows geschützt“. Dann auf „Weitere Informationen“ und „Trotzdem ausführen“ klicken. Lade den
-   Installer nur von der Releases-Seite dieses Repos.
-3. Knips liegt danach im Infobereich der Taskleiste.
-4. Unter Windows 11 öffnet die Druck-Taste den Bildschirmausschnitt. Knips fragt beim ersten Start, ob
-   es die Taste übernehmen darf. Zurückgeben lässt sie sich unter Einstellungen → Tastaturkürzel.
+1. **winget** (sobald Knips im Windows-Paketmanager aufgenommen ist):
+
+   ```
+   winget install PatrickBirkholz.Knips
+   ```
+
+2. **PowerShell:**
+
+   ```
+   irm https://knips.velno.ai/install.ps1 | iex
+   ```
+
+   Das Skript holt den Installer der neuesten Version von der Releases-Seite, prüft seine
+   SHA-256-Prüfsumme und, sobald die Installer signiert sind, die Signatur, installiert ohne Rückfragen und
+   startet Knips. Die heruntergeladene Datei löscht es danach wieder. Eine SmartScreen-Warnung erscheint
+   dabei nicht, weil die Datei nicht über den Browser kommt. Sieh dir das Skript vorher an:
+   [windows/install.ps1](windows/install.ps1), oder öffne <https://knips.velno.ai/install.ps1> im Browser
+   (dieselbe Datei). Eine bestimmte Version:
+   `& ([scriptblock]::Create((irm https://knips.velno.ai/install.ps1))) -Version 1.0.0`.
+
+3. **Installer von der Releases-Seite:** `Knips_…_x64-setup.exe` laden und ausführen. Solange der
+   Installer nicht signiert ist, meldet SmartScreen „Der Computer wurde durch Windows geschützt“. Dann auf
+   „Weitere Informationen“ und „Trotzdem ausführen“ klicken. Lade den Installer nur von der Releases-Seite
+   dieses Repos. `Get-FileHash .\Knips_…_x64-setup.exe` muss den Wert aus der `.sha256`-Datei daneben
+   ergeben.
+
+Danach:
+
+- Knips liegt im Infobereich der Taskleiste und startet ab dann mit Windows (abschaltbar unter
+  Einstellungen → Allgemein → „Mit Windows starten“).
+- Unter Windows 11 öffnet die Druck-Taste den Bildschirmausschnitt. Knips fragt beim ersten Start, ob es
+  die Taste übernehmen darf. Zurückgeben lässt sie sich unter Einstellungen → Tastaturkürzel.
+- **Deinstallieren:** Einstellungen → Apps → Installierte Apps → Knips → Deinstallieren (oder
+  `winget uninstall PatrickBirkholz.Knips`).
 
 ## Kurzbefehle
 
@@ -157,8 +184,10 @@ Fensterinhalte, App-Namen, Bildschirmgrößen und Zeitmessungen.
 
 **Auf dem Server** (Cloudflare Worker mit D1-Datenbank):
 
-- IP-Adresse und User-Agent werden nicht gespeichert. Gespeichert wird nur das Land als Kürzel aus zwei
-  Buchstaben, das Cloudflare aus der Verbindung ableitet.
+- Der Server läuft bei Cloudflare. Als Hoster verarbeitet Cloudflare technisch die Verbindungsdaten, also
+  auch die IP-Adresse. Der Worker selbst speichert weder IP-Adresse noch User-Agent; gegen zu viele
+  Anfragen dient die IP-Adresse nur kurz als Schlüssel in einem flüchtigen Zähler von Cloudflare.
+  Gespeichert wird nur das Land als Kürzel aus zwei Buchstaben, das Cloudflare aus der Verbindung ableitet.
 - Die `install_id` wird nie im Klartext gespeichert, nur als gesalzener Hash (SHA-256 mit geheimem Salz,
   gekürzt).
 - Pro Tag und Installation gibt es eine Zeile mit Plattform, Kanal, Version, Betriebssystem,
@@ -170,6 +199,30 @@ Fensterinhalte, App-Namen, Bildschirmgrößen und Zeitmessungen.
 Selbsttests, die Test-Sandbox und die CI senden nie. Entwickler-Builds senden nur, wenn
 `KNIPS_TELEMETRY=1` gesetzt ist, und dann als `dev`. Der Server-Code liegt in diesem Repo:
 [telemetry/README.md](telemetry/README.md).
+
+Der Windows-Installer zeigt diesen Hinweis während der Installation, vor dem Lizenztext.
+
+## Code signing policy
+
+Die Windows-Fassung (App und Installer) wird über SignPath signiert, sobald Knips in das
+Open-Source-Programm der SignPath Foundation aufgenommen ist. Die Aufnahme ist beantragt, bis dahin sind
+die Installer unsigniert. Ab dann gilt:
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by
+[SignPath Foundation](https://signpath.org/).
+
+- **Was signiert wird:** nur Dateien, die GitHub Actions aus dem Quellcode dieses Repos baut
+  ([.github/workflows/release.yml](.github/workflows/release.yml)), also `knips.exe` und
+  `Knips_X.Y.Z_x64-setup.exe`. Fremde Dateien im Installer (die Plugins des Installationsprogramms NSIS)
+  werden nicht mit diesem Zertifikat signiert.
+- **Freigabe:** Jede Signatur gibt der Approver in SignPath einzeln frei.
+- **Rollen:**
+  - Committer und Reviewer: [Patrick Birkholz](https://github.com/patrickbirkholz0000)
+  - Approver: [Patrick Birkholz](https://github.com/patrickbirkholz0000)
+
+  Änderungen von anderen (Pull Requests) prüft ein Reviewer, bevor sie übernommen werden.
+- **Datenschutz:** siehe [Datenschutz](#datenschutz). Knips sendet nur nach ausdrücklicher Zustimmung eine
+  anonyme Nutzungsstatistik, lässt sie jederzeit abschalten und zeigt den Hinweis schon im Installer.
 
 ## Selbst bauen
 
@@ -217,9 +270,20 @@ Get the packages from [Releases](https://github.com/patrickbirkholz0000/knips/re
 - **macOS 14+:** open the DMG, drag Knips into Applications, start it and allow screen recording under
   System Settings → Privacy & Security → Screen & System Audio Recording, then restart Knips. The
   microphone is only requested when you record with commentary (macOS 15+).
-- **Windows 10/11 (64-bit):** run `Knips_…_x64-setup.exe` (per-user install, no admin rights). While the
-  installer is unsigned, SmartScreen shows “Windows protected your PC”: click “More info”, then “Run
-  anyway”. Only download the installer from this repo's Releases page.
+- **Windows 10/11 (64-bit),** per-user install without admin rights, three ways with the same installer:
+  1. **winget** (once Knips is accepted into the Windows Package Manager):
+     `winget install PatrickBirkholz.Knips`
+  2. **PowerShell:** `irm https://knips.velno.ai/install.ps1 | iex` downloads the latest installer from
+     the Releases page, verifies its SHA-256 checksum (and its signature once installers are signed),
+     installs silently, starts Knips and deletes the download. No SmartScreen prompt, because the file does
+     not come through the browser. Read the script first: [windows/install.ps1](windows/install.ps1) or
+     open <https://knips.velno.ai/install.ps1> in your browser (same file). A specific version:
+     `& ([scriptblock]::Create((irm https://knips.velno.ai/install.ps1))) -Version 1.0.0`.
+  3. **Installer from the Releases page:** run `Knips_…_x64-setup.exe`. While the installer is unsigned,
+     SmartScreen shows “Windows protected your PC”: click “More info”, then “Run anyway”. Only download the
+     installer from this repo's Releases page.
+
+  Uninstall: Settings → Apps → Installed apps → Knips → Uninstall (or `winget uninstall PatrickBirkholz.Knips`).
 
 Default shortcuts: area ⇧⌘4 / Print, window ⇧⌘2 / Alt+Print, full screen ⇧⌘3 / Ctrl+Print, start/stop
 recording ⇧⌘5 / Shift+Print. All shortcuts can be changed in the settings.
@@ -239,10 +303,32 @@ platform, channel, app version and build, OS version, architecture, two-letter l
 install ID and counters for the listed events.
 
 Never sent: images, videos, text (including recognized text), file names, window titles or contents,
-app names, screen sizes, timing data. The server does not store IP addresses or user agents (only a
-two-letter country code derived by Cloudflare), stores the install ID only as a salted hash, and deletes
-rows after 400 days. Opting out deletes the install ID and any unsent counters immediately. Server code:
-[telemetry/README.md](telemetry/README.md).
+app names, screen sizes, timing data. The server runs on Cloudflare, which as the host technically
+processes connection data including the IP address. The server itself does not store IP addresses or
+user agents (only a two-letter country code derived by Cloudflare; for rate limiting the IP address is
+only a short-lived key in a Cloudflare counter), stores the install ID only as a salted hash, and deletes
+rows after 400 days. Opting out deletes the install ID and any unsent counters immediately. The Windows
+installer shows this notice during installation. Server code: [telemetry/README.md](telemetry/README.md).
+
+### Code signing policy
+
+The Windows version (app and installer) will be signed through SignPath once Knips is accepted into the
+SignPath Foundation's open source program (applied for; until then the installers are unsigned). From
+then on:
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by
+[SignPath Foundation](https://signpath.org/).
+
+- Only files built by GitHub Actions from the source code in this repository
+  ([.github/workflows/release.yml](.github/workflows/release.yml)) are signed: `knips.exe` and
+  `Knips_X.Y.Z_x64-setup.exe`. Third-party files inside the installer (the NSIS installer plugins) are not
+  signed with this certificate.
+- Every signing request is approved manually by the approver in SignPath.
+- Committers and reviewers: [Patrick Birkholz](https://github.com/patrickbirkholz0000). Approvers:
+  [Patrick Birkholz](https://github.com/patrickbirkholz0000). Changes from others (pull requests) are
+  reviewed before they are merged.
+- Privacy: see [Privacy](#privacy). Knips only sends anonymous usage statistics after explicit consent,
+  lets you turn them off at any time and shows the notice in the installer.
 
 ### Building
 

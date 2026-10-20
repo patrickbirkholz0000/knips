@@ -1,5 +1,9 @@
-# Windows-Fassung bauen und auf einem echten Windows prüfen: Kern-Tests, Selbsttests (mit
-# Bildern der eigenen Fenster), Installer. Ergebnisse als Artefakt „knips-windows“.
+# Windows-Fassung bauen und auf einem echten Windows prüfen: Kern-Tests, Selbsttests (mit Bildern der eigenen
+# Fenster), Installer, Installation per install.ps1. Ergebnisse als Artefakt „knips-windows“.
+# Zweiter Job „signatur“: der Signatur-Ablauf aus release.yml (App-EXE signieren → Installer neu bündeln →
+# Installer signieren) mit einem Wegwerf-Zertifikat statt SignPath.
+#
+# Drittanbieter-Actions sind auf Commit-SHAs festgelegt (Version im Kommentar); Dependabot hält sie aktuell.
 name: Windows
 
 on:
@@ -24,27 +28,43 @@ jobs:
         working-directory: windows
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: 10
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: windows/pnpm-lock.yaml
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master, 2026-10-09
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: windows
           cache-on-failure: true
 
       - name: Abhängigkeiten
         run: pnpm install --frozen-lockfile
+
+      # Die Lizenzseite des Installers zeigt erst den Datenschutzhinweis, dann die GPL: der Rest der Datei muss
+      # genau der Lizenztext sein.
+      - name: Installer-Text (Datenschutz + Lizenz)
+        run: |
+          $text = [IO.File]::ReadAllBytes("installer/datenschutz-und-lizenz.txt")
+          $gpl = [IO.File]::ReadAllBytes("LICENSE")
+          $tail = $text[($text.Length - $gpl.Length)..($text.Length - 1)]
+          if ([Convert]::ToBase64String($tail) -ne [Convert]::ToBase64String($gpl)) {
+            throw "installer/datenschutz-und-lizenz.txt endet nicht mit dem Text aus LICENSE."
+          }
+          Write-Host "Datenschutzhinweis + vollständige GPL ($($gpl.Length) Bytes)"
 
       - name: Oberfläche (Typprüfung + Build)
         run: pnpm build
@@ -68,10 +88,26 @@ jobs:
         run: ./scripts/selftest.ps1 -Exe target/selftest/knips.exe -Out shots
 
       - name: Installer (Weitergabe, ohne Entwickler-Code)
+        id: installer
         if: always()
         run: pnpm tauri build
 
-      - uses: actions/upload-artifact@v4
+      # Installiert wirklich (PowerShell 7 und Windows PowerShell 5.1) und deinstalliert wieder.
+      - name: Installation per install.ps1
+        if: always() && steps.installer.outcome == 'success'
+        run: |
+          $setup = @(Get-ChildItem target/release/bundle/nsis -Filter "*_x64-setup.exe")
+          if ($setup.Count -ne 1) { throw "Erwartet genau einen Installer, gefunden: $($setup.Count)" }
+          ./scripts/test-install.ps1 -Installer $setup[0].FullName
+
+      - name: Installer-Seiten fotografieren
+        if: always() && steps.installer.outcome == 'success'
+        continue-on-error: true
+        run: |
+          $setup = @(Get-ChildItem target/release/bundle/nsis -Filter "*_x64-setup.exe")[0]
+          ./scripts/installer-shots.ps1 -Installer $setup.FullName -Out shots/installer
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: knips-windows
@@ -79,3 +115,114 @@ jobs:
             windows/shots
             windows/target/release/bundle/nsis/*.exe
           if-no-files-found: warn
+
+      # Für den Job „signatur“: die App-EXE genau so, wie release.yml sie zu SignPath schickt.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always() && steps.installer.outcome == 'success'
+        with:
+          name: knips-exe
+          path: windows/target/release/knips.exe
+          if-no-files-found: error
+          retention-days: 3
+
+  # Signatur-Ablauf aus release.yml in einem frischen Job (wie dort zwischen Bauen und Signieren), mit einem
+  # selbst ausgestellten Zertifikat, das nur auf diesem Runner gilt.
+  signatur:
+    needs: windows
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: windows
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 10
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: windows/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master, 2026-10-09
+        with:
+          toolchain: stable
+
+      - name: Abhängigkeiten
+        run: pnpm install --frozen-lockfile
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: knips-exe
+          path: ${{ runner.temp }}/unsigned
+
+      - name: Wegwerf-Zertifikat
+        id: cert
+        run: |
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=Knips CI Signatur-Probe" `
+            -CertStoreLocation Cert:\CurrentUser\My -KeyAlgorithm RSA -KeyLength 3072 -HashAlgorithm SHA256 `
+            -NotAfter (Get-Date).AddDays(1)
+          "thumbprint=$($cert.Thumbprint)" >> $env:GITHUB_OUTPUT
+          "version=$((Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version)" >> $env:GITHUB_OUTPUT
+
+      - name: App-EXE signieren (an Stelle von SignPath)
+        env:
+          THUMB: ${{ steps.cert.outputs.thumbprint }}
+          VERSION: ${{ steps.cert.outputs.version }}
+          UNSIGNED: ${{ runner.temp }}/unsigned/knips.exe
+          SIGNED: ${{ runner.temp }}/signed/knips.exe
+        run: |
+          $cert = Get-Item "Cert:\CurrentUser\My\$env:THUMB"
+          New-Item -ItemType Directory -Force -Path (Split-Path $env:SIGNED) | Out-Null
+          Copy-Item $env:UNSIGNED $env:SIGNED
+          Set-AuthenticodeSignature -FilePath $env:SIGNED -Certificate $cert -HashAlgorithm SHA256 | Format-List Status, StatusMessage
+          # Zertifikat ohne vertraute Wurzel (wie SignPaths Testzertifikat): nur mit -AllowUntrustedRoot gültig.
+          ./scripts/check-signature.ps1 -Path $env:SIGNED -Version $env:VERSION -Thumbprint $env:THUMB -AllowUntrustedRoot
+          $strict = $true
+          try { ./scripts/check-signature.ps1 -Path $env:SIGNED -Version $env:VERSION | Out-Null } catch { $strict = $false }
+          if ($strict) { throw "Ohne vertraute Wurzel hätte die strenge Prüfung scheitern müssen." }
+          # Ab hier wie ein öffentliches Zertifikat: Wurzel nur auf diesem Runner vertrauen.
+          $cer = Join-Path $env:RUNNER_TEMP probe.cer
+          Export-Certificate -Cert $cert -FilePath $cer | Out-Null
+          Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+          ./scripts/check-signature.ps1 -Path $env:SIGNED -Version $env:VERSION -Thumbprint $env:THUMB
+
+      - name: Installer um die signierte App bündeln (wie release.yml)
+        id: bundle
+        env:
+          THUMB: ${{ steps.cert.outputs.thumbprint }}
+          VERSION: ${{ steps.cert.outputs.version }}
+          SIGNED: ${{ runner.temp }}/signed/knips.exe
+        run: |
+          $setup = ./scripts/bundle-signed.ps1 -SignedExe $env:SIGNED -Version $env:VERSION -Thumbprint $env:THUMB
+          "setup=$setup" >> $env:GITHUB_OUTPUT
+
+      - name: Installer signieren und prüfen
+        env:
+          THUMB: ${{ steps.cert.outputs.thumbprint }}
+          VERSION: ${{ steps.cert.outputs.version }}
+          SETUP: ${{ steps.bundle.outputs.setup }}
+        run: |
+          $cert = Get-Item "Cert:\CurrentUser\My\$env:THUMB"
+          Set-AuthenticodeSignature -FilePath $env:SETUP -Certificate $cert -HashAlgorithm SHA256 | Format-List Status, StatusMessage
+          ./scripts/check-signature.ps1 -Path $env:SETUP -Version $env:VERSION -Thumbprint $env:THUMB -Installer
+
+      - name: install.ps1 mit signiertem Installer
+        env:
+          THUMB: ${{ steps.cert.outputs.thumbprint }}
+          SETUP: ${{ steps.bundle.outputs.setup }}
+        run: ./scripts/test-install.ps1 -Installer $env:SETUP -ProbeThumbprint $env:THUMB
+
+      - name: Zertifikat entfernen
+        if: always() && steps.cert.outputs.thumbprint != ''
+        env:
+          THUMB: ${{ steps.cert.outputs.thumbprint }}
+        run: |
+          Remove-Item "Cert:\LocalMachine\Root\$env:THUMB" -ErrorAction SilentlyContinue
+          Remove-Item "Cert:\CurrentUser\My\$env:THUMB" -ErrorAction SilentlyContinue

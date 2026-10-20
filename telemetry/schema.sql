@@ -27,3 +27,9 @@ CREATE TABLE IF NOT EXISTS daily_events (
   PRIMARY KEY (day, install_hash, name)
 );
 CREATE INDEX IF NOT EXISTS daily_events_day ON daily_events (day);
+
+-- Neue Installationen je UTC-Tag, nur als Zahl: Obergrenze gegen massenhaft erfundene IDs (src/index.js).
+CREATE TABLE IF NOT EXISTS daily_new (
+  day TEXT PRIMARY KEY,           -- JJJJ-MM-TT, UTC
+  installs INTEGER NOT NULL
+);

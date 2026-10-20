@@ -131,6 +131,10 @@ Installer ausführen. Knips installiert sich nur für den angemeldeten Benutzer,
 
 Ist der Installer nicht signiert, warnt Windows SmartScreen mit „Der Computer wurde durch Windows geschützt“. Dann „Weitere Informationen“ → „Trotzdem ausführen“ wählen. Vorher am besten die Prüfsumme vergleichen: \`Get-FileHash .\\$EXE\` in PowerShell muss den Wert aus \`$EXE.sha256\` ergeben (Groß-/Kleinschreibung egal).
 
+Oder in PowerShell, ohne SmartScreen-Abfrage: \`irm https://knips.velno.ai/install.ps1 | iex\` lädt diesen Installer, prüft Prüfsumme und Signatur und installiert ihn ([Skript ansehen](https://github.com/$REPO/blob/$TAG/windows/install.ps1)).
+
+Signatur der Windows-Dateien: [Code signing policy](https://github.com/$REPO#code-signing-policy).
+
 EOF
   if [[ -n "$PREV" ]]; then
     echo "## Änderungen seit $PREV"
@@ -160,6 +164,7 @@ fi
 
 # --- Auf den Windows-Installer warten ------------------------------------------------------------------
 step "Warte auf den Windows-Build (.github/workflows/release.yml)…"
+echo "  Ist SignPath eingerichtet: zwei Signieranfragen auf https://app.signpath.io freigeben (knips.exe, dann Installer)."
 RUN_ID=""
 for _ in $(seq 1 30); do
   RUN_ID=$(gh run list --workflow release.yml --limit 20 --json databaseId,headSha \

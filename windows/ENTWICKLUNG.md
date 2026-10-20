@@ -272,4 +272,6 @@ Ziehen aus den Karten in andere Apps, Einfügen in fremde Apps, mehrere Monitore
   `sk_` + `live_…` schreiben, sondern zusammengesetzt (`concat!`, in TS `"sk_" + "live_…"`) — sonst schlagen
   Secret-Scanner (GitHub-Push-Schutz) an.
 - Editor ist auf 90 % des Arbeitsbereichs begrenzt (Mac: ≥ 1140 pt) → Werkzeugleiste wird unter
-  1180/1060/960/860 px schrittweise kompakter. Menü 360 statt 340 px breit (Kürzel sind Wörter).
+  1480/1400/1250/1180/1000/940/820 px schrittweise kompakter (Stufen in `src/editor/editor.css`, ab 1250 Farben als
+  Popover; passt mit Auto-Zensur bis ~760 px). Video-Editor (mind. 900 px): unter 1020 px nur Symbole für Zensur-Stil
+  und Auto-Zensur. Menü 360 statt 340 px breit (Kürzel sind Wörter).

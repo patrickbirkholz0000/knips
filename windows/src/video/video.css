@@ -1,88 +1,75 @@
-/* Video-Editor: dunkle Oberfläche wie auf dem Mac (Canvas rgb(27,27,29), Leisten rgb(33,33,33)). */
+/* Video-Editor in der Markensprache (docs/design.md, „Video-Editor“): wie der Bild-Editor — Leiste oben mit den
+   Export-Knöpfen rechts, Video auf der fill-Fläche mit leichtem Schatten, darunter die Zeitleiste als Karte:
+   Kürzen-Griffe und Abspielkopf in Tinte, Zensurbereiche als Königsblau-Spannen, Zeiten in Mono.
+   Bausteine aus ../editor/controls.css, nur --k-* Tokens. */
 html[data-view="video"],
 html[data-view="video"] body {
-  background: rgb(27, 27, 29);
+  background: var(--k-canvas);
+  color: var(--k-ink);
   overflow: hidden;
 }
 .vid-root {
-  --vid-bg: rgb(27, 27, 29);
-  --vid-bar: rgb(33, 33, 33);
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--vid-bg);
-  color: #fff;
   position: relative;
 }
-.vid-center { align-items: center; justify-content: center; }
-.vid-spacer { flex: 1; min-width: 8px; }
+.vid-center { align-items: center; justify-content: center; padding: 24px; }
+.vid-spacer { flex: 1; min-width: 6px; }
 
+/* Fehler beim Öffnen (z. B. Windows N/KN ohne Media Feature Pack): Karte mit dem Grund, bleibt stehen */
+.vid-error {
+  max-width: 460px;
+  padding: 26px 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  background: var(--k-surface);
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-radius-dialog);
+  box-shadow: var(--k-shadow-float);
+}
+.vid-error-icon {
+  width: 40px;
+  height: 40px;
+  margin-bottom: 6px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--k-radius-field);
+  background: var(--k-warn-soft);
+  color: var(--k-warn);
+}
+.vid-error h2 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -.01em; }
+.vid-error p { margin: 0; font-size: 13.5px; line-height: 1.5; color: var(--k-ink-soft); user-select: text; -webkit-user-select: text; }
+
+/* Leiste oben */
 .vid-toolbar {
-  height: 52px;
+  height: 60px;
   flex: none;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   padding: 0 12px;
-  background: var(--vid-bar);
 }
-.vid-dim-icon { color: rgba(255, 255, 255, 0.8); flex: none; }
-.vid-hint {
-  font-size: 12.5px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.7);
-  white-space: nowrap;
+.vid-props { gap: 8px; padding-left: 10px; min-width: 0; flex: 0 1 auto; }
+.vid-tool-icon { display: grid; place-items: center; width: 28px; height: 28px; flex: none; border-radius: calc(var(--k-radius-field) - 2px); background: var(--k-accent-soft); color: var(--k-accent); }
+.vid-hint { font-size: 13px; color: var(--k-ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.vid-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+
+/* Arbeitsfläche */
+.vid-stage-wrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  margin: 0 12px;
+  border-radius: var(--k-radius-card);
+  background: var(--k-fill);
+  box-shadow: inset 0 0 0 1px var(--k-line);
   overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
 }
-.vid-divider { height: 1px; background: rgba(255, 255, 255, 0.07); flex: none; }
-
-.vid-segment {
-  display: flex;
-  gap: 2px;
-  padding: 3px;
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.06);
-  flex: none;
-}
-.vid-segment button {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 9px;
-  border-radius: 7px;
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
-  color: rgba(255, 255, 255, 0.75);
-}
-.vid-segment button.on { background: rgba(255, 255, 255, 0.18); color: #fff; }
-
-.vid-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 11px;
-  border-radius: 7px;
-  font-size: 12.5px;
-  font-weight: 600;
-  white-space: nowrap;
-  flex: none;
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
-}
-.vid-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.16); }
-.vid-btn:active:not(:disabled) { background: rgba(255, 255, 255, 0.2); opacity: 0.85; }
-.vid-btn.prominent { background: var(--accent); }
-.vid-btn.prominent:hover:not(:disabled) { background: rgb(26, 135, 255); }
-.vid-btn:disabled { color: rgba(255, 255, 255, 0.4); }
-
-.vid-stage-wrap { flex: 1; min-height: 0; position: relative; }
-.vid-stage { position: absolute; inset: 0; overflow: hidden; background: var(--vid-bg); }
-.vid-stage video { position: absolute; background: var(--vid-bg); pointer-events: none; }
+.vid-stage { position: absolute; inset: 0; overflow: hidden; }
+.vid-stage video { position: absolute; background: var(--k-surface); pointer-events: none; box-shadow: var(--k-shadow-float); }
 .vid-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
 .vid-overlay-slot {
   position: absolute;
@@ -91,97 +78,136 @@ html[data-view="video"] body {
   justify-content: center;
   pointer-events: none;
 }
-.vid-pill {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.78);
-  font-size: 12.5px;
-  font-weight: 600;
-  pointer-events: auto;
-}
-.vid-pill.busy { background: rgba(0, 0, 0, 0.8); gap: 10px; padding: 9px 14px; }
-.vid-progress { width: 120px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.2); overflow: hidden; }
-.vid-progress div { height: 100%; background: var(--accent); transition: width 0.15s; }
-.vid-cancel {
-  margin-left: 4px;
-  padding: 2px 9px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.14);
-  font-size: 12px;
-  font-weight: 600;
-}
-.vid-cancel:hover { background: rgba(255, 255, 255, 0.22); }
+.vid-pill { pointer-events: auto; }
+.vid-pill.error { border-radius: var(--k-radius-card); max-width: min(560px, calc(100% - 32px)); align-items: flex-start; }
+.vid-pill.error > svg { margin-top: 1px; }
+.vid-pill.busy { gap: 10px; padding-right: 6px; }
+.vid-progress { width: 120px; height: 4px; flex: none; border-radius: var(--k-radius-pill); background: var(--k-fill); overflow: hidden; }
+.vid-progress div { height: 100%; border-radius: inherit; background: var(--k-accent); transition: width .15s; }
+.vid-percent { font-size: 12px; color: var(--k-ink-soft); }
 
+/* Zeitleiste als Karte */
 .vid-bottom {
   flex: none;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 12px 16px;
-  background: var(--vid-bar);
+  margin: 10px 12px 12px;
+  padding: 12px 14px 10px;
+  background: var(--k-surface);
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-radius-card);
+  box-shadow: var(--k-shadow);
 }
 .vid-row { display: flex; align-items: center; gap: 12px; }
 .vid-play {
-  width: 34px; height: 34px; border-radius: 50%;
+  width: 36px; height: 36px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
+  background: var(--k-button);
+  color: var(--k-button-ink);
   flex: none;
+  transition: background var(--k-t-fast);
 }
-.vid-play:hover { background: rgba(255, 255, 255, 0.18); }
+.vid-play:hover { background: var(--k-ink-muted); }
+.vid-play:focus-visible { outline: none; box-shadow: var(--k-focus-ring); }
 .vid-time {
-  width: 128px; flex: none;
-  font: 500 12px var(--mono);
-  color: rgba(255, 255, 255, 0.75);
+  width: 132px; flex: none;
+  font-size: 12px;
+  color: var(--k-ink-soft);
   white-space: nowrap;
 }
+.vid-time b { font-weight: 500; color: var(--k-ink); }
 
-.vid-timeline { flex: 1; height: 60px; position: relative; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.vid-strip-row { position: relative; height: 48px; flex: none; }
+.vid-timeline { flex: 1; position: relative; display: flex; flex-direction: column; gap: 7px; min-width: 0; padding: 4px 0 2px; }
+.vid-strip-row { position: relative; height: 44px; flex: none; }
 .vid-strip {
-  position: absolute; left: 0; right: 0; top: 0; height: 40px;
+  position: absolute; left: 0; right: 0; top: 0; height: 44px;
   display: flex; overflow: hidden;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.08);
+  border-radius: calc(var(--k-radius-field) - 2px);
+  background: var(--k-fill);
 }
-.vid-strip img { height: 40px; object-fit: cover; flex: none; display: block; pointer-events: none; }
-.vid-dim { position: absolute; top: 0; height: 40px; background: rgba(0, 0, 0, 0.6); pointer-events: none; }
+.vid-strip img { height: 44px; object-fit: cover; flex: none; display: block; pointer-events: none; }
+/* Außerhalb der Kürzung: ausgewaschen statt abgedunkelt (hell und dunkel gleich gut lesbar) */
+.vid-dim { position: absolute; top: 0; height: 44px; background: color-mix(in srgb, var(--k-surface) 72%, transparent); pointer-events: none; }
 .vid-trim-frame {
-  position: absolute; top: 0; height: 40px;
-  border: 2px solid #ffd60a; border-radius: 6px;
+  position: absolute; top: 0; height: 44px;
+  border: 2px solid var(--k-ink);
+  border-radius: calc(var(--k-radius-field) - 2px);
   pointer-events: none;
 }
 .vid-trim-handle {
-  position: absolute; top: -2px; width: 12px; height: 44px;
-  border-radius: 3px; background: #ffd60a;
+  position: absolute; top: -2px; width: 12px; height: 48px;
+  border-radius: 4px; background: var(--k-ink);
   display: flex; align-items: center; justify-content: center;
-  color: rgba(0, 0, 0, 0.7);
+  color: var(--k-surface);
   touch-action: none;
+  cursor: ew-resize;
 }
 .vid-playhead {
-  position: absolute; top: 0; width: 2px; height: 48px;
-  background: #fff; box-shadow: 0 0 1px rgba(0, 0, 0, 0.6);
+  position: absolute; top: -5px; width: 2px; height: 66px;
+  border-radius: 1px;
+  background: var(--k-ink);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--k-surface) 70%, transparent);
   pointer-events: none;
 }
-.vid-tracks { position: relative; height: 8px; background: rgba(255, 255, 255, 0.05); }
-.vid-track-bar { position: absolute; top: 0; height: 8px; border-radius: 3px; background: rgba(255, 59, 48, 0.75); }
-.vid-track-bar.selected { background: var(--accent); }
+.vid-playhead i {
+  position: absolute; left: -4px; top: -3px;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--k-ink);
+  box-shadow: 0 0 0 2px var(--k-surface);
+}
+.vid-tracks { position: relative; height: 10px; border-radius: var(--k-radius-pill); background: var(--k-fill); }
+.vid-track-bar {
+  position: absolute; top: 0; height: 10px;
+  border-radius: var(--k-radius-pill);
+  background: color-mix(in srgb, var(--k-accent) 50%, transparent);
+  transition: background var(--k-t-fast);
+}
+.vid-track-bar:hover { background: color-mix(in srgb, var(--k-accent) 75%, transparent); }
+.vid-track-bar.selected { background: var(--k-accent); box-shadow: 0 0 0 2px var(--k-accent-soft); }
 
-.vid-selbar { display: flex; align-items: center; gap: 8px; height: 28px; font-size: 12px; }
+.vid-selbar { display: flex; align-items: center; gap: 8px; height: 30px; font-size: 13px; min-width: 0; overflow: hidden; }
 .vid-selbar strong { font-weight: 600; white-space: nowrap; }
-.vid-mono { font: 500 12px var(--mono); color: rgba(255, 255, 255, 0.7); white-space: nowrap; }
-.vid-note { font-weight: 500; color: rgba(255, 255, 255, 0.55); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.vid-trimmed { font-weight: 500; color: rgba(255, 214, 10, 0.85); white-space: nowrap; }
+.vid-mono { font-size: 12px; color: var(--k-ink-soft); white-space: nowrap; margin-right: 4px; }
+.vid-note { color: var(--k-ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.vid-trimmed { color: var(--k-ink-muted); white-space: nowrap; font-size: 12.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.vid-trimmed .kc-mono { color: var(--k-ink); font-size: 12px; }
 
+/* Rückfrage beim Schließen: Dialog-Karte wie die Onboarding-Karte wie in der App-Familie */
 .vid-modal-back {
   position: absolute; inset: 0; z-index: 10;
-  background: rgba(0, 0, 0, 0.5);
+  background: color-mix(in srgb, var(--k-dark) 40%, transparent);
   display: flex; align-items: center; justify-content: center;
+  padding: 16px;
 }
-.vid-modal { width: 380px; padding: 20px; border-radius: 12px; background: rgb(44, 44, 46); box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); }
-.vid-modal h3 { margin: 0 0 6px; font-size: 14px; }
-.vid-modal p { margin: 0 0 16px; font-size: 12.5px; color: rgba(255, 255, 255, 0.7); }
-.vid-modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.vid-modal {
+  width: 420px;
+  max-width: 100%;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--k-radius-dialog);
+  background: var(--k-surface);
+  border: 1px solid var(--k-line);
+  box-shadow: var(--k-shadow-dialog);
+}
+.vid-modal h3 { margin: 10px 0 6px; font-size: 20px; font-weight: 600; letter-spacing: -.01em; }
+.vid-modal p { margin: 0 0 22px; font-size: 13.5px; line-height: 1.5; color: var(--k-ink-soft); }
+.vid-modal-actions { display: flex; gap: 8px; align-items: center; }
+
+/* Schmale Fenster (mindestens 900 px; CI 1024×768 → ~920 px): alles mit Beschriftung braucht ~1010 px, darunter
+   zeigen Zensur-Stil und Auto-Zensur nur Symbole (mit Tooltip). */
+@media (max-width: 1020px) {
+  .vid-label { display: none; }
+  .vid-segment button { padding: 0 9px; }
+  .vid-auto.kc-btn { width: 38px; padding: 0; }
+}
+@media (max-width: 980px) {
+  .vid-toolbar, .vid-actions { gap: 6px; }
+  .vid-toolbar { padding: 0 8px; }
+  .vid-stage-wrap { margin: 0 8px; }
+  .vid-bottom { margin: 8px 8px 8px; }
+  .vid-time { width: 118px; }
+  .vid-selbar { gap: 6px; }
+  .vid-selbar .kc-btn--sm { padding: 0 8px; }
+}

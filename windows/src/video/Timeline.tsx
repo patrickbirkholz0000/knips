@@ -1,4 +1,4 @@
-// Zeitleiste: Vorschaubilder, gelbe Kürzungs-Griffe, Abspielkopf und Zensur-Spuren.
+// Zeitleiste: Vorschaubilder, Kürzungs-Griffe und Abspielkopf in Tinte, Zensur-Spuren als Königsblau-Spannen.
 import { useRef } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useVideoState, type VideoModel } from "./model";
@@ -45,7 +45,7 @@ export default function Timeline({ model }: { model: VideoModel }) {
       onPointerUp={() => (trimDrag.current = null)}
       onPointerCancel={() => (trimDrag.current = null)}
     >
-      {left ? <ChevronLeft size={11} strokeWidth={3.2} /> : <ChevronRight size={11} strokeWidth={3.2} />}
+      {left ? <ChevronLeft size={11} strokeWidth={3} /> : <ChevronRight size={11} strokeWidth={3} />}
     </div>
   );
 
@@ -66,13 +66,16 @@ export default function Timeline({ model }: { model: VideoModel }) {
         />
         {trimHandle(true)}
         {trimHandle(false)}
-        <div className="vid-playhead" style={{ left: `calc(${pct(s.currentTime)} - 1px)` }} />
+        <div className="vid-playhead" style={{ left: `calc(${pct(s.currentTime)} - 1px)` }}>
+          <i />
+        </div>
       </div>
       <div className="vid-tracks">
         {s.redactions.map((r) => (
           <div
             key={r.id}
             className={`vid-track-bar${r.id === s.selectedId ? " selected" : ""}`}
+            title={r.auto ? "Zensur (auto)" : "Zensur"}
             style={{ left: pct(r.start), width: `max(4px, calc(${pct(r.end)} - ${pct(r.start)}))` }}
             onClick={() => {
               model.select(r.id);

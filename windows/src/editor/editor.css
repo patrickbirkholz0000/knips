@@ -1,109 +1,155 @@
-/* Bild-Editor: dunkles Fenster wie die Mac-Fassung (EditorWindow.swift). */
+/* Bild-Editor in der Markensprache (docs/design.md, „Editor (Bild)“): Fensterfläche Papier, oben die
+   Werkzeugleiste als Gruppe, daneben die Eigenschaften im selben Stil, rechts die Aktionen; das Bild liegt in der
+   Mitte auf einer fill-Fläche mit leichtem Schatten; unten links Zoom und Maße in Mono. Bausteine: controls.css. */
 html[data-view="editor"],
 html[data-view="editor"] body {
-  background: rgb(27, 27, 29);
-  color: #fff;
+  background: var(--k-canvas);
+  color: var(--k-ink);
   overflow: hidden;
-  --accent: #0a84ff;
 }
-.ed-root { display: flex; flex-direction: column; height: 100%; background: rgb(27, 27, 29); }
+.ed-root { display: flex; flex-direction: column; height: 100%; }
+.ed-error { padding: 24px; color: var(--k-ink-soft); font-size: 13px; }
+
+/* Werkzeugleiste */
 .ed-toolbar {
-  display: flex; align-items: center; gap: 10px; height: 52px; flex: none; padding: 0 12px;
-  background: rgb(33, 33, 33); border-bottom: 1px solid rgba(255, 255, 255, 0.07); position: relative; z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 60px;
+  flex: none;
+  padding: 0 12px;
+  position: relative;
+  z-index: 5;
 }
-.ed-group { display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: rgba(255, 255, 255, 0.06); flex: none; }
-.ed-divider { width: 1px; height: 22px; background: rgba(255, 255, 255, 0.12); flex: none; }
-.ed-tool, .ed-icon, .ed-seg-btn, .ed-btn, .ed-swatch { color: rgba(255, 255, 255, 0.85); flex: none; }
-.ed-tool { width: 30px; height: 28px; border-radius: 7px; display: grid; place-items: center; color: rgba(255, 255, 255, 0.82); }
-.ed-tool:hover:not(.on) { background: rgba(255, 255, 255, 0.07); }
-.ed-tool.on { background: var(--accent); color: #fff; }
-.ed-icon { width: 30px; height: 28px; display: grid; place-items: center; border-radius: 7px; }
-.ed-icon:hover:not(:disabled) { background: rgba(255, 255, 255, 0.07); }
-.ed-icon:disabled { color: rgba(255, 255, 255, 0.3); }
-.ed-icon.accent { color: var(--accent); }
-.ed-icon.fill { width: 28px; height: 26px; }
-.ed-hint { font-size: 11.5px; font-weight: 500; color: rgba(255, 255, 255, 0.55); white-space: nowrap; flex: none; }
-.ed-seg-btn { display: flex; align-items: center; justify-content: center; gap: 5px; border-radius: 7px; font-size: 11.5px; font-weight: 500; color: rgba(255, 255, 255, 0.75); white-space: nowrap; }
-.ed-seg-btn.wide { height: 26px; padding: 0 7px; }
-.ed-seg-btn.size { width: 26px; height: 24px; border-radius: 6px; font-weight: 600; color: rgba(255, 255, 255, 0.7); }
-.ed-seg-btn.on { background: rgba(255, 255, 255, 0.18); color: #fff; }
-.ed-seg-btn:hover:not(.on) { background: rgba(255, 255, 255, 0.07); }
-.ed-colors { display: flex; gap: 5px; flex: none; }
-.ed-swatch { width: 23px; height: 23px; border-radius: 50%; padding: 3px; border: 2px solid transparent; display: block; }
-.ed-swatch.on { border-color: rgba(255, 255, 255, 0.95); }
-.ed-swatch span { display: block; width: 17px; height: 17px; border-radius: 50%; border: 1px solid; margin: -0.5px 0 0 -0.5px; }
-.ed-btn {
-  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border-radius: 7px;
-  background: rgba(255, 255, 255, 0.1); color: #fff; font-size: 12.5px; font-weight: 600; white-space: nowrap;
-}
-.ed-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.16); }
-.ed-btn:active:not(:disabled) { background: rgba(255, 255, 255, 0.2); }
-.ed-btn:disabled { color: rgba(255, 255, 255, 0.4); }
-.ed-btn.prominent { background: var(--accent); }
-.ed-btn.prominent:hover { filter: brightness(1.08); }
-.ed-right { display: flex; align-items: center; gap: 6px; flex: none; }
-.ed-crop-bar { display: flex; align-items: center; gap: 8px; }
-.ed-crop-bar > span { font-size: 12.5px; font-weight: 500; color: rgba(255, 255, 255, 0.75); white-space: nowrap; }
+.ed-spacer { flex: 1; min-width: 6px; }
+.ed-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.ed-props { gap: 4px; padding-left: 6px; padding-right: 6px; }
+.ed-props .kc-seg { margin: 0 -3px; }
 
-.ed-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+/* Farben der Anmerkungen bleiben bunt (Inhalt) */
+.ed-colors { display: flex; gap: 1px; flex: none; }
+.ed-swatch { width: 26px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 50%; }
+.ed-swatch span {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--k-ink) 22%, transparent);
+  transition: transform var(--k-t-fast);
+}
+.ed-swatch:hover:not(.on) span { transform: scale(1.1); }
+.ed-swatch.on span {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--k-ink) 22%, transparent), 0 0 0 2px var(--k-surface), 0 0 0 4px var(--k-accent);
+}
+.ed-swatch:focus-visible { outline: none; box-shadow: var(--k-focus-ring); }
+
+.ed-color-btn { width: 44px !important; gap: 3px; }
+.ed-color-dot { width: 18px; height: 18px; border-radius: 50%; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--k-ink) 22%, transparent); }
+.ed-popover.ed-color-pop { left: -6px; right: auto; width: auto; flex-direction: row; gap: 2px; padding: 8px; }
+
+/* Stärke: Strich in drei Dicken */
+.ed-size { width: 34px; padding: 0 !important; }
+.ed-size i { display: block; width: 14px; border-radius: var(--k-radius-pill); background: currentColor; }
+
+/* Zuschneiden */
+.ed-crop-info { flex: 0 1 auto; gap: 10px; padding: 0 14px 0 12px; font-size: 13px; white-space: nowrap; min-width: 0; overflow: hidden; }
+.ed-crop-info > svg { color: var(--k-accent); flex: none; }
+.ed-crop-info strong { font-weight: 600; }
+.ed-crop-steps { color: var(--k-ink-soft); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ed-crop-steps .kc-kbd, .ed-hint .kc-kbd { margin: 0 3px; vertical-align: 1px; }
+
+/* Arbeitsfläche */
+.ed-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  margin: 0 12px;
+  border-radius: var(--k-radius-card);
+  background: var(--k-fill);
+  box-shadow: inset 0 0 0 1px var(--k-line);
+}
 .ed-stage canvas { display: block; position: absolute; inset: 0; }
-.ed-pill {
-  position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px;
-  padding: 8px 14px; border-radius: 999px; background: rgba(0, 0, 0, 0.78); border: 1px solid rgba(255, 255, 255, 0.1);
-  font-size: 12.5px; font-weight: 600; white-space: nowrap; animation: ed-in 0.25s ease-out; pointer-events: none;
-}
-.ed-pill svg { color: #34c759; }
-.ed-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.25); border-top-color: #fff; animation: ed-rot 0.8s linear infinite; }
-@keyframes ed-rot { to { transform: rotate(360deg); } }
-@keyframes ed-in { from { opacity: 0; transform: translate(-50%, 10px); } }
-.ed-zoom {
-  position: absolute; right: 14px; bottom: 14px; display: flex; align-items: center; border-radius: 999px;
-  background: rgba(0, 0, 0, 0.62); border: 1px solid rgba(255, 255, 255, 0.12); color: rgba(255, 255, 255, 0.9);
-}
-.ed-zoom button { height: 26px; display: grid; place-items: center; color: inherit; }
-.ed-zoom .step { width: 28px; }
-.ed-zoom .pct { min-width: 52px; padding: 0 12px; font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.ed-zoom button:hover { color: #fff; }
+/* Unter dem Bild (Canvas ist durchsichtig): trägt den leichten Schatten, Lage setzt canvas.ts. */
+.ed-sheet { position: absolute; left: 0; top: 0; width: 0; height: 0; box-shadow: var(--k-shadow-float); pointer-events: none; }
+.ed-pill-slot { position: absolute; left: 0; right: 0; bottom: 16px; display: flex; justify-content: center; pointer-events: none; }
 
-.ed-pop-wrap { position: relative; }
+/* Fußzeile: Zoom und Maße (Mono), rechts der Hinweis zum Werkzeug */
+.ed-footer { display: flex; align-items: center; gap: 10px; height: 50px; flex: none; padding: 0 12px; min-width: 0; }
+.ed-zoom { gap: 0; }
+.ed-zoom .pct { width: auto; min-width: 58px; padding: 0 8px; font: 500 12px/1 var(--k-mono); color: var(--k-ink); }
+.ed-fit { font-size: 12.5px; color: var(--k-ink-soft); white-space: nowrap; }
+.ed-dims { font-size: 12px; color: var(--k-ink-soft); white-space: nowrap; }
+.ed-dot { width: 3px; height: 3px; border-radius: 50%; background: var(--k-line-strong); flex: none; }
+.ed-hint { font-size: 12.5px; color: var(--k-ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* Popover „Hintergrund und Rahmen“ */
+.ed-pop-wrap { position: relative; display: flex; }
 .ed-popover {
-  position: absolute; top: 38px; right: -4px; width: 300px; padding: 16px; z-index: 20; display: flex; flex-direction: column; gap: 14px;
-  background: rgb(44, 44, 46); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 12px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
-  font-size: 13px; color: #fff;
+  position: absolute;
+  top: 42px;
+  right: -4px;
+  width: 300px;
+  padding: 16px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  font-size: 13px;
 }
-.ed-switch-row { display: flex; align-items: center; justify-content: space-between; }
-.ed-switch { appearance: none; width: 38px; height: 22px; border-radius: 11px; background: rgba(255, 255, 255, 0.2); position: relative; margin: 0; transition: background 0.15s; }
-.ed-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform 0.15s; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); }
-.ed-switch:checked { background: #34c759; }
-.ed-switch:checked::after { transform: translateX(16px); }
+.ed-pop-title { font-size: 14px; font-weight: 600; }
+.ed-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .ed-grads { display: flex; gap: 8px; }
-.ed-grads button { width: 30px; height: 30px; border-radius: 7px; border: 1px solid rgba(255, 255, 255, 0.12); }
-.ed-grads button.on { border: 2.5px solid #fff; }
-.ed-field { display: flex; flex-direction: column; gap: 6px; }
-.ed-field > span { font-size: 12px; color: rgba(255, 255, 255, 0.6); }
-.ed-seg { display: flex; padding: 2px; border-radius: 8px; background: rgba(255, 255, 255, 0.08); }
-.ed-seg button { flex: 1; height: 24px; border-radius: 6px; font-size: 12px; color: rgba(255, 255, 255, 0.8); }
-.ed-seg button.on { background: rgba(255, 255, 255, 0.2); color: #fff; font-weight: 600; }
-/* Schmale Fenster: Windows begrenzt den Editor auf 90 % des Arbeitsbereichs (Mac: mindestens 1140 pt),
-   auf kleinen oder skalierten Bildschirmen wird er schmaler. Erst der Hinweis, dann die Beschriftungen
-   (Symbole mit Tooltip bleiben), zuletzt engere Werkzeuge — „Fertig“ bleibt immer sichtbar. */
-@media (max-width: 1180px) { .ed-hint { display: none; } }
-@media (max-width: 1060px) {
+.ed-grads button { width: 32px; height: 32px; border-radius: calc(var(--k-radius-field) - 2px); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--k-ink) 12%, transparent); }
+.ed-grads button.on { box-shadow: 0 0 0 2px var(--k-surface), 0 0 0 4px var(--k-accent); }
+.ed-field { display: flex; flex-direction: column; gap: 7px; }
+
+/* Schmale Fenster: Windows begrenzt den Editor auf 90 % des Arbeitsbereichs (Mac: mindestens 1140 pt), auf
+   kleinen oder skalierten Bildschirmen (CI: 1024×768 → ~920 px) wird er schmaler. Stufen (Fensterbreite, gemessen
+   mit Auto-Zensur und Formwerkzeug, dem breitesten Fall): 1480 „Text kopieren“ nur Symbol · 1400 Beschriftungen von
+   Zensieren, Zensur-Stil, Auto-Zensur weg · 1250 Farben als Knopf mit Popover · 1180 „Kopieren“ nur Symbol ·
+   1000/940/820 Werkzeuge enger. Symbole behalten ihren Tooltip, „Fertig“ bleibt immer sichtbar. */
+.ed-color-pick { display: none; }
+@media (max-width: 1480px) {
+  .ed-label-text { display: none; }
+  .ed-copy-text.kc-btn { width: 38px; padding: 0; }
+}
+@media (max-width: 1400px) {
   .ed-label { display: none; }
-  .ed-seg-btn.wide { padding: 0 8px; }
-  .ed-btn { padding: 0 9px; }
-  .ed-toolbar { gap: 8px; }
-  .ed-colors { gap: 2px; }
-  .ed-swatch { width: 21px; height: 21px; padding: 2px; }
+  .kc-tool.wide.ed-tool-redact { width: 32px; padding: 0; }
+  .ed-props .kc-seg button { padding: 0 9px; }
+  .ed-auto.kc-btn { width: 38px; padding: 0; }
 }
-@media (max-width: 960px) {
-  .ed-toolbar { gap: 6px; padding: 0 8px; }
-  .ed-tool, .ed-icon { width: 26px; }
-  .ed-seg-btn.size { width: 22px; }
-  .ed-swatch { width: 19px; height: 19px; padding: 1px; }
-  .ed-swatch span { width: 15px; height: 15px; }
+@media (max-width: 1250px) {
+  .ed-colors { display: none; }
+  .ed-color-pick { display: flex; }
 }
-@media (max-width: 860px) {
-  .ed-tool, .ed-icon { width: 24px; }
-  .ed-right { gap: 2px; }
+@media (max-width: 1180px) {
+  .ed-label-copy { display: none; }
+  .ed-copy.kc-btn { width: 38px; padding: 0; }
+  .ed-toolbar, .ed-actions { gap: 6px; }
+}
+@media (max-width: 1000px) {
+  .ed-toolbar { padding: 0 8px; }
+  .ed-stage { margin: 0 8px; }
+  .ed-footer { padding: 0 8px; }
+  .ed-tools .kc-tool { width: 29px; }
+  .ed-tools .kc-divider, .ed-history .kc-divider { margin: 0 2px; }
+  .ed-size { width: 28px; }
+}
+@media (max-width: 940px) {
+  .ed-tools .kc-tool, .ed-history .kc-tool { width: 26px; }
+  .ed-tools.kc-group, .ed-props.kc-group, .ed-history.kc-group { padding: 2px 1px; }
+  .ed-size { width: 24px; }
+  .ed-props .kc-seg button { padding: 0 7px; }
+  .ed-toolbar, .ed-actions { gap: 4px; }
+  .ed-copy-text.kc-btn, .ed-copy.kc-btn, .ed-auto.kc-btn { width: 34px; }
+}
+@media (max-width: 820px) {
+  .ed-tools .kc-tool, .ed-history .kc-tool { width: 24px; }
+  .ed-tools .kc-divider, .ed-history .kc-divider { margin: 0 1px; }
+  .ed-color-btn { width: 38px !important; }
+  .ed-size { width: 22px; }
+  .ed-copy-text.kc-btn, .ed-copy.kc-btn, .ed-auto.kc-btn { width: 32px; }
+  .ed-actions .kc-btn--primary { padding: 0 11px; }
 }

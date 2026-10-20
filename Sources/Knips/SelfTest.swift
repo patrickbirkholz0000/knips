@@ -65,6 +65,7 @@ import Vision
             case "record-bench": try runAsync { try await recordBench(out) }
             case "track": try runAsync { try await track(out) }
             case "stitch": try stitch(out)
+            case "ocr-bench": try ocrBench(out)
             default:
                 print("Unbekannter Test \(args[0])")
                 return 2
@@ -94,7 +95,7 @@ import Vision
     static let sampleStripeLine = "Stripe-Key: " + sampleStripeKey
 
     /// Nachgebautes App-Fenster mit typischen sensiblen Daten (alle fiktiv).
-    static func sampleImage(width: Int = 1400, height: Int = 880, scale: CGFloat = 2) -> CGImage {
+    static func sampleImage(width: Int = 1400, height: Int = 880, scale: CGFloat = 2, email: String = "erika.mustermann@example.com") -> CGImage {
         let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
                             space: CGColorSpace(name: CGColorSpace.sRGB)!,
                             bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)!
@@ -122,7 +123,7 @@ import Vision
         }
         text("Kundendaten", 196, 52, size: 22, weight: .bold)
         text("Name: Erika Mustermann", 196, 96)
-        text("E-Mail: erika.mustermann@example.com", 196, 124)
+        text("E-Mail: " + email, 196, 124)
         text("Telefon: +49 170 1234567", 196, 152)
         text("IBAN: DE89 3704 0044 0532 0130 00", 196, 180)
         text(sampleStripeLine, 196, 208, size: 13, color: .darkGray)
@@ -216,6 +217,7 @@ import Vision
         if SensitiveDetector.matches(in: sampleStripeKey).map(\.0) != [.secret] { missing.append("Muster Stripe-Key") }
         if !missing.isEmpty { throw CheckFailed(message: "Nicht erkannt: \(missing.joined(separator: ", "))") }
         print("   ✓ Stripe-Key „\(sampleStripeKey)“ und E-Mail erkannt (1× und 2×)")
+        try detectLarge(out)
     }
 
     // MARK: UI

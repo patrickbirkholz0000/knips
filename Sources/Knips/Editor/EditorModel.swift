@@ -181,7 +181,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
 
     /// Erkannter Text ohne zensierte Stellen.
     func visibleText() -> String {
-        TextLayout.plainText(textLines, excluding: annotations.filter { $0.kind == .redact }.map(\.rect))
+        TextLayout.plainText(textLines, excluding: TextLayout.hidingRects(annotations, scale: scale))
     }
 
     var fullRect: CGRect { CGRect(x: 0, y: 0, width: base.width, height: base.height) }

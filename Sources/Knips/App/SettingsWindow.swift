@@ -100,7 +100,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Überschrift der Seite (die Startseite heißt wie in der App-Familie „So geht's“).
+    /// Überschrift der Seite (die Startseite heißt „So geht's“).
     var pageTitle: String { self == .start ? "So geht's" : title }
 
     var symbol: String {

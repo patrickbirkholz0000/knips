@@ -142,7 +142,7 @@ Test-Instanz: `KNIPS_TEST_DIR=<ordner> build/Knips.app/Contents/MacOS/Knips &`, 
 (URL-Aufrufe landen sonst bei der installierten App). Dieser Kanal gilt als intern (ohne Rückfrage);
 `link:<befehl>` verhält sich wie ein Link von außen. In der Sandbox fasst Knips die Zwischenablage nie an, nutzt die
 Einstellungs-Domäne `de.birkgroup.knips.sandbox` und bietet keine Übernahme der macOS-Kürzel an.
-Nie Befehle testen, die das Auswahl-Overlay öffnen — das erscheint auf dem Bildschirm des Nutzers.
+Befehle, die das Auswahl-Overlay öffnen, nicht nebenbei testen — das Overlay erscheint auf dem Bildschirm.
 
 ## Tempo (gemessen 08.10.2026, M4, zwei 4K-Bildschirme)
 
@@ -184,8 +184,8 @@ sofort bei Änderung; die Fenster setzen keine eigene Darstellung. Seitenleiste,
 
 Verlauf (`UI/HistoryWindow.swift`): Kopf mit Titel und Anzahl, Filter als Segment-Schalter, Karten mit Meta in Mono,
 Maus darüber: Königsblau-Linie und kleine dunkle Knöpfe. Dialoge (Zustimmung, „Aufnahme per Link?“, „Text kopieren?“,
-Freigabe, „Kürzel für Knips übernehmen?“) sind `BrandDialogWindow`: randlose Karte mit Radius 22 wie die
-Onboarding-Karte, Esc und ⌘W schließen. Die Link-Rückfrage zeigt ihre Schutzzeit (Primärknopf blass,
+Freigabe, „Kürzel für Knips übernehmen?“) sind `BrandDialogWindow`: randlose Karte mit Radius 22,
+Esc und ⌘W schließen. Die Link-Rückfrage zeigt ihre Schutzzeit (Primärknopf blass,
 Fortschritt darunter). Die Kürzel-Übernahme ist modal (`NSApp.runModal`) wie früher der NSAlert, ⏎ = Übernehmen.
 
 ## Nicht automatisch prüfbar

@@ -63,7 +63,7 @@ struct BrandMark: View {
 }
 
 /// Wortmarke „knips“ in Kleinbuchstaben, Outfit halbfett. Der i-Punkt ist die Aufnahmelampe: Königsblau in Ruhe,
-/// Rot und pulsierend, solange ein Video läuft (wie in der App-Familie).
+/// Rot und pulsierend, solange ein Video läuft.
 struct Wordmark: View {
     var size: CGFloat = 20
     var recording = false

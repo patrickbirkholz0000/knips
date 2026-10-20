@@ -1,4 +1,4 @@
-/* Aufnahme-Leiste, Countdown und Scroll-Leiste (docs/design.md): dunkle Pillen wie das Overlay, immer
+/* Aufnahme-Leiste, Countdown und Scroll-Leiste (docs/design.md): dunkle Pillen, immer
    dunkel (--k-dark-*). Rot nur, solange ein Video läuft. Fenstergrößen: recording.rs (Leiste 246 × 44,
    Countdown 150 × 176) und scroll.rs (Leiste 380 × 48) — die Pillen füllen ihr Fenster. */
 .bar {

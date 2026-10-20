@@ -479,7 +479,7 @@ struct BrandIconTile: View {
 
 // MARK: - Dialoge
 
-/// Fenster für Dialoge im Stil der Onboarding-Karte: randlos, die Karte selbst (Radius 22) ist das
+/// Fenster für Dialoge (docs/design.md, „Dialoge“): randlos, die Karte selbst (Radius 22) ist das
 /// Fenster. Kann Schlüsselfenster werden; Esc und ⌘W schließen es wie ein normales Fenster.
 final class BrandDialogWindow: NSWindow {
     static func make(width: CGFloat, title: String) -> BrandDialogWindow {

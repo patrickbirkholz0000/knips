@@ -16,7 +16,7 @@ extension Brand.Dark {
     static let accentSoft = Brand.Dark.accent.withAlphaComponent(0.14)
     /// Königsblau in voller Stärke (helle Fassung von `Brand.accent`) — Fläche über einem Fenster im Fenstermodus.
     static let royal = Brand.accent.variant(.aqua)
-    /// Leichter Glanz an der Oberkante einer Pille (wie `inset 0 1px 0` im Overlay).
+    /// Leichter Glanz an der Oberkante einer Pille (`inset 0 1px 0`).
     static let shine = Brand.Dark.ink.withAlphaComponent(0.07)
 
     /// Appearance für alle Schwebeflächen — Systemelemente (Tooltips, Fokus, Symbole) passen dann dazu,
@@ -130,7 +130,7 @@ enum KeySymbols {
     }
 }
 
-/// Tastenkappe in Mono (dunkel gehoben, feine Linie) — wie „esc“ im Editor.
+/// Tastenkappe in Mono (dunkel gehoben, feine Linie) .
 struct KeyCap: View {
     let label: String
     var size: CGFloat = 11
@@ -189,7 +189,7 @@ struct Overline: View {
     }
 }
 
-/// Roter Aufnahmepunkt mit Hof, pulsierend (wie im Overlay). Rot nur, solange ein Video läuft.
+/// Roter Aufnahmepunkt mit Hof, pulsierend. Rot nur, solange ein Video läuft.
 struct RecordDot: View {
     var size: CGFloat = 8
     var pulsing = true

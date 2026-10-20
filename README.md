@@ -5,7 +5,7 @@
 Screenshots und Bildschirmvideos für macOS und Windows, mit Zensur für Bilder **und** Videos.
 Kostenlos, quelloffen (GPL-3.0), ohne Konto. Alles läuft auf deinem Rechner.
 
-![Der Bild-Editor von Knips unter macOS: Telefonnummer, Teil der IBAN und ein API-Schlüssel sind mit schwarzen Balken zensiert](windows/tests/reference/mac-ui/live/live-editor-schlaue-balken.png)
+![Der Bild-Editor von Knips unter macOS: Telefonnummer, Teil der IBAN und ein API-Schlüssel sind mit schwarzen Balken zensiert](docs/bilder/editor.png)
 
 - **macOS:** native Menüleisten-App in Swift (ScreenCaptureKit, Vision), ab macOS 14.
 - **Windows:** dieselbe App mit Tauri 2, Rust und React, für Windows 10 und 11.

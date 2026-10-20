@@ -1,4 +1,4 @@
-// Rendert die drei Selbsttest-Dokumente im Browser und speichert sie als PNG (zum Vergleich mit tests/reference/mac-render-*.png).
+// Rendert die drei Selbsttest-Dokumente im Browser und speichert sie als PNG (zum Vergleich mit tests/vergleich/mac-render-*.png).
 // Aufruf: node scripts/selftest-render.mjs [ausgabeordner=shots/selftest]
 import { chromium } from "playwright";
 import { existsSync, readdirSync, mkdirSync, writeFileSync } from "node:fs";

@@ -1,4 +1,4 @@
-/* Frage zur Nutzungsstatistik — Dialog-Karte wie die Onboarding-Karte wie in der App-Familie (shared/ui DialogCard). */
+/* Frage zur Nutzungsstatistik — Dialog-Karte (shared/ui DialogCard). */
 html[data-view="consent"] body {
   overflow: hidden;
 }

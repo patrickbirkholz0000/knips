@@ -1,5 +1,5 @@
 // Erzeugt das App-Icon von Knips im Zeichen der App-Familie (docs/design.md, „Logo und Wortmarke“):
-// vier Auswahl-Ecken in Papier und ein Zensurbalken in Königsblau auf Tinte — gleiche Machart wie die App-Familie.
+// vier Auswahl-Ecken in Papier und ein Zensurbalken in Königsblau auf Tinte — in der Machart der App-Familie.
 //
 //   Resources/AppIcon.icns              macOS, alle Größen (16…1024), macOS-Squircle mit Apple-Rand (824/1024)
 //   design/app-icon-1024.png            macOS-Icon als Vorlage (README, Website)
@@ -58,8 +58,8 @@ struct Mark {
     var barX: ClosedRange<CGFloat> = 33...67
 
     static let standard = Mark()
-    /// Anteil der Kachel, auf den die Einheiten 0…100 fallen: groß 0,9 (Strich und Ausdehnung wie das d im
-    /// Icon), klein die ganze Kachel, damit der Strich kräftig genug bleibt.
+    /// Anteil der Kachel, auf den die Einheiten 0…100 fallen: groß 0,9 (kräftiger Strich, große
+    /// Ausdehnung), klein die ganze Kachel, damit der Strich kräftig genug bleibt.
     static func scale(tile: CGFloat) -> CGFloat { tile >= 64 ? 0.9 : 1 }
 }
 
@@ -142,14 +142,14 @@ func render(_ px: Int, _ platform: Platform) -> CGImage {
     ctx.scaleBy(x: 1, y: -1) // y nach unten wie im SVG
     let (rect, path) = tile(px, platform)
 
-    // Fläche: Tinte, oben einen Hauch heller (wie in der App-Familie)
+    // Fläche: Tinte, oben einen Hauch heller
     ctx.saveGState()
     ctx.addPath(path)
     ctx.clip()
     let ink = CGGradient(colorsSpace: srgb, colors: [hex(inkTop), hex(inkBottom)] as CFArray, locations: [0, 1])!
     ctx.drawLinearGradient(ink, start: CGPoint(x: 0, y: rect.minY), end: CGPoint(x: 0, y: rect.maxY), options: [])
 
-    // Feine Innenkante: oben heller, unten fast weg (wie die Kante, 6 % Weiß)
+    // Feine Innenkante: oben heller, unten fast weg (6 % Weiß)
     let edge = max(1, s * 2 / 1024)
     ctx.addPath(path)
     ctx.setLineWidth(edge * 2)

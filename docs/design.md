@@ -1,6 +1,6 @@
 # Knips — Design in der Markensprache der App-Familie
 
-Knips gehört mit zu einer kleinen App-Familie mit gemeinsamer Markensprache.
+Knips gehört zu einer kleinen App-Familie mit gemeinsamer Markensprache.
 Diese Datei beschreibt sie für Knips. Sie gilt für beide Fassungen: macOS (`Sources/Knips`) und Windows
 (`windows/src`). Beide sehen gleich aus. Werte stehen in genau zwei Dateien, sonst nirgends:
 
@@ -68,18 +68,18 @@ eingerückt. Seitenränder 28–32. Fokusrahmen: 3 px `accentSoft` um Felder; Ta
 **Zeichen:** Vier Auswahl-Ecken (die Auswahl) und ein Balken darin (die Zensur). Einheiten 0..100:
 Ecken eines Quadrats 22..78, Schenkel 17 lang, Strichstärke 9, runde Enden; Balken waagerecht
 x 33..67, y 45,5..54,5 (Höhe 9), runde Enden. App-Icon: Fläche Tinte (oben `#24262E`, unten `#111216`,
-macOS-Squircle bzw. Windows abgerundet), Ecken Papier `#F4F5F7`, Balken Königsblau `#7B88FF`
-(wie der Cursor im Icon). Menüleiste (macOS, Template) und Taskleiste (Windows): Ecken + Balken
+macOS-Squircle bzw. Windows abgerundet), Ecken Papier `#F4F5F7`, Balken Königsblau `#7B88FF`.
+Menüleiste (macOS, Template) und Taskleiste (Windows): Ecken + Balken
 einfarbig; **während eines Videos** wird der Balken zu einem gefüllten Punkt (Aufnahme-Zustand, unter
 Windows rot).
 
 **Wortmarke:** „knips“ in Kleinbuchstaben, Outfit halbfett. Der i-Punkt ist die Aufnahmelampe:
-Königsblau in Ruhe, Rot und pulsierend, während ein Video läuft (wie in der App-Familie). Steht oben in der
+Königsblau in Ruhe, Rot und pulsierend, während ein Video läuft. Steht oben in der
 Seitenleiste der Einstellungen und im Menü-Panel.
 
 ## Fenster und Flächen
 
-**Einstellungen** (Vorbild Einstellungen der App-Familie): Seitenleiste immer dunkel, volle Höhe, 216 breit:
+**Einstellungen**: Seitenleiste immer dunkel, volle Höhe, 216 breit:
 oben Zeichen + Wortmarke, darunter Gruppen mit Mono-Überschrift (`START`, `AUFNAHME`, `BEARBEITEN`, `APP`),
 Einträge 34 hoch mit Icon, gewählter Eintrag gehoben (`#2C2D33`) mit Pfeil rechts; unten Status
 („Bereit“ mit grünem Punkt bzw. „2 Schritte offen“ mit rotem Punkt) und Version in Mono. Inhalt auf Papier:
@@ -88,7 +88,7 @@ Seitentitel 28 halbfett + Satz darunter (inkSoft), Abschnitte mit Titel, weiße 
 (fill-Spur, weißer Daumen), Auswahlfelder 40 hoch mit Linie, Primärknopf Tinte, Sekundärknopf weiß mit
 Linie, Tastenkappen für Kürzel (weiße Kappe, Linie, Mono).
 
-Neue erste Seite **Start** („So geht's“, wie in der App-Familie): deine Kürzel als Tastenkappen (Bereich, Bildschirm,
+Neue erste Seite **Start** („So geht's“): deine Kürzel als Tastenkappen (Bereich, Bildschirm,
 Fenster, Video), drei Schritte (1 Aufnehmen → 2 Zensieren → 3 Teilen) in hellen Kacheln mit
 Königsblau-Nummern, darunter **Bereit-Check** als Karte: Bildschirmaufnahme (Freigabe), Mikrofon (optional,
 nur für Videos mit Ton), Kürzel aktiv (bzw. Druck-Taste unter Windows), Ablageordner erreichbar — je mit
@@ -125,12 +125,12 @@ Filter als Segment-Schalter (Alle / Screenshots / Videos / GIFs), Suchfeld optio
 Königsblau, Aktionen als kleine Knöpfe.
 
 **Dialoge** (Zustimmung Statistik, Link-Rückfrage, „Text kopieren?“, Freigabe, Druck-Taste übernehmen):
-wie die Onboarding-Karte wie in der App-Familie: weiße Karte (dunkel: surface), Radius 22, Mono-Überschrift in
+als Karte im Stil eines Einrichtungs-Assistenten: weiße Karte (dunkel: surface), Radius 22, Mono-Überschrift in
 Versalien oben (`STATISTIK`, `LINK VON AUSSEN`), Titel 22 halbfett, Text, Punkte mit Icon-Kacheln
 (`accentSoft`-Kachel, Königsblau-Icon), Knöpfe rechts: Sekundär, Primär Tinte. Schutzzeit sichtbar
 (Primärknopf erst nach 0,6 s aktiv, leiser Fortschritt).
 
-**Aufnahme-Leiste** (Video läuft): dunkle Pille wie das Overlay: roter pulsierender Punkt, Zeit in
+**Aufnahme-Leiste** (Video läuft): dunkle Pille: roter pulsierender Punkt, Zeit in
 Mono, ggf. Mikrofon-Pegel als kleine Balken (Königsblau hell), Pause, Stopp (Papier-Knopf). **Countdown:**
 dunkle runde Fläche, große Mono-Ziffer. **Scroll-Leiste:** dunkle Pille mit Höhe in Mono („12 480 px“),
 „Fertig“ (Papier) und „Abbrechen“. **HUD/Hinweise:** dunkle Pille, Icon, ein Satz.
@@ -154,4 +154,4 @@ Seitenleiste, Menü-Panel, Pillen, Overlay-Elemente, Karten-Knöpfe.
 
 Jede Ansicht hell und dunkel per Selbsttest fotografieren (macOS `ui`, `settings`, `menu`, `history`,
 `links`, Editor über `live` nur nach Absprache; Windows `ui` in der CI und `node scripts/shot.mjs` im Browser)
-und gegen diese Datei sowie die Vorlagen ansehen: Einstellungen, App-Familie . Kein Text darf abgeschnitten sein, nichts überlappen, Kontrast in beiden Modi lesbar.
+und gegen diese Datei halten. Kein Text darf abgeschnitten sein, nichts überlappen, Kontrast in beiden Modi lesbar.

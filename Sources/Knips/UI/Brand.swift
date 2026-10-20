@@ -57,7 +57,7 @@ enum Brand {
         static let line = rgb(0xFFFFFF, alpha: 0.08)
         static let ink = rgb(0xECEEF2)
         static let muted = rgb(0x979BA5)
-        /// Helles Königsblau auf dunklem Grund (wie das Overlay).
+        /// Helles Königsblau auf dunklem Grund.
         static let accent = rgb(0x9AA6FF)
         static let record = rgb(0xFF7A66)
         /// Primärknopf auf dunklem Grund: Papier mit Tinte als Schrift.

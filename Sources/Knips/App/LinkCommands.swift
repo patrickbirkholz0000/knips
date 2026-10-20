@@ -230,7 +230,7 @@ struct LinkPrompt {
     func windowWillClose(_ notification: Notification) { resolve(false) }
 }
 
-/// „Aufnahme per Link?“ bzw. „Text kopieren?“: Karte wie die Onboarding-Karte wie in der App-Familie. Die Schutzzeit ist
+/// „Aufnahme per Link?“ bzw. „Text kopieren?“: Dialog-Karte (docs/design.md). Die Schutzzeit ist
 /// sichtbar — der Primärknopf bleibt blass, darunter läuft ein leiser Fortschritt, bis er wirkt.
 struct LinkConfirmView: View {
     @ObservedObject var model: LinkConfirmModel

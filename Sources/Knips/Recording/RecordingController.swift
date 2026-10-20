@@ -346,7 +346,7 @@ private struct RecordingControlsView: View {
     }
 }
 
-/// Aufnahme-Leiste, solange ein Video läuft (docs/design.md, wie das Overlay): dunkle Pille, roter
+/// Aufnahme-Leiste, solange ein Video läuft (docs/design.md): dunkle Pille, roter
 /// pulsierender Punkt, Zeit in Mono, Mikrofon (wenn es mit aufnimmt), Verwerfen, „Stopp“ als Papier-Knopf.
 struct RecordingBar: View {
     var elapsed: TimeInterval

@@ -1,4 +1,4 @@
-// Erste Seite der Einstellungen („So geht's“, wie in der App-Familie): deine Kürzel als Tastenkappen, drei Schritte
+// Erste Seite der Einstellungen („So geht's“): deine Kürzel als Tastenkappen, drei Schritte
 // und der Bereit-Check. Fehlt etwas, steht der Bereit-Check oben.
 import type { Bootstrap, HotkeyAction } from "../shared/types";
 import { Button, Card, Keys, Row, Section, StatusIcon } from "../shared/ui";

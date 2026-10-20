@@ -173,7 +173,7 @@ html[data-view="video"] body {
 .vid-trimmed { color: var(--k-ink-muted); white-space: nowrap; font-size: 12.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .vid-trimmed .kc-mono { color: var(--k-ink); font-size: 12px; }
 
-/* Rückfrage beim Schließen: Dialog-Karte wie die Onboarding-Karte wie in der App-Familie */
+/* Rückfrage beim Schließen: Dialog-Karte (docs/design.md) */
 .vid-modal-back {
   position: absolute; inset: 0; z-index: 10;
   background: color-mix(in srgb, var(--k-dark) 40%, transparent);

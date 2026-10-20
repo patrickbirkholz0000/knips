@@ -214,7 +214,7 @@ struct ChromeLabelStyle: LabelStyle {
 
 // MARK: - Segment-Schalter
 
-/// Segment-Schalter wie in der App-Familie: `fill`-Spur mit Linie, gewählter Teil als heller Daumen.
+/// Segment-Schalter der Markensprache: `fill`-Spur mit Linie, gewählter Teil als heller Daumen.
 struct BrandSegment<Value: Hashable>: View {
     struct Item {
         let value: Value
@@ -307,7 +307,7 @@ struct ChromeKeyCap: View {
 
 // MARK: - Schalter
 
-/// Schalter wie in der App-Familie (38 × 22): an Königsblau, aus `lineStrong`, Knopf Papier. Gleich in aktiven und
+/// Schalter der Markensprache (38 × 22): an Königsblau, aus `lineStrong`, Knopf Papier. Gleich in aktiven und
 /// inaktiven Fenstern — der System-Schalter wird in Popovers sonst grau.
 struct BrandSwitchStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {

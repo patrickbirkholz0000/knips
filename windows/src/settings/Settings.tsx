@@ -1,4 +1,4 @@
-// Einstellungen (`#/settings/<bereich>`) wie die Einstellungen (docs/design.md, „Einstellungen“): dunkle
+// Einstellungen (`#/settings/<bereich>`) (docs/design.md, „Einstellungen“): dunkle
 // Seitenleiste mit Zeichen + Wortmarke, Gruppen in Mono-Versalien, unten Bereit-Status und Version; rechts Papier
 // mit Seitentitel, Abschnitten und weißen Karten. Erste Seite „Start“ mit Kürzeln und Bereit-Check.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";

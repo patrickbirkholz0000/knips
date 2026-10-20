@@ -1,4 +1,4 @@
-/* Einstellungen (docs/design.md, „Einstellungen“) — wie die Einstellungen: dunkle Seitenleiste als
+/* Einstellungen (docs/design.md, „Einstellungen“) — dunkle Seitenleiste als
    Panel, rechts Papier mit Seitentitel und weißen Karten. Werte nur aus tokens.css; Bausteine aus shared/ui. */
 html[data-view="settings"] body {
   overflow: hidden;

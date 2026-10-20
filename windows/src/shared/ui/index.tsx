@@ -302,7 +302,7 @@ export function Point({ icon, title, children }: { icon: ReactNode; title: React
 }
 
 /**
- * Dialog-Karte wie die Onboarding-Karte wie in der App-Familie: Mono-Überschrift, Titel 22, Text, Knöpfe rechts
+ * Dialog-Karte (docs/design.md, „Dialoge“): Mono-Überschrift, Titel 22, Text, Knöpfe rechts
  * (sekundär, primär Tinte). `footer` links neben den Knöpfen (z. B. Kästchen).
  */
 export function DialogCard({

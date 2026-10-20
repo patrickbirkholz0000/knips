@@ -1,5 +1,5 @@
 // Popover „Hintergrund und Rahmen“ (FramePanel in EditorWindow.swift): Karte mit Schalter (Königsblau),
-// Verläufen (bunt, Inhalt) und Segment-Schaltern; Überschriften in Mono-Versalien wie in der App-Familie.
+// Verläufen (bunt, Inhalt) und Segment-Schaltern; Überschriften in Mono-Versalien.
 import { useCallback, useRef, useState } from "react";
 import { Layers } from "lucide-react";
 import type { FrameStyle } from "../shared/types";

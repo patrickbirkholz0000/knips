@@ -147,6 +147,9 @@ import ScreenCaptureKit
 /// Bietet einmalig an, die macOS-Bildschirmfoto-Kürzel für Knips freizumachen.
 @MainActor enum ShortcutTakeover {
     static func offerIfNeeded() {
+        // Die Test-Sandbox hat eigene (leere) Einstellungen — sie würde sonst bei jedem Start fragen und die echten
+        // macOS-Kürzel umschreiben.
+        guard Paths.testRoot == nil else { return }
         let combos = Array(AppSettings.shared.activeHotkeys.values)
         let ids = SystemShortcuts.conflictingIDs(for: combos)
         guard !ids.isEmpty else { return }

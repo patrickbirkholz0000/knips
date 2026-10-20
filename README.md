@@ -88,7 +88,7 @@ Voraussetzung: macOS 14 (Sonoma) oder neuer, Apple Silicon oder Intel.
 
 ### Windows
 
-Voraussetzung: Windows 10 oder 11, 64 Bit. Knips installiert sich nur für deinen Benutzer und braucht
+Voraussetzung: Windows 10 ab Version 2004 oder Windows 11, 64 Bit (siehe [Systemvoraussetzungen](#systemvoraussetzungen)). Knips installiert sich nur für deinen Benutzer und braucht
 keine Administratorrechte. Fehlt die Microsoft-WebView2-Laufzeit (unter Windows 11 vorinstalliert), lädt
 der Installer sie von Microsoft nach. Drei Wege, alle mit demselben Installer:
 
@@ -296,7 +296,7 @@ Get the packages from [Releases](https://github.com/patrickbirkholz0000/knips/re
 - **macOS 14+:** open the DMG, drag Knips into Applications, start it and allow screen recording under
   System Settings → Privacy & Security → Screen & System Audio Recording, then restart Knips. The
   microphone is only requested when you record with commentary (macOS 15+).
-- **Windows 10/11 (64-bit),** per-user install without admin rights, three ways with the same installer:
+- **Windows 10 version 2004 or later / Windows 11 (64-bit, see [System requirements](#system-requirements)),** per-user install without admin rights, three ways with the same installer:
   1. **winget** (once Knips is accepted into the Windows Package Manager):
      `winget install PatrickBirkholz.Knips`
   2. **PowerShell:** `irm https://knips.velno.ai/install.ps1 | iex` downloads the latest installer from

@@ -1,0 +1,119 @@
+/* Markensprache der App-Familie — Beschreibung in docs/design.md.
+   Tinte auf Papier, Königsblau als einziger Akzent, Rot nur während einer Aufnahme, Grün nur für „erledigt“.
+   Gleiche Werte wie Sources/Knips/UI/Brand.swift. Theme: <html data-theme="light|dark"> (System/Hell/Dunkel).
+   Menü, Pillen, Leisten und Knöpfe auf den Karten sind immer dunkel (--k-dark-*). */
+
+@font-face { font-family: "Outfit"; src: url("/fonts/outfit.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url("/fonts/jetbrains-mono.woff2") format("woff2"); font-weight: 100 800; font-display: swap; }
+
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  /* Flächen */
+  --k-canvas: #f4f5f7;          /* Papier: Fensterfläche */
+  --k-fill: #eceef2;            /* Spuren, graue Chips, Hover, Segment-Hintergrund */
+  --k-surface: #ffffff;         /* Karten */
+  --k-surface-raised: #f8f9fb;  /* erhöhte Kachel in einer Karte */
+  --k-line: #e2e4e9;
+  --k-line-strong: #d5d7de;
+
+  /* Text */
+  --k-ink: #15161a;             /* Tinte */
+  --k-ink-muted: #4a4d55;
+  --k-ink-soft: #6c6f78;        /* Bleistift */
+
+  /* Akzent und Signale */
+  --k-accent: #2d46d2;          /* Königsblau: Schalter, Auswahl, aktives Werkzeug, Fortschritt */
+  --k-accent-soft: rgba(45, 70, 210, .09);
+  --k-on-accent: #ffffff;
+  --k-record: #e8523f;          /* nur während einer Aufnahme */
+  --k-record-soft: rgba(232, 82, 63, .12);
+  --k-success: #1f8a5b;         /* nur „erledigt“ */
+  --k-success-soft: rgba(31, 138, 91, .12);
+  --k-warn: #a8641a;
+  --k-warn-soft: rgba(168, 100, 26, .12);
+
+  /* Knöpfe: Primär = Tinte, Sekundär = Karte mit Linie */
+  --k-button: #15161a;
+  --k-button-ink: #ffffff;
+  --k-segment-thumb: #ffffff;
+  --k-focus-ring: 0 0 0 3px var(--k-accent-soft);
+
+  /* Schatten */
+  --k-shadow: 0 1px 2px rgba(21, 22, 26, .04);
+  --k-shadow-float: 0 1px 2px rgba(21, 22, 26, .05), 0 16px 36px -14px rgba(20, 22, 30, .22);
+  --k-shadow-dialog: 0 24px 60px -18px rgba(20, 22, 30, .35);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --k-canvas: #101114;
+  --k-fill: #22242a;
+  --k-surface: #18191d;
+  --k-surface-raised: #1e1f24;
+  --k-line: #2a2c32;
+  --k-line-strong: #383a42;
+
+  --k-ink: #eceef2;
+  --k-ink-muted: #c3c6ce;
+  --k-ink-soft: #979ba5;
+
+  --k-accent: #8b98ff;
+  --k-accent-soft: rgba(139, 152, 255, .12);
+  --k-on-accent: #15161a;
+  --k-record: #ff7a66;
+  --k-record-soft: rgba(255, 122, 102, .14);
+  --k-success: #4cc58e;
+  --k-success-soft: rgba(76, 197, 142, .14);
+  --k-warn: #e0a24f;
+  --k-warn-soft: rgba(224, 162, 79, .12);
+
+  --k-button: #eceef2;
+  --k-button-ink: #15161a;
+  --k-segment-thumb: #2a2b31;
+
+  --k-shadow: 0 1px 2px rgba(0, 0, 0, .3);
+  --k-shadow-float: 0 1px 2px rgba(0, 0, 0, .4), 0 16px 38px -12px rgba(0, 0, 0, .55);
+  --k-shadow-dialog: 0 24px 60px -18px rgba(0, 0, 0, .7);
+}
+
+:root {
+  /* Seitenleiste der Einstellungen — immer dunkel */
+  --k-side: #1b1c20;
+  --k-side-raised: #2c2d33;
+  --k-side-ink: #eceef2;
+  --k-side-muted: #9a9ea8;
+  --k-side-line: rgba(236, 238, 242, .08);
+
+  /* Immer dunkel: Menü-Panel, Pillen (Aufnahme, Scrollen, Hinweise), Knöpfe auf den Karten */
+  --k-dark: #141518;
+  --k-dark-raised: #24262c;
+  --k-dark-hover: #2e3037;
+  --k-dark-line: rgba(255, 255, 255, .08);
+  --k-dark-ink: #eceef2;
+  --k-dark-muted: #979ba5;
+  --k-dark-accent: #9aa6ff;     /* helles Königsblau auf dunklem Grund */
+  --k-dark-record: #ff7a66;
+  --k-dark-button: #f4f5f7;     /* Primärknopf auf dunklem Grund: Papier */
+  --k-dark-button-ink: #15161a;
+
+  /* Schrift: Outfit (Titel halbfett, Text normal), Zahlen/Zeiten/Kürzel/Überschriften in Versalien: JetBrains Mono */
+  --k-font: "Outfit", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --k-mono: "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
+  --k-overline-tracking: .08em;
+
+  /* Radien: Felder/Knöpfe 10, Karten 14, Panels 16, Dialoge 22, Pillen rund */
+  --k-radius-sm: 6px;
+  --k-radius-field: 10px;
+  --k-radius-card: 14px;
+  --k-radius-panel: 16px;
+  --k-radius-dialog: 22px;
+  --k-radius-pill: 999px;
+
+  /* Bewegung */
+  --k-ease: cubic-bezier(.25, 1, .5, 1);
+  --k-t-fast: .14s ease-out;
+  --k-t-base: .22s ease-out;
+}

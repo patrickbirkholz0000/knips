@@ -1,5 +1,6 @@
 import React, { Suspense, lazy } from "react";
 import ReactDOM from "react-dom/client";
+import "./shared/tokens.css";
 import "./shared/theme.css";
 import "./shared/mock";
 import { useRoute } from "./shared/route";

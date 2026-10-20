@@ -1,0 +1,53 @@
+/* Zeichen und Wortmarke (brand.tsx). */
+.k-mark {
+  display: block;
+  flex: none;
+}
+
+.k-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+}
+
+.k-wordmark {
+  font-family: var(--k-font);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  color: var(--k-side-ink);
+  white-space: nowrap;
+}
+
+/* Punktloses ı mit eigener Lampe darüber. */
+.k-wordmark__i {
+  position: relative;
+  display: inline-block;
+}
+
+.k-wordmark__lamp {
+  position: absolute;
+  left: 50%;
+  /* Zeilenhöhe 1: Grundlinie bei 0,87 em, x-Höhe 0,46 em, Abstand 0,12 em, Punkt 0,135 em (wie macOS). */
+  top: 0.155em;
+  width: 0.135em;
+  height: 0.135em;
+  margin-left: -0.0675em;
+  border-radius: 50%;
+  background: var(--k-dark-accent);
+}
+
+.k-wordmark__lamp.is-recording {
+  background: var(--k-dark-record);
+  animation: k-lamp 1.8s ease-in-out infinite;
+}
+
+@keyframes k-lamp {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}

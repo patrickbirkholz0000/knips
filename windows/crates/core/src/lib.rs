@@ -8,6 +8,7 @@ pub mod gifenc;
 pub mod imageops;
 pub mod links;
 pub mod model;
+pub mod ocrtiles;
 pub mod redact;
 pub mod sensitive;
 pub mod settings;

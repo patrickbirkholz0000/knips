@@ -112,8 +112,8 @@ Gerät.
 | | macOS | Windows |
 |---|---|---|
 | Fertige Dateien, immer zensiert (Ordner einstellbar) | `~/Pictures/Knips` | `Bilder\Knips` |
-| Originale und Bearbeitungsstand (Standard: 30 Tage) | `~/Library/Application Support/Knips/items/` | `%LOCALAPPDATA%\Knips\items\` |
-| Einstellungen | Benutzereinstellungen `de.birkgroup.knips` | `%APPDATA%\Knips\settings.json` |
+| Originale und Bearbeitungsstand (Standard: 30 Tage) | `~/Library/Application Support/Knips/items/` | `%LOCALAPPDATA%\de.birkgroup.knips\items\` |
+| Einstellungen | Benutzereinstellungen `de.birkgroup.knips` | `%APPDATA%\de.birkgroup.knips\settings.json` |
 
 ### Anonyme Nutzungsstatistik (freiwillig)
 

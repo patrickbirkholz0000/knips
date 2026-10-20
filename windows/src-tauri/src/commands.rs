@@ -212,10 +212,8 @@ pub async fn item_reveal(id: String) -> Res<()> {
 
 #[tauri::command]
 pub fn item_delete(id: String) -> Res<()> {
-    let item = item(&id)?;
-    let k = knips();
-    k.cards.dismiss(item.id);
-    k.store.delete(&item);
+    // Ohne Papierkorb (Netzlaufwerk, USB-Stick) fragt `delete_item` erst nach.
+    crate::store::delete_item(item(&id)?);
     Ok(())
 }
 
@@ -578,7 +576,8 @@ pub async fn editor_commit(app: AppHandle, request: Request<'_>) -> Res<CaptureI
         knips().editors.commit(id, &action, image)
     })
     .await;
-    if header("x-knips-action").as_deref() == Some("done") {
+    // „Fertig“ schließt nur, wenn wirklich gespeichert wurde.
+    if header("x-knips-action").as_deref() == Some("done") && result.is_ok() {
         if let Some(w) = wm::get(&app, &format!("editor-{id}")) {
             let _ = w.destroy();
         }

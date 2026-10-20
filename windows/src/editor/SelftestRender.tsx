@@ -1,7 +1,9 @@
 // Route `#/selftest-render`: Port von SelfTest.render — drei Dokumente auf dem Mac-Beispielbild.
+// Dazu `__knipsVisibleText` für den Vergleich von „Text kopieren“ mit Rust.
 import { useEffect, useState } from "react";
 import type { Annotation, AnnotationKind, ImageDocument, Point, StrokeSize, Rgba } from "../shared/types";
 import { COLORS, EffectsCache, render } from "./renderer";
+import { visibleText } from "./text";
 
 export interface RenderResult {
   name: string;
@@ -64,6 +66,8 @@ export default function SelftestRender() {
   const [results, setResults] = useState<RenderResult[]>([]);
   useEffect(() => {
     (window as unknown as { __knipsSelftestRender: typeof runSelftestRender }).__knipsSelftestRender = runSelftestRender;
+    // „Text kopieren“: der Selbsttest vergleicht diese Regel mit `textlayout::visible_text` in Rust.
+    (window as unknown as { __knipsVisibleText: typeof visibleText }).__knipsVisibleText = visibleText;
     void runSelftestRender().then(setResults);
   }, []);
   return (

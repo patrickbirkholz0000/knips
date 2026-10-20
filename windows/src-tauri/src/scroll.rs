@@ -1,5 +1,6 @@
 //! Scroll-Screenshot (`ScrollCaptureController` in ScrollCapture.swift): Bereich wählen → während
-//! des Scrollens alle 0,15 s aufnehmen → „Fertig“ setzt zusammen.
+//! des Scrollens alle 0,15 s aufnehmen → „Fertig“ setzt zusammen. Bei `stitch::MAX_HEIGHT` Pixeln
+//! endet die Aufnahme von selbst (mit Hinweis).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -96,12 +97,22 @@ impl Scroll {
                             s.add(image);
                         }
                     }
+                    let full = stitcher.as_ref().is_some_and(|s| s.is_full());
                     let mut inner = shared.lock();
-                    if inner.active {
+                    let active = inner.active;
+                    if active {
                         inner.stitcher = stitcher;
                     }
                     drop(inner);
                     knips().scroll.publish();
+                    // Höchstlänge erreicht: von selbst fertig (mehr kann der Editor nicht darstellen).
+                    if full && active {
+                        let k = knips();
+                        k.scroll.finish(true);
+                        let max = knips_core::stitch::MAX_HEIGHT;
+                        k.hud.show(format!("Scroll-Screenshot fertig · Höchstlänge {} {:03} px erreicht", max / 1000, max % 1000), "check");
+                        return;
+                    }
                 }
                 std::thread::sleep(Duration::from_millis(150));
             }
@@ -125,7 +136,7 @@ impl Scroll {
         let (Some(stitcher), Some(monitor), true) = (stitcher, monitor, save) else { return };
         crate::telemetry::count("capture_scroll");
         std::thread::spawn(move || {
-            let image = stitcher.assemble();
+            let image = stitcher.into_image();
             let k = knips();
             k.shutter();
             k.coordinator.finish(image, monitor.scale, &monitor);

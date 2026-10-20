@@ -1,4 +1,5 @@
-//! Textzeilen in Lesereihenfolge und „Text kopieren“ ohne Zensiertes (`TextLayout` in SensitiveDetector.swift).
+//! Textzeilen in Lesereihenfolge und „Text kopieren“ ohne Zensiertes und ohne Weggeschnittenes
+//! (`TextLayout` in SensitiveDetector.swift; `visibleText` in `src/editor/text.ts` ist dieselbe Regel).
 
 use crate::geometry::Rect;
 use crate::model::TextLine;
@@ -29,24 +30,45 @@ pub fn sort_reading_order(lines: &mut [TextLine]) {
     }
 }
 
-/// Text in Lesereihenfolge. Wörter unter einer Zensur (Schnittfläche > 15 % des Worts) werden
-/// zu „████“, ganz verdeckte Zeilen fallen weg; Zeilen auf gleicher Höhe werden mit zwei
-/// Leerzeichen verbunden.
+/// Text in Lesereihenfolge (Karte „Text kopieren“). Wie `visible_text` ohne Zuschnitt.
 pub fn plain_text(lines: &[TextLine], hidden: &[Rect]) -> String {
+    visible_text(lines, hidden, None)
+}
+
+/// Text, so wie er im gespeicherten Bild zu sehen ist (Editor „Text kopieren“), in Lesereihenfolge:
+/// - Wörter, die eine Zensurfläche auch nur teilweise überdeckt, werden zu „████“.
+/// - Wörter außerhalb des Zuschnitts `crop` fallen weg, angeschnittene werden zu „████“.
+/// - Zeilen nur aus Verdecktem fallen weg, ebenso Zeilen ohne Wortboxen, die eine Zensurfläche
+///   berühren oder nicht ganz im Zuschnitt liegen.
+///
+/// Zeilen auf gleicher Höhe werden mit zwei Leerzeichen verbunden. (Der Mac verdeckt erst ab 15 %
+/// Überdeckung; hier zählt jede Überschneidung — lieber ein Wort zu viel verdeckt als eines verraten.)
+pub fn visible_text(lines: &[TextLine], hidden: &[Rect], crop: Option<&Rect>) -> String {
     const MASK: &str = "████";
-    let is_hidden = |r: &Rect| hidden.iter().any(|h| h.intersection(r).area() > r.area() * 0.15);
+    let covered = |r: &Rect| hidden.iter().any(|h| h.intersection(r).area() > 0.0);
+    let outside = |r: &Rect| crop.is_some_and(|c| c.intersection(r).area() <= 0.0);
+    let cut = |r: &Rect| crop.is_some_and(|c| c.intersection(r).area() < r.area() - 1e-6);
     let mut out: Vec<String> = Vec::new();
     let mut last_mid_y: Option<f64> = None;
     let mut current = String::new();
     for line in lines {
-        if line.words.is_empty() && is_hidden(&line.rect) {
-            continue;
-        }
-        let words: Vec<&str> = line.words.iter().map(|w| if is_hidden(&w.rect) { MASK } else { w.text.as_str() }).collect();
-        if !words.is_empty() && words.iter().all(|w| *w == MASK) {
-            continue;
-        }
-        let text = if line.words.is_empty() { line.text.clone() } else { words.join(" ") };
+        let text = if line.words.is_empty() {
+            if covered(&line.rect) || cut(&line.rect) || outside(&line.rect) {
+                continue;
+            }
+            line.text.clone()
+        } else {
+            let words: Vec<&str> = line
+                .words
+                .iter()
+                .filter(|w| !outside(&w.rect))
+                .map(|w| if covered(&w.rect) || cut(&w.rect) { MASK } else { w.text.as_str() })
+                .collect();
+            if words.iter().all(|w| *w == MASK) {
+                continue;
+            }
+            words.join(" ")
+        };
         match last_mid_y {
             Some(y) if (line.rect.mid_y() - y).abs() < line.rect.height * 0.5 => {
                 current.push_str("  ");
@@ -124,13 +146,34 @@ mod tests {
     }
 
     #[test]
-    fn plain_text_threshold_15_percent() {
+    fn any_overlap_hides_a_word() {
         let l = vec![line(0.0, 0.0, &["abcdefghij"])]; // 80 x 16
-        // 10 % bedeckt → bleibt; 20 % → zensiert
-        assert_eq!(plain_text(&l, &[Rect::new(0.0, 0.0, 8.0, 16.0)]), "abcdefghij");
-        assert_eq!(plain_text(&l, &[Rect::new(0.0, 0.0, 16.0, 16.0)]), "");
+        // Schon 1 px Überschneidung verdeckt (früher erst ab 15 %); bloßes Berühren nicht.
+        assert_eq!(plain_text(&l, &[Rect::new(79.0, 15.0, 10.0, 10.0)]), "");
+        assert_eq!(plain_text(&l, &[Rect::new(80.0, 0.0, 10.0, 16.0)]), "abcdefghij");
         let l = vec![line(0.0, 0.0, &["abcdefghij", "ok"])];
-        assert_eq!(plain_text(&l, &[Rect::new(0.0, 0.0, 20.0, 16.0)]), "████ ok");
+        assert_eq!(plain_text(&l, &[Rect::new(0.0, 0.0, 2.0, 16.0)]), "████ ok");
+    }
+
+    #[test]
+    fn crop_drops_words_outside_and_masks_cut_words() {
+        let lines = vec![
+            line(10.0, 10.0, &["oben", "geheim"]),
+            line(10.0, 60.0, &["Name:", "Erika", "Mustermann"]),
+            line(10.0, 110.0, &["unten", "weg"]),
+        ];
+        // Zuschnitt: nur die mittlere Zeile bis in „Mustermann“ hinein (x 106…186).
+        let crop = Rect::new(0.0, 50.0, 150.0, 40.0);
+        let t = visible_text(&lines, &[], Some(&crop));
+        assert_eq!(t, "Name: Erika ████");
+        assert!(!t.contains("geheim") && !t.contains("Mustermann") && !t.contains("unten"));
+        // Zuschnitt + Zensur zusammen.
+        let t = visible_text(&lines, &[Rect::new(58.0, 62.0, 4.0, 4.0)], Some(&crop));
+        assert_eq!(t, "Name: ████ ████");
+        // Ganz außerhalb: nichts.
+        assert_eq!(visible_text(&lines, &[], Some(&Rect::new(500.0, 500.0, 10.0, 10.0))), "");
+        // Ohne Zuschnitt alles.
+        assert_eq!(visible_text(&lines, &[], None), "oben geheim\nName: Erika Mustermann\nunten weg");
     }
 
     #[test]
@@ -138,6 +181,10 @@ mod tests {
         let l = vec![TextLine { text: "ganze Zeile".into(), rect: Rect::new(0.0, 0.0, 100.0, 16.0), words: vec![] }];
         assert_eq!(plain_text(&l, &[]), "ganze Zeile");
         assert_eq!(plain_text(&l, &[Rect::new(0.0, 0.0, 100.0, 16.0)]), "");
+        // Jede Berührung mit einer Zensur oder dem Rand des Zuschnitts nimmt die Zeile heraus.
+        assert_eq!(plain_text(&l, &[Rect::new(99.0, 15.0, 5.0, 5.0)]), "");
+        assert_eq!(visible_text(&l, &[], Some(&Rect::new(0.0, 0.0, 90.0, 40.0))), "");
+        assert_eq!(visible_text(&l, &[], Some(&Rect::new(-5.0, -5.0, 200.0, 40.0))), "ganze Zeile");
         assert_eq!(plain_text(&[], &[]), "");
     }
 }

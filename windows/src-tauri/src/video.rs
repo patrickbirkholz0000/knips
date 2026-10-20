@@ -95,13 +95,15 @@ impl VideoJobs {
         })
     }
 
-    /// `count` Vorschaubilder gleichmäßig über die Länge (Dateien im Temp-Ordner).
+    /// `count` Vorschaubilder gleichmäßig über die Länge (Dateien im Temp-Ordner). Es sind Bilder des
+    /// Originals, also unzensiert: Ältere dieser Aufnahme werden gelöscht, sobald die neuen da sind;
+    /// Löschen der Aufnahme, „Originale löschen“ und der Start der App räumen den Rest weg.
     pub fn thumbnails(&self, id: Id, count: usize) -> Result<Vec<String>> {
         let item = item_of(id)?;
         let source = source_of(&item);
         let duration = media::probe(&source)?.duration;
         let mut reader = FrameReader::open(&source, Some(220))?;
-        let dir = paths::temp_dir().join("video-thumbs");
+        let dir = paths::video_thumbs_dir();
         paths::ensure(&dir);
         let mut out = vec![];
         for i in 0..count {
@@ -109,10 +111,11 @@ impl VideoJobs {
             if let Ok(Some(frame)) = reader.frame_at(t) {
                 let path = dir.join(format!("{id}-{}-{i}.jpg", item.revision));
                 std::fs::write(&path, imageops::encode(&frame, knips_core::model::ImageFormat::Jpeg)?)?;
-                out.push(path.to_string_lossy().into_owned());
+                out.push(path);
             }
         }
-        Ok(out)
+        paths::remove_video_thumbs(&id.to_string(), &out);
+        Ok(out.into_iter().map(|p| p.to_string_lossy().into_owned()).collect())
     }
 
     pub fn detect(&self, id: Id, start: f64, end: f64, style: RedactStyle, kinds: BTreeSet<SensitiveKind>) -> Result<Vec<VideoRedaction>> {

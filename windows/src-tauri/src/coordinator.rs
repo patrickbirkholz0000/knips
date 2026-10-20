@@ -205,7 +205,8 @@ impl Coordinator {
         match k.store.add_image(image, scale, Some(output.clone()), None) {
             Ok(item) => {
                 if settings.copy_to_clipboard {
-                    let _ = clipboard::set_image(Arc::new(output));
+                    // Noch unzensiert: nicht in den Zwischenablageverlauf (Win+V) und nicht in die Cloud.
+                    let _ = clipboard::set_image_private(Arc::new(output));
                 }
                 if settings.show_quick_access {
                     k.cards.show(item.clone(), monitor.clone());

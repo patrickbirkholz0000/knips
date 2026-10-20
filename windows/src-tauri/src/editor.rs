@@ -113,16 +113,27 @@ impl Editors {
             .unwrap_or(settings.image_format);
         let size = (((image.width() as f64) * factor).round() as u32, ((image.height() as f64) * factor).round() as u32);
         let promise = output_promise(factor, format, move || Some(image));
-        let updated = k.store.save_image(promise.clone(), &document, &item, size, scale * factor);
+        let (updated, written) = k.store.save_image(promise.clone(), &document, &item, size, scale * factor);
+        if action == "copy" {
+            let _ = knips_platform::clipboard::set_image(Arc::new(promise));
+            count("copy_image");
+        }
+        // Erst wenn die Datei im Ablageordner wirklich ersetzt ist, gilt sie als gespeichert — sonst
+        // zeigt sie noch den alten (womöglich unzensierten) Stand, und der Nutzer muss das wissen.
+        if let Err(reason) = written.wait() {
+            k.alert(
+                "Nicht gespeichert",
+                &format!(
+                    "{reason}\n\nDie Datei im Ablageordner ist nicht aktualisiert – sie zeigt noch den vorherigen Stand, ohne die neuen Zensuren. Schließe Programme, die die Datei geöffnet haben, und speichere erneut. Der Editor bleibt offen."
+                ),
+            );
+            return Err(anyhow!("Nicht gespeichert: {reason}"));
+        }
         // Speichern aus dem Editor = Export im gewählten Format.
         count(match format {
             ImageFormat::Png => "export_png",
             ImageFormat::Jpeg => "export_jpeg",
         });
-        if action == "copy" {
-            let _ = knips_platform::clipboard::set_image(Arc::new(promise));
-            count("copy_image");
-        }
         Ok(updated)
     }
 

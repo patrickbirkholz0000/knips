@@ -645,8 +645,57 @@ pub fn snipping_key_enabled() -> bool {
     }
 }
 
-/// Schreibt `HKCU\Control Panel\Keyboard\PrintScreenKeyForSnippingEnabled`.
+const KNIPS_KEY: windows::core::PCWSTR = w!("Software\\Knips");
+const TAKEN_VALUE: windows::core::PCWSTR = w!("PrintScreenKeyTaken");
+const ORIGINAL_VALUE: windows::core::PCWSTR = w!("PrintScreenKeyOriginal");
+
+fn hkcu_dword(key: windows::core::PCWSTR, value: windows::core::PCWSTR) -> Option<u32> {
+    let mut data = 0u32;
+    let mut len = 4u32;
+    // SAFETY: data/len gültig, DWORD-Wert.
+    let err = unsafe { RegGetValueW(HKEY_CURRENT_USER, key, value, RRF_RT_REG_DWORD, None, Some(&mut data as *mut u32 as *mut _), Some(&mut len)) };
+    (err.0 == 0).then_some(data)
+}
+
+/// Übernahme der Druck-Taste für das Deinstallationsprogramm vermerken (`HKCU\Software\Knips`):
+/// `PrintScreenKeyTaken` = 1 und der Wert davor in `PrintScreenKeyOriginal` (fehlt, wenn es keinen
+/// gab). `installer-hooks.nsh` stellt ihn beim Deinstallieren wieder her. Zurückgeben löscht den Vermerk.
+fn note_takeover(taken: bool) {
+    use windows::Win32::System::Registry::RegDeleteKeyValueW;
+    // SAFETY: konstante, null-terminierte Namen; DWORD-Daten mit Länge 4.
+    unsafe {
+        if !taken {
+            let _ = RegDeleteKeyValueW(HKEY_CURRENT_USER, KNIPS_KEY, TAKEN_VALUE);
+            let _ = RegDeleteKeyValueW(HKEY_CURRENT_USER, KNIPS_KEY, ORIGINAL_VALUE);
+            return;
+        }
+        // Schon vermerkt: der Wert von vor der ersten Übernahme bleibt maßgeblich.
+        if hkcu_dword(KNIPS_KEY, TAKEN_VALUE) == Some(1) {
+            return;
+        }
+        match hkcu_dword(KEYBOARD_KEY, SNIP_VALUE) {
+            Some(v) => {
+                let _ = RegSetKeyValueW(HKEY_CURRENT_USER, KNIPS_KEY, ORIGINAL_VALUE, REG_DWORD.0, Some(&v as *const u32 as *const _), 4);
+            }
+            None => {
+                let _ = RegDeleteKeyValueW(HKEY_CURRENT_USER, KNIPS_KEY, ORIGINAL_VALUE);
+            }
+        }
+        let one = 1u32;
+        let _ = RegSetKeyValueW(HKEY_CURRENT_USER, KNIPS_KEY, TAKEN_VALUE, REG_DWORD.0, Some(&one as *const u32 as *const _), 4);
+    }
+}
+
+/// Vermerk der Übernahme (Selbsttest `storage`): `None` = nicht übernommen, sonst der Wert von davor
+/// (`Some(None)`: es gab keinen).
+pub fn snipping_takeover_marker() -> Option<Option<u32>> {
+    (hkcu_dword(KNIPS_KEY, TAKEN_VALUE) == Some(1)).then(|| hkcu_dword(KNIPS_KEY, ORIGINAL_VALUE))
+}
+
+/// Schreibt `HKCU\Control Panel\Keyboard\PrintScreenKeyForSnippingEnabled` und vermerkt eine Übernahme
+/// für das Deinstallationsprogramm (`note_takeover`).
 pub fn set_snipping_key(enabled: bool) -> Result<()> {
+    note_takeover(!enabled);
     let data = enabled as u32;
     // SAFETY: data ist ein gültiges DWORD; Unterschlüssel wird bei Bedarf angelegt.
     let err = unsafe {

@@ -66,6 +66,11 @@ impl Pins {
         Ok(())
     }
 
+    /// Bilddateien der offenen Pins (das Aufräumen lässt sie stehen).
+    pub fn paths(&self) -> Vec<PathBuf> {
+        self.pins.lock().values().map(|p| PathBuf::from(&p.path)).collect()
+    }
+
     pub fn info(&self, n: u32) -> Option<PinInfo> {
         self.pins.lock().get(&n).cloned()
     }

@@ -54,7 +54,7 @@ export const mockBootstrap: Bootstrap = {
   hotkeyFailures: [],
   snippingKeyEnabled: true,
   paths: {
-    itemsDir: "C:\\Users\\Nutzer\\AppData\\Local\\Knips\\items",
+    itemsDir: "C:\\Users\\Nutzer\\AppData\\Local\\de.birkgroup.knips\\items",
     saveFolder: "C:\\Users\\Nutzer\\Pictures\\Knips",
     defaultSaveFolder: "C:\\Users\\Nutzer\\Pictures\\Knips",
   },

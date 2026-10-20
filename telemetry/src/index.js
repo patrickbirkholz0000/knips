@@ -63,8 +63,13 @@ export default {
     await env.DB.batch([
       env.DB.prepare("DELETE FROM daily_events WHERE day < ?").bind(cutoff),
       env.DB.prepare("DELETE FROM daily WHERE day < ?").bind(cutoff),
-      env.DB.prepare("DELETE FROM daily_new WHERE day < ?").bind(cutoff),
     ]);
+    // Getrennt: Fehlt die Tabelle (schema.sql noch nicht eingespielt), soll das Löschen oben trotzdem laufen.
+    try {
+      await env.DB.prepare("DELETE FROM daily_new WHERE day < ?").bind(cutoff).run();
+    } catch {
+      // nichts — die Tabelle enthält nur Tageszahlen
+    }
   },
 };
 

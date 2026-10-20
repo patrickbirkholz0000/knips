@@ -41,15 +41,15 @@ Domäne `de.birkgroup.knips.sandbox` (`UserDefaults.knips`), die jeder Test zu B
 | `ui` / `selection` | Karten, Einstellungen, Auswahl-Overlay offscreen |
 | `cards` | Klicks auf eine Karte als echte Mausereignisse: Fläche öffnet, jeder Knopf nur seine Aktion; Raster mit mehreren Spalten trifft die richtige Karte |
 | `live` | Bild- und Video-Editor als echtes Fenster, 1 pt in der Bildschirmecke, per SCK fotografiert |
-| `settings [bereich,…]` | Einstellungsfenster (Stil Systemeinstellungen) je Bereich, inkl. Kürzel-Eingabe und Eintippen der Anzeigedauer, Datenschutz mit Statistik an/aus, Zustimmungsdialog (`zustimmung.png`) |
-| `links` | Rückfrage vor knips://fullscreen/last/record immer (auch mit fremdem `linkCaptureWithoutConfirm` in den Defaults), Esc/Schließen/Abbrechen = nichts, ⏎ erst nach der Schutzzeit (beginnt bei jedem Zeigen neu), weitere Links verfallen ohne das Fenster nach vorn zu holen, Absender in der Rückfrage (echtes GURL-Apple-Event an sich selbst → „Knips“), Stoppen und eigener Test-Kanal direkt, Link-Aufnahmen mit Quelle `.link`, Rückfrage „Text kopieren?“, Overlay per Link: ⏎ und Klick erst nach der Schutzzeit (nur Modell und Ansicht, nie auf dem Bildschirm). Aufnahmen sind durch eine Liste ersetzt, nimmt nie auf. Bilder: `link-rueckfrage-*.png`, `link-text-kopieren.png`, `link-einstellungen-datenschutz.png` |
+| `settings [bereich,…]` | Einstellungsfenster je Bereich hell und dunkel (`einstellungen-<bereich>[-dunkel].png`), Start mit simuliertem Bereit-Check (`start-offen*.png` drei Schritte offen, `start-bereit*.png`) und Zählung der offenen Schritte, Darstellung System/Hell/Dunkel → `NSApp.appearance`, Kürzel-Eingabe, Eintippen der Anzeigedauer, Datenschutz mit Statistik an/aus; Dialoge Zustimmung (⏎ entscheidet nichts), Freigabe, Kürzel-Übernahme (`zustimmung*.png`, `freigabe*.png`, `kuerzel-uebernehmen*.png`, nur gezeigt — übernimmt nie) |
+| `links` | Rückfrage vor knips://fullscreen/last/record immer (auch mit fremdem `linkCaptureWithoutConfirm` in den Defaults), Esc/Schließen/Abbrechen = nichts, ⏎ erst nach der Schutzzeit (beginnt bei jedem Zeigen neu), weitere Links verfallen ohne das Fenster nach vorn zu holen, Absender in der Rückfrage (echtes GURL-Apple-Event an sich selbst → „Knips“), Stoppen und eigener Test-Kanal direkt, Link-Aufnahmen mit Quelle `.link`, Rückfrage „Text kopieren?“, Overlay per Link: ⏎ und Klick erst nach der Schutzzeit (nur Modell und Ansicht, nie auf dem Bildschirm). Aufnahmen sind durch eine Liste ersetzt, nimmt nie auf. Bilder hell und dunkel: `link-rueckfrage-*.png`, `link-text-kopieren*.png`, `link-schutzzeit.png` (Primärknopf noch blass, Fortschritt darunter), `link-einstellungen-datenschutz.png` |
 | `telemetry [live]` | Nutzungsstatistik: Sperren (Selbsttest/Sandbox/CI/Entwickler-Build), Payload (genau die Vertragsfelder, Allowlist, Deckel), Zustimmung → Zählen → Senden an lokalen Server (127.0.0.1) → Abmelden; Zähler bleiben nach Fehlern. `live` schickt zusätzlich einen echten Ping (nur mit `KNIPS_TELEMETRY=1`, Kanal `dev`) |
 | `output` | Ausgabe 1× + PNG/JPEG, Rahmen, Speichern aus dem Editor, „Text kopieren“ ohne Zensiertes (Karte; Editor mit Zuschnitt und angeschnittenem Schlüssel), Zwischenablage nach Zensieren + „Fertig“ = zensierte Fassung, fremder Inhalt bleibt, Link-Aufnahme ohne Zwischenablage, `knips://pin` lädt keine http-Adresse (private `NSPasteboard` über `Clipboard.testPasteboard`) |
 | `track` | Mitlaufender Zensurbalken in scrollendem Video (Texterkennung prüft jeden Zeitpunkt) |
 | `stitch` | Scroll-Screenshot: Ausschnitte → exakt das Originalbild (Pixelvergleich); nur neue Zeilen im Speicher, Obergrenze, Anhängen und Zusammensetzen gleichzeitig, Nachzügler einer beendeten Aufnahme landen nie in der nächsten |
 | `robust` | Ablage und Abläufe ohne Bildschirm: JPEG über 65 535 px → PNG, Ausweichordner bei nicht erreichbarer Ablage, Schreibfehler werden gemeldet, Aufräumen (Frist, `$TMPDIR/Knips`), Beenden wartet auf Schreibvorgänge; Aufnahme-Zustände mit einer Attrappe (belegt ab dem Start, Abbruch während Start/Countdown, Writer-Fehler, Beenden während der Aufnahme) |
 | `ocr-bench` | Tempo und Trefferzahl der Texterkennung auf Testbildern im Speicher (4K/5K 2× und 1× textreich, hohe/breite Bilder, ohne Text) |
-| `menu` / `history` | Menü-Panel und Verlauf-Fenster |
+| `menu` / `history` | Menü-Panel und Verlauf-Fenster (Verlauf leer und mit Video, Maus über der neuesten Karte, hell und dunkel; leerer Filter) |
 | `perf` / `record-bench` | Zeiten (Overlay, Speichern, Texterkennung) und Video-Varianten |
 | `video` | Video-Zensur mit Zeitbereich, Kürzen, MP4- und GIF-Export, Auto-Zensur im Video |
 | `capture` / `record 3` | echte Aufnahme — gibt nur Maße/Dauer aus, speichert keine Inhalte |
@@ -62,6 +62,10 @@ Zwischenablage kommt er weder per Link noch in der Sandbox).
 
 Testbild-Geheimnisse sind erfunden. Den Stripe-Schlüssel (`SelfTest.sampleStripeKey`) nie als ein Literal
 `sk_` + `live_…` schreiben, sondern zusammengesetzt — sonst schlagen Secret-Scanner (GitHub-Push-Schutz) an.
+
+Fensterbilder entstehen hell und dunkel (`<name>.png`, `<name>-dunkel.png`, gesetzt über `NSApp.appearance`);
+`KNIPS_TEST_APPEARANCE=light|dark` beschränkt auf eine Darstellung, `KNIPS_TEST_WINDOW_HEIGHT=1400` zeigt in `settings`
+ganze Seiten.
 
 SwiftUI rendert nicht über `cacheDisplay` in Fenstern — für Editor-Prüfungen `live` nehmen.
 Seit macOS 14 clippen NSViews nicht mehr: eigene `draw(_:)` immer auf `bounds` begrenzen
@@ -158,9 +162,30 @@ Nie Befehle testen, die das Auswahl-Overlay öffnen — das erscheint auf dem Bi
 
 ## Oberfläche
 
-Menü-Panel (`UI/MenuPanel.swift`): dunkles Panel mit Raster. Einstellungen (`App/SettingsWindow.swift`):
-dunkle Liste links (Pfeil am ausgewählten Eintrag), helle Fläche, weiße Karten, schwarze Knöpfe (`Theme`).
-Verlauf-Fenster, Zustimmungsdialog und Link-Rückfrage im selben Stil.
+Menü-Panel (`UI/MenuPanel.swift`): dunkles Panel mit Raster.
+
+Markensprache der App-Familie: `docs/design.md`, Werte nur aus `UI/Brand.swift`, Zeichen und
+Wortmarke `UI/BrandMark.swift`. Bausteine für die Fenster in `UI/Controls.swift`: `BrandToggle` (Schalter Königsblau),
+`BrandSegmented`, `BrandSelect` (Auswahlfeld, Menü unter dem Feld), `BrandButtonStyle` (.primary/.secondary/.quiet),
+`BrandKeycap`/`BrandKeys` (Tastenkappen, Sondertasten als SF Symbol), `KeyCombo.inlineText` (Kürzel im Fließtext),
+`BrandCard`/`BrandSection`/`BrandRow`/`BrandRowDivider`, `BrandStatusIcon` (erledigt/fehlt/freiwillig),
+`BrandStatusDot`, `BrandIconTile`, `BrandOverline`, `BrandLink`, `BrandDialogWindow`/`BrandDialog`/`BrandDialogPoint`.
+Das alte `Theme` und `PillButtonStyle` liegen unverändert in `UI/LegacyTheme.swift`, nur für noch nicht umgestellte Ansichten.
+
+Einstellungen (`App/SettingsWindow.swift`): dunkle Seitenleiste über die volle Höhe (Zeichen + Wortmarke, Gruppen
+START · AUFNAHME · BEARBEITEN · APP, gewählter Eintrag gehoben mit Pfeil, unten „Bereit“ bzw. „N Schritte offen“ und
+die Version in Mono), rechts Papier mit Seitentitel, Abschnitten und weißen Karten. Erste Seite **Start** („So geht's“):
+Kürzel als Tastenkappen, drei Schritte, Bereit-Check (`App/Readiness.swift`): Bildschirmaufnahme-Freigabe, Mikrofon
+(freiwillig, zählt nur bei „Mikrofon aufnehmen“), Kürzel registriert und nicht von macOS belegt, Ablageordner erreichbar.
+Geprüft beim Öffnen, sobald das Fenster aktiv wird, und alle 2 s auf Start und Datenschutz. Öffnen ohne Bereich zeigt Start,
+solange etwas fehlt. **Darstellung** (Allgemein): `appearance` = system/light/dark → `NSApp.appearance` beim Start und
+sofort bei Änderung; die Fenster setzen keine eigene Darstellung. Seitenleiste, Menü-Panel und Pillen bleiben dunkel.
+
+Verlauf (`UI/HistoryWindow.swift`): Kopf mit Titel und Anzahl, Filter als Segment-Schalter, Karten mit Meta in Mono,
+Maus darüber: Königsblau-Linie und kleine dunkle Knöpfe. Dialoge (Zustimmung, „Aufnahme per Link?“, „Text kopieren?“,
+Freigabe, „Kürzel für Knips übernehmen?“) sind `BrandDialogWindow`: randlose Karte mit Radius 22 wie die
+Onboarding-Karte, Esc und ⌘W schließen. Die Link-Rückfrage zeigt ihre Schutzzeit (Primärknopf blass,
+Fortschritt darunter). Die Kürzel-Übernahme ist modal (`NSApp.runModal`) wie früher der NSAlert, ⏎ = Übernehmen.
 
 ## Nicht automatisch prüfbar
 

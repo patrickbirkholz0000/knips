@@ -38,6 +38,27 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// Darstellung der Fenster (docs/design.md, „Hell und Dunkel“). Menü-Panel, Pillen und Seitenleiste bleiben immer dunkel.
+enum AppearanceMode: String, CaseIterable, Identifiable {
+    case system, light, dark
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .system: "System"
+        case .light: "Hell"
+        case .dark: "Dunkel"
+        }
+    }
+    /// `nil` folgt macOS.
+    var nsAppearance: NSAppearance? {
+        switch self {
+        case .system: nil
+        case .light: NSAppearance(named: .aqua)
+        case .dark: NSAppearance(named: .darkAqua)
+        }
+    }
+}
+
 @MainActor final class AppSettings: ObservableObject {
     static let shared = AppSettings()
     private let d = UserDefaults.knips
@@ -87,6 +108,13 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
     @Published var disabledHotkeys: Set<HotkeyAction> {
         didSet { d.set(disabledHotkeys.map(\.rawValue).sorted(), forKey: "disabledHotkeys") }
     }
+    /// Hell, Dunkel oder wie macOS — gilt sofort für alle Fenster (`NSApp.appearance`).
+    @Published var appearance: AppearanceMode {
+        didSet {
+            d.set(appearance.rawValue, forKey: "appearance")
+            applyAppearance()
+        }
+    }
     @Published var hotkeys: [HotkeyAction: KeyCombo] {
         didSet {
             if let data = try? JSONEncoder().encode(Dictionary(uniqueKeysWithValues: hotkeys.map { ($0.key.rawValue, $0.value) })) {
@@ -126,6 +154,7 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
             autoRedactKinds = Set(SensitiveDetector.Kind.allCases)
         }
         retentionDays = d.object(forKey: "retentionDays") as? Int ?? 30
+        appearance = AppearanceMode(rawValue: d.string(forKey: "appearance") ?? "") ?? .system
         // Bis 20.10.2026 ließ sich die Rückfrage vor Aufnahmen per Link hier abschalten. Jedes andere Programm kann
         // die Benutzereinstellungen umschreiben — die Rückfrage kommt deshalb immer (`LinkCommands`).
         d.removeObject(forKey: "linkCaptureWithoutConfirm")
@@ -167,6 +196,11 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
             d.set(data, forKey: "hotkeys")
         }
         d.set(3, forKey: "settingsVersion")
+    }
+
+    /// Darstellung auf die ganze App anwenden (beim Start und bei jeder Änderung).
+    func applyAppearance() {
+        NSApplication.shared.appearance = appearance.nsAppearance
     }
 
     /// Tatsächlich registrierte Kürzel.

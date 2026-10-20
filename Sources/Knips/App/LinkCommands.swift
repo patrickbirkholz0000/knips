@@ -170,13 +170,15 @@ struct LinkPrompt {
     /// Zustimmung (Knopf oder ⏎) wirkt erst nach `armDelay`: ein Klick oder ⏎, der gerade für eine andere App
     /// gedacht war, als das Fenster aufging, bestätigt nichts. Beginnt bei jedem Zeigen neu.
     @Published var armed = false
+    /// Nur für die Anzeige: zählt jedes Zeigen, damit der Fortschritt der Schutzzeit neu beginnt.
+    @Published var presentations = 0
     init(prompt: LinkPrompt) { self.prompt = prompt }
 }
 
 @MainActor final class LinkConfirmWindowController: NSWindowController, NSWindowDelegate {
     static let armDelay: TimeInterval = 0.6
 
-    static func size(for prompt: LinkPrompt) -> NSSize { NSSize(width: 500, height: prompt.preview == nil ? 248 : 388) }
+    static let width: CGFloat = 520
 
     let model: LinkConfirmModel
     private var decide: ((_ approved: Bool) -> Void)?
@@ -185,20 +187,13 @@ struct LinkPrompt {
     init(prompt: LinkPrompt, decide: @escaping (_ approved: Bool) -> Void) {
         model = LinkConfirmModel(prompt: prompt)
         self.decide = decide
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: Self.size(for: prompt)),
-                              styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.title = prompt.title
-        window.appearance = NSAppearance(named: .aqua)
-        window.backgroundColor = NSColor(Theme.page)
-        window.isMovableByWindowBackground = true
-        window.isReleasedWhenClosed = false
+        // Schwebende Karte im Stil der Dialoge (`BrandDialogWindow`), folgt Hell/Dunkel.
+        let window = BrandDialogWindow.make(width: Self.width, title: prompt.title)
         window.level = .floating
         super.init(window: window)
         window.delegate = self
-        window.contentView = NSHostingView(rootView: LinkConfirmView(model: model, confirm: { [weak self] in self?.confirm() },
-                                                                     cancel: { [weak self] in self?.cancel() }))
+        window.setDialogContent(LinkConfirmView(model: model, confirm: { [weak self] in self?.confirm() },
+                                                cancel: { [weak self] in self?.cancel() }))
         window.center()
     }
 
@@ -208,6 +203,7 @@ struct LinkPrompt {
     func present(_ place: (NSWindow) -> Void) {
         arming?.cancel()
         model.armed = false
+        model.presentations += 1
         let work = DispatchWorkItem { [weak self] in self?.model.armed = true }
         arming = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.armDelay, execute: work)
@@ -234,65 +230,77 @@ struct LinkPrompt {
     func windowWillClose(_ notification: Notification) { resolve(false) }
 }
 
+/// „Aufnahme per Link?“ bzw. „Text kopieren?“: Karte wie die Onboarding-Karte wie in der App-Familie. Die Schutzzeit ist
+/// sichtbar — der Primärknopf bleibt blass, darunter läuft ein leiser Fortschritt, bis er wirkt.
 struct LinkConfirmView: View {
     @ObservedObject var model: LinkConfirmModel
     let confirm: () -> Void
     let cancel: () -> Void
+    @State private var progress: CGFloat = 0
 
     var body: some View {
         let prompt = model.prompt
-        let size = LinkConfirmWindowController.size(for: prompt)
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 14) {
-                Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 54, height: 54)
-                Text(prompt.title)
-                    .font(.system(size: 22, weight: .bold))
-                    .tracking(-0.4)
-                    .foregroundStyle(Theme.ink)
-            }
-            VStack(alignment: .leading, spacing: 8) {
-                Text(prompt.message)
-                    .font(.system(size: 13.5))
-                    .lineSpacing(2)
-                    .foregroundStyle(Theme.ink)
-                    .fixedSize(horizontal: false, vertical: true)
+        BrandDialog(overline: prompt.preview == nil ? "Link von außen" : "Text per Link", title: prompt.title,
+                    message: prompt.message, width: LinkConfirmWindowController.width) {
+            VStack(alignment: .leading, spacing: 14) {
+                if let preview = prompt.preview {
+                    ScrollView {
+                        Text(preview)
+                            .font(Brand.mono(12))
+                            .foregroundStyle(Color.brand(Brand.ink))
+                            .lineSpacing(2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(12)
+                    }
+                    .frame(height: 132)
+                    .background(RoundedRectangle(cornerRadius: Brand.Radius.field, style: .continuous).fill(Color.brand(Brand.surfaceRaised)))
+                    .overlay(RoundedRectangle(cornerRadius: Brand.Radius.field, style: .continuous).strokeBorder(Color.brand(Brand.line)))
+                }
                 if let hint = prompt.hint {
-                    Text(hint)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(Theme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 12) {
+                        BrandIconTile(symbol: "hand.raised", size: 28)
+                        Text(hint)
+                            .font(Brand.font(12.5))
+                            .foregroundStyle(Color.brand(Brand.inkSoft))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
-            if let preview = prompt.preview {
-                ScrollView {
-                    Text(preview)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundStyle(Theme.ink)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
+        } buttons: {
+            Spacer()
+            Button("Abbrechen", action: cancel)
+                .buttonStyle(BrandButtonStyle(kind: .secondary))
+                .keyboardShortcut(.cancelAction)
+            Button(prompt.confirm, action: confirm)
+                .buttonStyle(BrandButtonStyle(kind: .primary))
+                .keyboardShortcut(.defaultAction)
+                .opacity(model.armed ? 1 : 0.5)
+                .overlay(alignment: .bottom) {
+                    // Leiser Fortschritt der Schutzzeit unter dem Knopf; verschwindet, sobald er wirkt.
+                    GeometryReader { geo in
+                        Capsule().fill(Color.brand(Brand.line))
+                            .overlay(alignment: .leading) {
+                                Capsule().fill(Color.brand(Brand.accent)).frame(width: geo.size.width * progress)
+                            }
+                    }
+                    .frame(height: 2.5)
+                    .offset(y: 8)
+                    .opacity(model.armed ? 0 : 1)
+                    .accessibilityHidden(true)
                 }
-                .frame(maxHeight: .infinity)
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.card))
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.border))
-            } else {
-                Spacer(minLength: 0)
-            }
-            HStack(spacing: 10) {
-                Spacer()
-                Button("Abbrechen", action: cancel)
-                    .buttonStyle(PillButtonStyle())
-                    .keyboardShortcut(.cancelAction)
-                Button(prompt.confirm, action: confirm)
-                    .buttonStyle(PillButtonStyle(primary: true))
-                    .keyboardShortcut(.defaultAction)
-                    .opacity(model.armed ? 1 : 0.45)
-            }
         }
-        .padding(.horizontal, 30)
-        .padding(.top, 40)
-        .padding(.bottom, 24)
-        .frame(width: size.width, height: size.height, alignment: .topLeading)
-        .background(Theme.page)
-        .ignoresSafeArea()
+        .onAppear(perform: restartProgress)
+        .onChange(of: model.presentations) { _, _ in restartProgress() }
+        .animation(.easeOut(duration: 0.2), value: model.armed)
+    }
+
+    private func restartProgress() {
+        var reset = Transaction()
+        reset.disablesAnimations = true
+        withTransaction(reset) { progress = 0 }
+        // Erst im nächsten Durchlauf animieren, sonst fasst SwiftUI beide Änderungen zusammen.
+        DispatchQueue.main.async {
+            withAnimation(.linear(duration: LinkConfirmWindowController.armDelay)) { progress = 1 }
+        }
     }
 }

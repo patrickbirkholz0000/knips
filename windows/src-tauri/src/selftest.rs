@@ -593,8 +593,58 @@ fn selection(out: &Path) -> Result<()> {
     write(&bereich, &out.join("ui-auswahl-bereich.png"))?;
     let fenster = overlay::render_offscreen(&frozen, &windows, Purpose::Screenshot, true, (1400, 1040), None)?;
     write(&fenster, &out.join("ui-auswahl-fenster.png"))?;
-    let text = overlay::render_offscreen(&frozen, &windows, Purpose::Recording, false, (300, 300), None)?;
-    write(&text, &out.join("ui-auswahl-aufnahme.png"))?;
+    let aufnahme = overlay::render_offscreen(&frozen, &windows, Purpose::Recording, false, (300, 300), None)?;
+    write(&aufnahme, &out.join("ui-auswahl-aufnahme.png"))?;
+    // Zeiger unten rechts (Lupe klappt nach oben links), Text erfassen und Scroll-Screenshot mit ihrer Hinweiszeile
+    let text = overlay::render_offscreen(&frozen, &windows, Purpose::Text, false, (2300, 1450), None)?;
+    write(&text, &out.join("ui-auswahl-text.png"))?;
+    let scroll = overlay::render_offscreen(&frozen, &windows, Purpose::Scroll, false, (1280, 400), None)?;
+    write(&scroll, &out.join("ui-auswahl-scroll.png"))?;
+    // kleine Auswahl in der Ecke: Größe passt nicht darunter, Eckgriffe gekürzt
+    let klein = overlay::render_offscreen(&frozen, &windows, Purpose::Screenshot, false, (2540, 1580), Some(IRect::new(2440, 1500, 100, 80)))?;
+    write(&klein, &out.join("ui-auswahl-klein.png"))?;
+    // Aufnahmerahmen (rot bei Video, Königsblau hell beim Scroll-Screenshot) über einem Ausschnitt des Testbilds
+    let mut rahmen = vec![];
+    for (color, name) in [(overlay::FrameColor::Recording, "ui-rahmen-aufnahme.png"), (overlay::FrameColor::Scroll, "ui-rahmen-scroll.png")] {
+        let frame = overlay::render_frame_offscreen((900, 520), 2.0, color)?;
+        let mut shot = image::imageops::crop_imm(&frozen.image, 400, 300, frame.width(), frame.height()).to_image();
+        image::imageops::overlay(&mut shot, &frame, 0, 0);
+        write(&shot, &out.join(name))?;
+        rahmen.push(frame);
+    }
+
+    if !knips_platform::IS_REAL {
+        return Ok(());
+    }
+    // Farben der neuen Darstellung (docs/design.md, „Auswahl-Overlay“): Königsblau hell #9AA6FF für Rahmen,
+    // Eckgriffe und Fenstermodus, dunkle Pillen #141518, Aufnahme-Rot #E8523F.
+    let near = |img: &RgbaImage, x: u32, y: u32, c: [u8; 3]| {
+        let p = img.get_pixel(x, y).0;
+        (0..3).all(|i| (p[i] as i32 - c[i] as i32).abs() <= 28)
+    };
+    let dark = |img: &RgbaImage, x: u32, y: u32| img.get_pixel(x, y).0[..3].iter().all(|&v| v < 45);
+    const ACCENT: [u8; 3] = [0x9A, 0xA6, 0xFF];
+    let mut failures = vec![];
+    let mut check = |name: &str, ok: bool| {
+        if !ok {
+            println!("   FALSCH {name}");
+            failures.push(name.to_string());
+        }
+    };
+    // Auswahl (600, 760, 1280, 600) px bei Faktor 2: Rahmen 1,5 pt knapp außerhalb, Eckgriffe 3 pt / 14 pt lang
+    check("Auswahlrahmen oben in Königsblau hell", near(&bereich, 1240, 758, ACCENT));
+    check("Eckgriff oben links in Königsblau hell", near(&bereich, 596, 775, ACCENT));
+    check("kein Eckgriff in der Mitte der linken Kante", !near(&bereich, 596, 1060, ACCENT));
+    check("Größe als dunkle Pille unter der Auswahl", dark(&bereich, 1870, 1402));
+    // Hinweiszeile unten mittig über der Taskleiste (Arbeitsbereich endet bei 1552 px)
+    check("Hinweiszeile als dunkle Pille unten", dark(&fenster, 1280, 1440));
+    check("Fenstermodus: Rand in Königsblau hell", near(&fenster, 842, 1020, ACCENT));
+    check("Rahmen Aufnahme in Aufnahme-Rot", (0..rahmen[0].width()).filter(|&x| near(&rahmen[0], x, 2, [0xE8, 0x52, 0x3F])).count() > 100);
+    check("Rahmen Scroll in Königsblau hell", (0..rahmen[1].width()).filter(|&x| near(&rahmen[1], x, 2, ACCENT)).count() > 100);
+    check("Rahmen innen durchsichtig", rahmen[0].get_pixel(400, 200).0[3] == 0);
+    if !failures.is_empty() {
+        bail!("Overlay-Darstellung: {}", failures.join(", "));
+    }
     Ok(())
 }
 

@@ -178,11 +178,13 @@ pub fn loupe_text_rect(origin: (f64, f64)) -> RectF {
     RectF::new(origin.0 + LOUPE_SIZE / 2.0 - 42.0, origin.1 + LOUPE_SIZE + 4.0, 84.0, 16.0)
 }
 
-/// Hinweisschild oben mittig. Mac: unter der Menüleiste + 18; hier: 18 unter dem oberen Rand
-/// des Arbeitsbereichs (`work_top` in pt, relativ zum Monitor).
-pub fn hint_origin(bw: f64, pw: f64, work_top: f64) -> (f64, f64) {
-    (((bw - pw) / 2.0), work_top + 18.0)
+/// Hinweiszeile unten mittig (docs/design.md, „Auswahl-Overlay“): `HINT_MARGIN` über dem unteren Rand
+/// des Arbeitsbereichs (`work_bottom` in pt, relativ zum Monitor; über der Taskleiste).
+pub fn hint_origin(bw: f64, pw: f64, ph: f64, work_bottom: f64) -> (f64, f64) {
+    ((bw - pw) / 2.0, work_bottom - HINT_MARGIN - ph)
 }
+
+pub const HINT_MARGIN: f64 = 24.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -192,19 +194,65 @@ pub enum Kind {
     Scroll,
 }
 
+/// Ein Abschnitt der Hinweiszeile: optional eine Taste (Mono-Tastenkappe), dann ein Wort.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HintGroup {
+    pub key: Option<&'static str>,
+    pub text: &'static str,
+}
+
+/// Hinweiszeile: Art der Aufnahme (fehlt beim Screenshot), dann die Abschnitte —
+/// „Bereich ziehen · [Leertaste] Fenster · [⏎] Bildschirm · [Esc] Abbrechen“.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Hint {
+    pub title: Option<&'static str>,
+    pub groups: Vec<HintGroup>,
+}
+
+pub fn hint(kind: Kind, window_mode: bool) -> Hint {
+    let title = match kind {
+        Kind::Recording => Some("Video"),
+        Kind::Text => Some("Text erfassen"),
+        Kind::Scroll => Some("Scroll-Screenshot"),
+        Kind::Screenshot => None,
+    };
+    let g = |key, text| HintGroup { key, text };
+    let first = match (window_mode, kind) {
+        (true, _) => g(None, "Fenster anklicken"),
+        (false, Kind::Scroll) => g(None, "Sichtbaren Bereich ziehen"),
+        (false, _) => g(None, "Bereich ziehen"),
+    };
+    let toggle = g(Some("Leertaste"), if window_mode { "Bereich" } else { "Fenster" });
+    Hint { title, groups: vec![first, toggle, g(Some("⏎"), "Bildschirm"), g(Some("Esc"), "Abbrechen")] }
+}
+
+/// Hinweiszeile als ein Satz (Protokoll, Tests).
 pub fn hint_text(kind: Kind, window_mode: bool) -> String {
-    let prefix = match kind {
-        Kind::Recording => "Aufnahme  ·  ",
-        Kind::Text => "Text erfassen  ·  ",
-        Kind::Scroll => "Scroll-Screenshot: sichtbaren Bereich wählen  ·  ",
-        Kind::Screenshot => "",
-    };
-    let rest = if window_mode {
-        "Fenster anklicken  ·  Leertaste: Bereich  ·  Eingabe: ganzer Bildschirm  ·  Esc: Abbrechen"
-    } else {
-        "Bereich ziehen  ·  Leertaste: Fenster  ·  Eingabe: ganzer Bildschirm  ·  Esc: Abbrechen"
-    };
-    format!("{prefix}{rest}")
+    let h = hint(kind, window_mode);
+    let mut parts: Vec<String> = h.title.map(String::from).into_iter().collect();
+    parts.extend(h.groups.iter().map(|g| match g.key {
+        Some(k) => format!("{k} {}", g.text),
+        None => g.text.to_string(),
+    }));
+    parts.join(" · ")
+}
+
+/// Eckgriffe der Auswahl: an jeder Ecke ein Winkel (zwei Strecken ab der Ecke), wie die Ecken im Zeichen.
+/// Schenkel höchstens `arm`, bei kleinen Auswahlen höchstens ein Drittel der Kante. Rückgabe: Strecken (von, bis).
+pub fn corner_handles(r: RectF, arm: f64) -> Vec<((f64, f64), (f64, f64))> {
+    let ax = arm.min(r.w / 3.0).max(0.0);
+    let ay = arm.min(r.h / 3.0).max(0.0);
+    let (l, t, rr, b) = (r.x, r.y, r.right(), r.bottom());
+    vec![
+        ((l, t), (l + ax, t)),
+        ((l, t), (l, t + ay)),
+        ((rr, t), (rr - ax, t)),
+        ((rr, t), (rr, t + ay)),
+        ((rr, b), (rr - ax, b)),
+        ((rr, b), (rr, b - ay)),
+        ((l, b), (l + ax, b)),
+        ((l, b), (l, b - ay)),
+    ]
 }
 
 /// Fadenkreuz-Linie: ein Streifen aus ganzen Gerätepixeln um das Zeigerpixel.
@@ -335,6 +383,19 @@ mod tests {
     }
 
     #[test]
+    fn handles_at_corners_and_clamped() {
+        let r = RectF::new(100.0, 50.0, 300.0, 200.0);
+        let h = corner_handles(r, 14.0);
+        assert_eq!(h.len(), 8);
+        assert_eq!(h[0], ((100.0, 50.0), (114.0, 50.0)));
+        assert_eq!(h[5], ((400.0, 250.0), (400.0, 236.0)));
+        // kleine Auswahl: höchstens ein Drittel der Kante, die Winkel berühren sich nie
+        let small = corner_handles(RectF::new(0.0, 0.0, 12.0, 30.0), 14.0);
+        assert_eq!(small[0].1, (4.0, 0.0));
+        assert_eq!(small[1].1, (0.0, 10.0));
+    }
+
+    #[test]
     fn loupe_source_clipping() {
         let ((rx, ry), (x, y, w, h)) = loupe_source(100, 100, 1920, 1080).unwrap();
         assert_eq!((rx, ry, x, y, w, h), (94, 94, 94, 94, 13, 13));
@@ -345,11 +406,14 @@ mod tests {
 
     #[test]
     fn hint_and_frame() {
-        assert!(hint_text(Kind::Recording, false).starts_with("Aufnahme  ·  Bereich ziehen"));
-        assert!(hint_text(Kind::Screenshot, true).starts_with("Fenster anklicken"));
-        assert!(hint_text(Kind::Scroll, false).starts_with("Scroll-Screenshot: sichtbaren Bereich wählen  ·  Bereich"));
-        assert!(hint_text(Kind::Text, true).starts_with("Text erfassen  ·  Fenster"));
-        assert_eq!(hint_origin(1000.0, 400.0, 0.0), (300.0, 18.0));
+        assert_eq!(hint_text(Kind::Screenshot, false), "Bereich ziehen · Leertaste Fenster · ⏎ Bildschirm · Esc Abbrechen");
+        assert!(hint_text(Kind::Recording, false).starts_with("Video · Bereich ziehen · Leertaste Fenster"));
+        assert!(hint_text(Kind::Screenshot, true).starts_with("Fenster anklicken · Leertaste Bereich"));
+        assert!(hint_text(Kind::Scroll, false).starts_with("Scroll-Screenshot · Sichtbaren Bereich ziehen"));
+        assert!(hint_text(Kind::Text, true).starts_with("Text erfassen · Fenster anklicken"));
+        assert_eq!(hint(Kind::Screenshot, false).groups.iter().filter(|g| g.key.is_some()).count(), 3);
+        // unten mittig über dem Arbeitsbereich (Taskleiste 48 pt bei 800 pt Höhe)
+        assert_eq!(hint_origin(1000.0, 400.0, 36.0, 752.0), (300.0, 752.0 - HINT_MARGIN - 36.0));
         assert_eq!(cross_line(100, 1.0), (100, 1));
         assert_eq!(cross_line(100, 2.0), (100, 2));
         assert_eq!(cross_line(100, 3.0), (99, 3));

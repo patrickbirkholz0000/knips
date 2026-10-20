@@ -1,11 +1,12 @@
 //! Zeichnen des Overlays mit Direct2D + DirectWrite — eine Routine für das Fenster (HwndRenderTarget)
 //! und für den Offscreen-Selbsttest (WIC-Bitmap). Alles in DIPs (= Mac-Punkte): das Renderziel
 //! läuft mit der DPI des Monitors, das Standbild wird auf seine Pixelgröße gezogen.
+//! Farben und Schriften nur aus `brand.rs` (docs/design.md, „Auswahl-Overlay“).
 //!
 //! Nur auf einem Thread benutzen (Einzelthread-Factory).
 
 use knips_core::RgbaImage;
-use windows::core::{w, Interface, Result, HRESULT, PCWSTR};
+use windows::core::{w, Interface, Result, HRESULT, HSTRING, PCWSTR};
 use windows_numerics::{Matrix3x2, Vector2};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Direct2D::Common::*;
@@ -15,6 +16,7 @@ use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Imaging::*;
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 
+use super::brand::{self, Rgba};
 use super::layout::{self, Kind, RectF};
 
 /// `D2DERR_RECREATE_TARGET`: Gerät verloren, Renderziel neu bauen.
@@ -34,16 +36,36 @@ pub struct Scene {
     pub hole: Option<RectF>,
     /// Aktive Auswahl dieses Monitors, px.
     pub selection: Option<RectF>,
-    /// Oberkante des Arbeitsbereichs in pt (für das Hinweisschild).
-    pub work_top_pt: f64,
+    /// Unterkante des Arbeitsbereichs in pt (Hinweiszeile über der Taskleiste).
+    pub work_bottom_pt: f64,
 }
+
+// Maße der Pillen in pt.
+const SIZE_PILL_H: f64 = 26.0;
+const SIZE_PILL_PAD: f64 = 11.0;
+const HINT_H: f64 = 36.0;
+const HINT_PAD: f64 = 14.0;
+const KEY_H: f64 = 22.0;
+const KEY_PAD: f64 = 7.0;
+const KEY_GAP: f64 = 7.0;
+/// Platz für den Trennpunkt zwischen zwei Abschnitten der Hinweiszeile.
+const SEP_W: f64 = 21.0;
 
 pub struct Factories {
     pub d2d: ID2D1Factory,
     pub dw: IDWriteFactory,
+    /// Größe der Auswahl („1280 × 600“), Mono.
     fmt_size: IDWriteTextFormat,
+    /// Tastenkappen, Mono.
+    fmt_key: IDWriteTextFormat,
+    /// Text der Hinweiszeile.
     fmt_hint: IDWriteTextFormat,
+    /// Art der Aufnahme vorn in der Hinweiszeile („Video“), halbfett.
+    fmt_title: IDWriteTextFormat,
+    /// Koordinaten unter der Lupe, Mono.
     fmt_loupe: IDWriteTextFormat,
+    /// Runde Enden für die Eckgriffe.
+    round: ID2D1StrokeStyle,
 }
 
 impl Factories {
@@ -51,13 +73,25 @@ impl Factories {
         unsafe {
             let d2d: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?;
             let dw: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
-            let text_family = if has_family(&dw, w!("Segoe UI Variable Text")) { w!("Segoe UI Variable Text") } else { w!("Segoe UI") };
-            // Ziffern: Segoe UI hat von Haus aus gleich breite Ziffern.
-            let digit_family = w!("Segoe UI");
-            let fmt_size = make_format(&dw, digit_family, DWRITE_FONT_WEIGHT_SEMI_BOLD, 12.0)?;
-            let fmt_hint = make_format(&dw, text_family, DWRITE_FONT_WEIGHT_MEDIUM, 12.5)?;
-            let fmt_loupe = make_format(&dw, digit_family, DWRITE_FONT_WEIGHT_SEMI_BOLD, 10.5)?;
-            Ok(Self { d2d, dw, fmt_size, fmt_hint, fmt_loupe })
+            let text = pick_family(&dw, &brand::TEXT_FAMILIES);
+            let mono = pick_family(&dw, &brand::MONO_FAMILIES);
+            let (text, mono) = (PCWSTR(text.as_ptr()), PCWSTR(mono.as_ptr()));
+            let fmt_size = make_format(&dw, mono, DWRITE_FONT_WEIGHT_MEDIUM, 12.5)?;
+            let fmt_key = make_format(&dw, mono, DWRITE_FONT_WEIGHT_MEDIUM, 11.5)?;
+            let fmt_hint = make_format(&dw, text, DWRITE_FONT_WEIGHT_NORMAL, 13.0)?;
+            let fmt_title = make_format(&dw, text, DWRITE_FONT_WEIGHT_SEMI_BOLD, 13.0)?;
+            let fmt_loupe = make_format(&dw, mono, DWRITE_FONT_WEIGHT_MEDIUM, 10.5)?;
+            let sp = D2D1_STROKE_STYLE_PROPERTIES {
+                startCap: D2D1_CAP_STYLE_ROUND,
+                endCap: D2D1_CAP_STYLE_ROUND,
+                dashCap: D2D1_CAP_STYLE_ROUND,
+                lineJoin: D2D1_LINE_JOIN_ROUND,
+                miterLimit: 10.0,
+                dashStyle: D2D1_DASH_STYLE_SOLID,
+                dashOffset: 0.0,
+            };
+            let round = d2d.CreateStrokeStyle(&sp, None)?;
+            Ok(Self { d2d, dw, fmt_size, fmt_key, fmt_hint, fmt_title, fmt_loupe, round })
         }
     }
 
@@ -73,6 +107,17 @@ impl Factories {
             m.widthIncludingTrailingWhitespace as f64
         }
     }
+}
+
+/// Erste vorhandene Schriftfamilie der Liste, sonst die letzte (DirectWrite ersetzt sie dann selbst).
+unsafe fn pick_family(dw: &IDWriteFactory, names: &[&str]) -> HSTRING {
+    for name in names {
+        let h = HSTRING::from(*name);
+        if unsafe { has_family(dw, PCWSTR(h.as_ptr())) } {
+            return h;
+        }
+    }
+    HSTRING::from(*names.last().unwrap_or(&"Segoe UI"))
 }
 
 unsafe fn has_family(dw: &IDWriteFactory, name: PCWSTR) -> bool {
@@ -102,8 +147,13 @@ fn rf(r: &RectF) -> D2D_RECT_F {
     D2D_RECT_F { left: r.x as f32, top: r.y as f32, right: r.right() as f32, bottom: r.bottom() as f32 }
 }
 
-fn col(r: f32, g: f32, b: f32, a: f32) -> D2D1_COLOR_F {
-    D2D1_COLOR_F { r, g, b, a }
+/// Markenfarbe → Direct2D.
+pub fn color(c: Rgba) -> D2D1_COLOR_F {
+    D2D1_COLOR_F { r: c.r, g: c.g, b: c.b, a: c.a }
+}
+
+fn pt(x: f64, y: f64) -> Vector2 {
+    Vector2 { X: x as f32, Y: y as f32 }
 }
 
 /// RGBA (gerade) → BGRA, undurchsichtig: ein Bildschirmfoto hat nie Transparenz.
@@ -118,6 +168,41 @@ fn to_bgra_opaque(img: &RgbaImage) -> Vec<u8> {
         d[3] = 255;
     }
     out
+}
+
+/// Ein Stück der Hinweiszeile, fertig vermessen (x relativ zur Pille).
+enum HintItem {
+    Title(f64, f64, &'static str),
+    Text(f64, f64, &'static str),
+    Key(f64, f64, &'static str),
+    Sep(f64),
+}
+
+/// Hinweiszeile vermessen: Stücke und Gesamtbreite.
+fn hint_layout(f: &Factories, kind: Kind, window_mode: bool) -> (Vec<HintItem>, f64) {
+    let hint = layout::hint(kind, window_mode);
+    let mut items = vec![];
+    let mut x = HINT_PAD;
+    if let Some(t) = hint.title {
+        let w = f.text_width(&f.fmt_title, t).ceil();
+        items.push(HintItem::Title(x, w, t));
+        x += w;
+    }
+    for (i, g) in hint.groups.iter().enumerate() {
+        if i > 0 || hint.title.is_some() {
+            items.push(HintItem::Sep(x + SEP_W / 2.0));
+            x += SEP_W;
+        }
+        if let Some(k) = g.key {
+            let w = (f.text_width(&f.fmt_key, k).ceil() + 2.0 * KEY_PAD).max(KEY_H);
+            items.push(HintItem::Key(x, w, k));
+            x += w + KEY_GAP;
+        }
+        let w = f.text_width(&f.fmt_hint, g.text).ceil();
+        items.push(HintItem::Text(x, w, g.text));
+        x += w;
+    }
+    (items, x + HINT_PAD)
 }
 
 /// Renderziel + geräteabhängige Ressourcen (Standbild, Pinsel). Wird bei `RECREATE_TARGET` neu gebaut.
@@ -149,17 +234,8 @@ impl Target {
 
     /// Renderziel für eine WIC-Bitmap (Offscreen).
     pub fn for_wic(f: &Factories, bmp: &IWICBitmap, dpi: f32, image: &RgbaImage) -> Result<Target> {
-        unsafe {
-            let props = D2D1_RENDER_TARGET_PROPERTIES {
-                r#type: D2D1_RENDER_TARGET_TYPE_SOFTWARE,
-                pixelFormat: D2D1_PIXEL_FORMAT { format: DXGI_FORMAT_B8G8R8A8_UNORM, alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED },
-                dpiX: dpi,
-                dpiY: dpi,
-                ..Default::default()
-            };
-            let rt = f.d2d.CreateWicBitmapRenderTarget(bmp, &props)?;
-            Self::finish(rt, None, dpi, image)
-        }
+        let rt = wic_target(f, bmp, dpi)?;
+        unsafe { Self::finish(rt, None, dpi, image) }
     }
 
     unsafe fn finish(rt: ID2D1RenderTarget, hwnd_rt: Option<ID2D1HwndRenderTarget>, dpi: f32, image: &RgbaImage) -> Result<Target> {
@@ -176,7 +252,7 @@ impl Target {
             };
             let bitmap = rt.CreateBitmap(D2D_SIZE_U { width: iw as u32, height: ih as u32 }, Some(data.as_ptr() as *const _), (iw * 4) as u32, &bp)?;
             drop(data);
-            let solid = rt.CreateSolidColorBrush(&col(0.0, 0.0, 0.0, 1.0), None)?;
+            let solid = rt.CreateSolidColorBrush(&color(brand::DARK), None)?;
             let bbp = D2D1_BITMAP_BRUSH_PROPERTIES {
                 extendModeX: D2D1_EXTEND_MODE_CLAMP,
                 extendModeY: D2D1_EXTEND_MODE_CLAMP,
@@ -206,38 +282,50 @@ impl Target {
         }
     }
 
-    unsafe fn set(&self, c: D2D1_COLOR_F) {
-        unsafe { self.solid.SetColor(&c) }
+    unsafe fn set(&self, c: Rgba) {
+        unsafe { self.solid.SetColor(&color(c)) }
     }
 
-    unsafe fn fill(&self, r: &RectF, c: D2D1_COLOR_F) {
+    unsafe fn fill(&self, r: &RectF, c: Rgba) {
         unsafe {
             self.set(c);
             self.rt.FillRectangle(&rf(r), &self.solid);
         }
     }
 
-    unsafe fn stroke(&self, r: &RectF, c: D2D1_COLOR_F, width: f32) {
+    unsafe fn stroke(&self, r: &RectF, c: Rgba, width: f32) {
         unsafe {
             self.set(c);
             self.rt.DrawRectangle(&rf(r), &self.solid, width, None::<&ID2D1StrokeStyle>);
         }
     }
 
-    /// Schild mit abgerundeter Kapsel (Hintergrund rgb(20,20,20) α0.82, Rand weiß α0.12) und Text.
-    unsafe fn pill(&self, f: &Factories, r: &RectF, radius: f32, fmt: &IDWriteTextFormat, text: &str) {
+    /// Abgerundete Fläche mit feiner Linie innen.
+    unsafe fn rounded(&self, r: &RectF, radius: f64, fill: Rgba, line: Rgba) {
         unsafe {
-            let rr = D2D1_ROUNDED_RECT { rect: rf(r), radiusX: radius, radiusY: radius };
-            self.set(col(0.08, 0.08, 0.08, 0.82));
+            let rr = D2D1_ROUNDED_RECT { rect: rf(r), radiusX: radius as f32, radiusY: radius as f32 };
+            self.set(fill);
             self.rt.FillRoundedRectangle(&rr, &self.solid);
-            // Rand innen, 1 pt
-            let ir = D2D1_ROUNDED_RECT { rect: rf(&r.inset(0.5, 0.5)), radiusX: (radius - 0.5).max(0.0), radiusY: (radius - 0.5).max(0.0) };
-            self.set(col(1.0, 1.0, 1.0, 0.12));
+            let inner = (radius - 0.5).max(0.0) as f32;
+            let ir = D2D1_ROUNDED_RECT { rect: rf(&r.inset(0.5, 0.5)), radiusX: inner, radiusY: inner };
+            self.set(line);
             self.rt.DrawRoundedRectangle(&ir, &self.solid, 1.0, None::<&ID2D1StrokeStyle>);
-            self.set(col(1.0, 1.0, 1.0, 1.0));
-            let wide: Vec<u16> = text.encode_utf16().collect();
+        }
+    }
+
+    unsafe fn text(&self, fmt: &IDWriteTextFormat, s: &str, r: &RectF, c: Rgba) {
+        unsafe {
+            self.set(c);
+            let wide: Vec<u16> = s.encode_utf16().collect();
             self.rt.DrawText(&wide, fmt, &rf(r), &self.solid, D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
-            let _ = f;
+        }
+    }
+
+    /// Dunkle Pille (Radius = halbe Höhe) mit Text in der Mitte.
+    unsafe fn pill(&self, r: &RectF, fmt: &IDWriteTextFormat, text: &str) {
+        unsafe {
+            self.rounded(r, r.h / 2.0, brand::PILL, brand::PILL_LINE);
+            self.text(fmt, text, r, brand::PILL_INK);
         }
     }
 
@@ -255,30 +343,40 @@ impl Target {
             // 2. Abdunkeln, Even-Odd-Loch als Streifen
             let hole_pt = s.hole.map(|h| h.scaled(k));
             for strip in layout::dim_strips(bw, bh, hole_pt) {
-                self.fill(&strip, col(0.0, 0.0, 0.0, 0.38));
+                self.fill(&strip, brand::DIM);
             }
 
-            // 3. Fenster-Hervorhebung (nur im Fenstermodus, nicht beim Ziehen)
+            // 3. Fenster-Hervorhebung (nur im Fenstermodus, nicht beim Ziehen): Königsblau-Fläche 12 % und Rand
             if s.window_mode && s.selection.is_none() {
                 if let Some(h) = hole_pt {
-                    let r = h.inset(1.5, 1.5);
-                    self.fill(&r, col(0.0, 122.0 / 255.0, 1.0, 0.16));
-                    self.stroke(&r, col(0.0, 122.0 / 255.0, 1.0, 1.0), 3.0);
+                    let w = brand::WINDOW_STROKE_WIDTH as f64;
+                    let r = h.inset(w / 2.0, w / 2.0);
+                    self.fill(&r, brand::WINDOW_FILL);
+                    self.stroke(&r, brand::WINDOW_STROKE, brand::WINDOW_STROKE_WIDTH);
                 }
             }
 
-            // 4. Auswahlrahmen: weiß 1 pt mit weichem dunklem Schatten, Größenschild
+            // 4. Auswahlrahmen: Königsblau hell 1,5 pt mit Eckgriffen, Größe als dunkle Pille in Mono
             if let Some(sel_px) = s.selection {
                 let sel = sel_px.scaled(k);
-                let path = sel.inset(-0.5, -0.5);
-                self.stroke(&path, col(0.0, 0.0, 0.0, 0.30), 3.0);
-                self.stroke(&path, col(1.0, 1.0, 1.0, 1.0), 1.0);
+                let half = brand::SELECTION_WIDTH as f64 / 2.0;
+                let path = sel.inset(-half, -half);
+                self.stroke(&path, brand::HALO, brand::SELECTION_WIDTH + 2.0);
+                self.stroke(&path, brand::SELECTION, brand::SELECTION_WIDTH);
+                let handles = layout::corner_handles(path, brand::HANDLE_ARM);
+                // erst der Saum aller Winkel, dann die Winkel selbst (sonst läge Saum über Farbe)
+                for (c, width) in [(brand::HALO, brand::HANDLE_WIDTH + 2.0), (brand::SELECTION, brand::HANDLE_WIDTH)] {
+                    self.set(c);
+                    for &(a, b) in &handles {
+                        rt.DrawLine(pt(a.0, a.1), pt(b.0, b.1), &self.solid, width, &f.round);
+                    }
+                }
 
                 let text = format!("{} × {}", sel_px.w.round() as i64, sel_px.h.round() as i64);
-                let lh = 24.0;
-                let lw = f.text_width(&f.fmt_size, &text).ceil() + 18.0;
+                let lh = SIZE_PILL_H;
+                let lw = f.text_width(&f.fmt_size, &text).ceil() + 2.0 * SIZE_PILL_PAD;
                 let (lx, ly) = layout::size_label_origin(sel, lw, lh, bw, bh);
-                self.pill(f, &RectF::new(lx, ly, lw, lh), (lh / 2.0) as f32, &f.fmt_size, &text);
+                self.pill(&RectF::new(lx, ly, lw, lh), &f.fmt_size, &text);
             }
 
             // 5. Fadenkreuz (nur auf dem Monitor mit Zeiger, nicht im Fenstermodus, nicht beim Ziehen)
@@ -289,26 +387,49 @@ impl Target {
                     let hline = RectF::new(0.0, y0 as f64 * k, bw, t as f64 * k);
                     let vline = RectF::new(x0 as f64 * k, 0.0, t as f64 * k, bh);
                     // weicher Schatten: ein Gerätepixel Rand rechts/links bzw. oben/unten
-                    self.fill(&RectF::new(0.0, hline.y - k, bw, hline.h + 2.0 * k), col(0.0, 0.0, 0.0, 0.22));
-                    self.fill(&RectF::new(vline.x - k, 0.0, vline.w + 2.0 * k, bh), col(0.0, 0.0, 0.0, 0.22));
-                    self.fill(&hline, col(1.0, 1.0, 1.0, 0.55));
-                    self.fill(&vline, col(1.0, 1.0, 1.0, 0.55));
+                    self.fill(&RectF::new(0.0, hline.y - k, bw, hline.h + 2.0 * k), brand::CROSSHAIR_SHADOW);
+                    self.fill(&RectF::new(vline.x - k, 0.0, vline.w + 2.0 * k, bh), brand::CROSSHAIR_SHADOW);
+                    self.fill(&hline, brand::CROSSHAIR);
+                    self.fill(&vline, brand::CROSSHAIR);
                 }
             }
 
-            // 6. Hinweisschild oben mittig (nur auf dem Monitor mit Zeiger, nicht beim Ziehen)
+            // 6. Hinweiszeile unten mittig (nur auf dem Monitor mit Zeiger, nicht beim Ziehen)
             if s.mouse.is_some() && s.selection.is_none() {
-                let text = layout::hint_text(s.kind, s.window_mode);
-                let pw = f.text_width(&f.fmt_hint, &text).ceil() + 28.0;
-                let ph = 30.0;
-                let (hx, hy) = layout::hint_origin(bw, pw, s.work_top_pt);
-                self.pill(f, &RectF::new(hx, hy, pw, ph), (ph / 2.0) as f32, &f.fmt_hint, &text);
+                self.draw_hint(f, s, bw);
             }
 
             // 7. Lupe (nur auf dem Monitor mit Zeiger, nicht im Fenstermodus)
             if let Some((mx, my)) = s.mouse {
                 if !s.window_mode {
                     self.draw_loupe(f, s, (mx, my), bw, bh);
+                }
+            }
+        }
+    }
+
+    /// Dunkle Pille: „[Art] · Bereich ziehen · [Leertaste] Fenster · [⏎] Bildschirm · [Esc] Abbrechen“.
+    unsafe fn draw_hint(&self, f: &Factories, s: &Scene, bw: f64) {
+        unsafe {
+            let (items, pw) = hint_layout(f, s.kind, s.window_mode);
+            let (hx, hy) = layout::hint_origin(bw, pw, HINT_H, s.work_bottom_pt);
+            let hx = hx.max(8.0);
+            self.rounded(&RectF::new(hx, hy, pw, HINT_H), HINT_H / 2.0, brand::PILL, brand::PILL_LINE);
+            let mid = hy + HINT_H / 2.0;
+            for item in &items {
+                match *item {
+                    HintItem::Title(x, w, t) => self.text(&f.fmt_title, t, &RectF::new(hx + x, hy, w, HINT_H), brand::PILL_INK),
+                    HintItem::Text(x, w, t) => self.text(&f.fmt_hint, t, &RectF::new(hx + x, hy, w, HINT_H), brand::PILL_INK),
+                    HintItem::Key(x, w, t) => {
+                        let r = RectF::new(hx + x, mid - KEY_H / 2.0, w, KEY_H);
+                        self.rounded(&r, 6.0, brand::KEYCAP, brand::KEYCAP_LINE);
+                        self.text(&f.fmt_key, t, &r, brand::PILL_INK);
+                    }
+                    HintItem::Sep(cx) => {
+                        self.set(brand::PILL_MUTED);
+                        let dot = D2D1_ELLIPSE { point: pt(hx + cx, mid), radiusX: 1.5, radiusY: 1.5 };
+                        self.rt.FillEllipse(&dot, &self.solid);
+                    }
                 }
             }
         }
@@ -322,10 +443,10 @@ impl Target {
             let local = (m.0 as f64 * k, m.1 as f64 * k);
             let (ox, oy) = layout::loupe_origin(local, bw, bh);
             let cell = size / layout::LOUPE_PIXELS as f64;
-            let ellipse = D2D1_ELLIPSE { point: Vector2 { X: (ox + size / 2.0) as f32, Y: (oy + size / 2.0) as f32 }, radiusX: (size / 2.0) as f32, radiusY: (size / 2.0) as f32 };
+            let ellipse = D2D1_ELLIPSE { point: pt(ox + size / 2.0, oy + size / 2.0), radiusX: (size / 2.0) as f32, radiusY: (size / 2.0) as f32 };
 
-            // schwarzer Grund (Bereiche außerhalb des Bilds)
-            self.set(col(0.0, 0.0, 0.0, 1.0));
+            // dunkler Grund (Bereiche außerhalb des Bilds)
+            self.set(brand::DARK);
             rt.FillEllipse(&ellipse, &self.solid);
 
             if let Some(((rx, ry), (cx, cy, cw, ch))) = layout::loupe_source(m.0, m.1, self.img_w, self.img_h) {
@@ -340,36 +461,48 @@ impl Target {
 
             // mittleres Pixel: Rahmen 1,5 pt innen
             let mid = RectF::new(ox + (size - cell) / 2.0, oy + (size - cell) / 2.0, cell, cell);
-            self.stroke(&mid.inset(0.75, 0.75), col(1.0, 1.0, 1.0, 1.0), 1.5);
+            self.stroke(&mid.inset(0.75, 0.75), brand::LOUPE_RING, 1.5);
 
-            // Ring: weiß 2 pt, innen im Kreis
-            self.set(col(1.0, 1.0, 1.0, 1.0));
+            // Ring: 2 pt, innen im Kreis
+            self.set(brand::LOUPE_RING);
             let ring = D2D1_ELLIPSE { radiusX: (size / 2.0 - 1.0) as f32, radiusY: (size / 2.0 - 1.0) as f32, ..ellipse };
             rt.DrawEllipse(&ring, &self.solid, 2.0, None::<&ID2D1StrokeStyle>);
 
-            // Koordinaten unter der Lupe (Pixel im Standbild)
+            // Koordinaten unter der Lupe (Pixel im Standbild) als dunkle Pille in Mono
             let t = layout::loupe_text_rect((ox, oy));
-            let rr = D2D1_ROUNDED_RECT { rect: rf(&t), radiusX: 5.0, radiusY: 5.0 };
-            self.set(col(0.08, 0.08, 0.08, 0.82));
-            rt.FillRoundedRectangle(&rr, &self.solid);
-            self.set(col(1.0, 1.0, 1.0, 1.0));
-            let text: Vec<u16> = format!("{}, {}", m.0, m.1).encode_utf16().collect();
-            rt.DrawText(&text, &f.fmt_loupe, &rf(&t), &self.solid, D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+            self.pill(&t, &f.fmt_loupe, &format!("{}, {}", m.0, m.1));
         }
     }
 }
 
-/// Szene in ein Bild rendern (WIC-Bitmap, Software). Läuft auf dem aufrufenden Thread; COM muss initialisiert sein.
-#[allow(clippy::chunks_exact_to_as_chunks)]
-pub fn render_to_image(f: &Factories, image: &RgbaImage, scene: &Scene) -> Result<RgbaImage> {
+/// WIC-Bitmap (vormultipliziertes BGRA) für Offscreen-Bilder.
+pub fn wic_bitmap(w: u32, h: u32) -> Result<IWICBitmap> {
     unsafe {
-        let (w, h) = (image.width(), image.height());
         let wic: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)?;
-        let bmp = wic.CreateBitmap(w, h, &GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnLoad)?;
-        {
-            let target = Target::for_wic(f, &bmp, (96.0 * scene.scale) as f32, image)?;
-            target.render(f, scene)?;
-        }
+        wic.CreateBitmap(w, h, &GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnLoad)
+    }
+}
+
+/// Software-Renderziel auf einer WIC-Bitmap.
+pub fn wic_target(f: &Factories, bmp: &IWICBitmap, dpi: f32) -> Result<ID2D1RenderTarget> {
+    unsafe {
+        let props = D2D1_RENDER_TARGET_PROPERTIES {
+            r#type: D2D1_RENDER_TARGET_TYPE_SOFTWARE,
+            pixelFormat: D2D1_PIXEL_FORMAT { format: DXGI_FORMAT_B8G8R8A8_UNORM, alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED },
+            dpiX: dpi,
+            dpiY: dpi,
+            ..Default::default()
+        };
+        let rt = f.d2d.CreateWicBitmapRenderTarget(bmp, &props)?;
+        rt.SetDpi(dpi, dpi);
+        Ok(rt)
+    }
+}
+
+/// Inhalt einer WIC-Bitmap als RGBA mit geradem Alpha.
+#[allow(clippy::chunks_exact_to_as_chunks)]
+pub fn read_wic(bmp: &IWICBitmap, w: u32, h: u32) -> Result<RgbaImage> {
+    unsafe {
         let rect = WICRect { X: 0, Y: 0, Width: w as i32, Height: h as i32 };
         let lock = bmp.Lock(&rect, WICBitmapLockRead.0 as u32)?;
         let mut size = 0u32;
@@ -385,7 +518,7 @@ pub fn render_to_image(f: &Factories, image: &RgbaImage, scene: &Scene) -> Resul
             let row = &src[y * stride..y * stride + w as usize * 4];
             let dst = &mut out[y * w as usize * 4..(y + 1) * w as usize * 4];
             for (d, s) in dst.chunks_exact_mut(4).zip(row.chunks_exact(4)) {
-                // PBGRA → RGBA gerade (Ergebnis ist undurchsichtig; α=0 nur bei fehlerhaften Pixeln)
+                // PBGRA → RGBA gerade
                 let a = s[3] as u32;
                 let un = |c: u8| if a == 0 || a == 255 { c } else { ((c as u32 * 255 + a / 2) / a).min(255) as u8 };
                 d[0] = un(s[2]);
@@ -397,4 +530,15 @@ pub fn render_to_image(f: &Factories, image: &RgbaImage, scene: &Scene) -> Resul
         drop(lock);
         RgbaImage::from_raw(w, h, out).ok_or_else(|| windows::core::Error::from(windows::Win32::Foundation::E_FAIL))
     }
+}
+
+/// Szene in ein Bild rendern (WIC-Bitmap, Software). Läuft auf dem aufrufenden Thread; COM muss initialisiert sein.
+pub fn render_to_image(f: &Factories, image: &RgbaImage, scene: &Scene) -> Result<RgbaImage> {
+    let (w, h) = (image.width(), image.height());
+    let bmp = wic_bitmap(w, h)?;
+    {
+        let target = Target::for_wic(f, &bmp, (96.0 * scene.scale) as f32, image)?;
+        target.render(f, scene)?;
+    }
+    read_wic(&bmp, w, h)
 }

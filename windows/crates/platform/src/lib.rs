@@ -34,3 +34,11 @@ pub const IS_REAL: bool = cfg!(windows);
 #[cfg(all(test, not(windows)))]
 #[path = "win/media/pure.rs"]
 mod media_pure;
+
+/// Geometrie und Farben des Auswahl-Overlays (ohne Windows-Aufrufe), ebenso auf dem Mac testbar.
+#[cfg(all(test, not(windows)))]
+#[path = "win/overlay/layout.rs"]
+mod overlay_layout;
+#[cfg(all(test, not(windows)))]
+#[path = "win/overlay/brand.rs"]
+mod overlay_brand;

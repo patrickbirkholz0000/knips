@@ -194,16 +194,16 @@ enum SystemShortcuts {
         }
         CFPreferencesSetAppValue(key, dict as CFDictionary, domain)
         guard CFPreferencesAppSynchronize(domain) else { return false }
-        var taken = Set(UserDefaults.standard.array(forKey: "takenSystemShortcuts") as? [Int] ?? [])
+        var taken = Set(UserDefaults.knips.array(forKey: "takenSystemShortcuts") as? [Int] ?? [])
         taken.formUnion(ids)
-        UserDefaults.standard.set(Array(taken).sorted(), forKey: "takenSystemShortcuts")
+        UserDefaults.knips.set(Array(taken).sorted(), forKey: "takenSystemShortcuts")
         reloadSystemHotkeys()
         return true
     }
 
     /// Gibt die von Knips abgeschalteten macOS-Kürzel zurück.
     static func restore() {
-        let taken = UserDefaults.standard.array(forKey: "takenSystemShortcuts") as? [Int] ?? []
+        let taken = UserDefaults.knips.array(forKey: "takenSystemShortcuts") as? [Int] ?? []
         guard !taken.isEmpty, var dict = CFPreferencesCopyAppValue(key, domain) as? [String: Any] else { return }
         for id in taken {
             guard var entry = dict[String(id)] as? [String: Any] else { continue }
@@ -212,7 +212,7 @@ enum SystemShortcuts {
         }
         CFPreferencesSetAppValue(key, dict as CFDictionary, domain)
         CFPreferencesAppSynchronize(domain)
-        UserDefaults.standard.removeObject(forKey: "takenSystemShortcuts")
+        UserDefaults.knips.removeObject(forKey: "takenSystemShortcuts")
         reloadSystemHotkeys()
     }
 
@@ -226,7 +226,7 @@ enum SystemShortcuts {
         }
     }
 
-    static var hasTakenOver: Bool { !(UserDefaults.standard.array(forKey: "takenSystemShortcuts") as? [Int] ?? []).isEmpty }
+    static var hasTakenOver: Bool { !(UserDefaults.knips.array(forKey: "takenSystemShortcuts") as? [Int] ?? []).isEmpty }
 
     private static func reloadSystemHotkeys() {
         let tool = "/System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings"

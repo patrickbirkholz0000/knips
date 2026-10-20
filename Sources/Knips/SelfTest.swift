@@ -16,6 +16,12 @@ import Vision
         let out = URL(fileURLWithPath: args[1], isDirectory: true)
         Paths.ensure(out)
         setenv("KNIPS_TEST_DIR", out.appendingPathComponent("sandbox").path, 1)
+        // Einstellungen nur in der Sandbox-Domäne, jeder Test beginnt mit den Standardwerten.
+        guard UserDefaults.knips != .standard else {
+            print("FEHLER: Einstellungen nicht in der Sandbox-Domäne")
+            return 1
+        }
+        UserDefaults.standard.removePersistentDomain(forName: UserDefaults.sandboxSuite)
         do {
             switch args[0] {
             case "render": try render(out)
@@ -661,9 +667,8 @@ import Vision
                 HotkeyRecorderState.shared.recording = nil
             }
             if pane == .general {
-                // Anzeigedauer eingeschaltet; die Einstellungen danach exakt wiederherstellen.
-                let settings = AppSettings.shared, defaults = UserDefaults.standard
-                let saved = ["quickAccessAutoHide", "quickAccessSeconds"].map { ($0, defaults.object(forKey: $0)) }
+                // Anzeigedauer eingeschaltet (Sandbox-Domäne — die echten Einstellungen bleiben unberührt).
+                let settings = AppSettings.shared
                 let (hide, seconds) = (settings.quickAccessAutoHide, settings.quickAccessSeconds)
                 settings.quickAccessAutoHide = true
                 settings.quickAccessSeconds = 7
@@ -676,7 +681,6 @@ import Vision
                 }
                 settings.quickAccessAutoHide = hide
                 settings.quickAccessSeconds = seconds
-                for (key, value) in saved { defaults.set(value, forKey: key) }
                 if !wrong.isEmpty { throw CheckFailed(message: "Anzeigedauer falsch übernommen: \(wrong.joined(separator: ", "))") }
             }
             if pane == .privacy {
@@ -686,7 +690,6 @@ import Vision
                 telemetry.setConsent(true)
                 try await windowShot(window, out.appendingPathComponent("einstellungen-privacy-statistik-an.png"))
                 telemetry.setConsent(false)
-                UserDefaults.standard.removePersistentDomain(forName: Telemetry.sandboxSuite)
             }
         }
         window.orderOut(nil)
@@ -694,39 +697,53 @@ import Vision
         // Frage beim ersten Start (eigenes Fenster, nicht über anderen Dialogen)
         let consent = ConsentWindowController(telemetry: Telemetry.shared)
         try await windowShot(consent.window!, out.appendingPathComponent("zustimmung.png"))
+        // ⏎ stimmt nicht zu: Das Fenster holt sich beim Start den Fokus, ein Tastendruck für eine andere App zählt nicht.
+        let before = Telemetry.shared.consent
+        guard let enter = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                           windowNumber: consent.window!.windowNumber, context: nil, characters: "\r",
+                                           charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)
+        else { throw CheckFailed(message: "Tastenereignis nicht erzeugt") }
+        _ = consent.window!.performKeyEquivalent(with: enter)
+        pumpEvents(for: 0.2)
+        guard Telemetry.shared.consent == before else { throw CheckFailed(message: "⏎ im Zustimmungsdialog hat entschieden") }
+        print("   ok     ⏎ im Zustimmungsdialog entscheidet nichts")
         consent.window?.orderOut(nil)
     }
 
     // MARK: knips://-Links
 
-    /// Rückfrage vor sofort aufnehmenden knips://-Links (Vollbild, letzter Bereich, Videostart).
-    /// Aufnahmen sind durch eine Liste ersetzt: Es wird nie der Bildschirm aufgenommen und nie das
-    /// Auswahl-Overlay geöffnet. Die Rückfrage liegt neben dem sichtbaren Bildschirm.
+    /// Rückfrage vor sofort aufnehmenden knips://-Links (Vollbild, letzter Bereich, Videostart), Absender in der
+    /// Rückfrage, Rückfrage vor dem Kopieren per Link erfassten Texts und Schutzzeit im per Link geöffneten Overlay.
+    /// Aufnahmen sind durch eine Liste ersetzt: Es wird nie der Bildschirm aufgenommen und nie das Auswahl-Overlay
+    /// gezeigt (es wird nur als Modell mit Ansicht geprüft). Die Rückfragen liegen neben dem sichtbaren Bildschirm.
     static func links(_ out: URL) async throws {
         let commands = LinkCommands.shared
-        let settings = AppSettings.shared, defaults = UserDefaults.standard
-        let key = "linkCaptureWithoutConfirm"
-        let (savedObject, savedValue) = (defaults.object(forKey: key), settings.linkCaptureWithoutConfirm)
         var calls: [HotkeyAction] = []
+        var sources: [CaptureSource] = []
         var recording = false
-        commands.perform = { calls.append($0) }
+        var placed = 0
+        commands.perform = { calls.append($0); sources.append($1) }
         commands.recordingBusy = { recording }
-        commands.show = { placeOffscreen($0.window!) }
-        defer {
-            settings.linkCaptureWithoutConfirm = savedValue
-            if let savedObject { defaults.set(savedObject, forKey: key) } else { defaults.removeObject(forKey: key) }
-        }
+        commands.place = { placed += 1; placeOffscreen($0) }
         let delegate = AppDelegate()
-        func link(_ command: String) { delegate.application(NSApp, open: [URL(string: "knips://\(command)")!]) }
+        func link(_ command: String, sender: String? = nil) {
+            if let sender {
+                delegate.handle(URL(string: "knips://\(command)")!, fromLink: true, sender: sender)
+            } else {
+                delegate.application(NSApp, open: [URL(string: "knips://\(command)")!])
+            }
+            pumpEvents(for: 0.25)   // SwiftUI richtet die Tastenkürzel der Rückfrage erst beim ersten Durchlauf ein
+        }
         var failed: [String] = []
         func check(_ name: String, _ ok: Bool) {
             print("   \(ok ? "ok    " : "FALSCH") \(name) → \(calls.isEmpty ? "nichts" : calls.map(\.rawValue).joined(separator: ", "))"
-                  + (commands.confirmation.map { ", Rückfrage \($0.model.kind.rawValue) offen" } ?? ""))
+                  + (commands.confirmation.map { ", Rückfrage \($0.model.prompt.name) offen" } ?? ""))
             if !ok { failed.append(name) }
             calls.removeAll()
+            sources.removeAll()
         }
-        func dialog(_ kind: LinkCommands.Immediate) throws -> LinkConfirmWindowController {
-            guard let c = commands.confirmation, c.model.kind == kind else { throw CheckFailed(message: "keine Rückfrage für knips://\(kind.rawValue)") }
+        func dialog(_ name: String) throws -> LinkConfirmWindowController {
+            guard let c = commands.confirmation, c.model.prompt.name == name else { throw CheckFailed(message: "keine Rückfrage „\(name)“") }
             return c
         }
         func press(_ window: NSWindow, _ chars: String, _ keyCode: UInt16) throws {
@@ -740,35 +757,43 @@ import Vision
         }
         let armed = UInt64((LinkConfirmWindowController.armDelay + 0.2) * 1_000_000_000)
 
-        settings.linkCaptureWithoutConfirm = false
-        print("Einstellung aus (Standard):")
+        print("Rückfrage vor Aufnahmen:")
+        // Wie ein fremdes Programm, das die frühere Einstellung „ohne Rückfrage“ in die Benutzereinstellungen schreibt.
+        UserDefaults.knips.set(true, forKey: "linkCaptureWithoutConfirm")
         link("fullscreen")
-        let full = try dialog(.fullscreen)
-        check("fullscreen fragt nach, nimmt nichts auf", calls.isEmpty)
-        try await windowShot(full.window!, out.appendingPathComponent("link-rueckfrage-fullscreen.png"))
+        let full = try dialog("fullscreen")
+        check("fullscreen fragt nach, nimmt nichts auf — auch mit linkCaptureWithoutConfirm in den Einstellungen", calls.isEmpty)
         link("last")
-        check("weiterer Link bei offener Rückfrage verfällt", calls.isEmpty && commands.confirmation === full)
+        check("weiterer Link bei offener Rückfrage verfällt, holt sie nicht erneut nach vorn",
+              calls.isEmpty && commands.confirmation === full && placed == 1)
         try press(full.window!, "\u{1b}", 53)
         check("Esc = Abbrechen", calls.isEmpty && commands.confirmation == nil)
 
         link("last")
-        let last = try dialog(.last)
+        let last = try dialog("last")
         try press(last.window!, "\r", 36)
         check("⏎ vor der Schutzzeit bestätigt nichts", calls.isEmpty && commands.confirmation === last)
         try await Task.sleep(nanoseconds: armed)
+        last.present(commands.place)
         try press(last.window!, "\r", 36)
-        check("⏎ = Aufnehmen → letzter Bereich", calls == [.captureLastArea] && commands.confirmation == nil
-              && !settings.linkCaptureWithoutConfirm)
+        check("erneut gezeigt: Schutzzeit beginnt neu", calls.isEmpty && commands.confirmation === last)
+        try await Task.sleep(nanoseconds: armed)
+        try press(last.window!, "\r", 36)
+        check("⏎ = Aufnehmen → letzter Bereich, als Link-Aufnahme", calls == [.captureLastArea] && sources == [.link]
+              && commands.confirmation == nil)
 
-        link("record")
-        let record = try dialog(.record)
+        link("record", sender: LinkSender.describe(path: URL(fileURLWithPath: "/System/Applications/Shortcuts.app")))
+        let record = try dialog("record")
+        print("     Text: \(record.model.prompt.message)")
+        check("Absender steht in der Rückfrage", record.model.prompt.message.hasPrefix("„Kurzbefehle“ möchte")
+              || record.model.prompt.message.hasPrefix("„Shortcuts“ möchte"))
         try await windowShot(record.window!, out.appendingPathComponent("link-rueckfrage-record.png"))
-        record.model.dontAskAgain = true
         record.cancel()
-        check("Abbrechen mit „Nicht mehr fragen“ ändert nichts", calls.isEmpty && !settings.linkCaptureWithoutConfirm)
+        check("Abbrechen", calls.isEmpty && commands.confirmation == nil)
 
         link("fullscreen")
-        try dialog(.fullscreen).window!.close()
+        try await windowShot(try dialog("fullscreen").window!, out.appendingPathComponent("link-rueckfrage-fullscreen.png"))
+        try dialog("fullscreen").window!.close()
         check("Fenster schließen = Abbrechen", calls.isEmpty && commands.confirmation == nil)
 
         recording = true
@@ -776,7 +801,7 @@ import Vision
         check("record stoppt laufende Aufnahme ohne Rückfrage", calls == [.toggleRecording] && commands.confirmation == nil)
         recording = false
         link("record")
-        let late = try dialog(.record)
+        let late = try dialog("record")
         recording = true   // inzwischen per Kürzel gestartet
         try await Task.sleep(nanoseconds: armed)
         late.confirm()
@@ -786,32 +811,120 @@ import Vision
         for (command, action) in [("area", HotkeyAction.captureArea), ("window", .captureWindow), ("text", .captureText),
                                   ("scroll", .captureScrolling), ("pin", .pinClipboard)] {
             link(command)
-            check("\(command) direkt (nur Oberfläche)", calls == [action] && commands.confirmation == nil)
+            check("\(command) direkt (nur Oberfläche), als Link-Aufnahme", calls == [action] && sources == [.link] && commands.confirmation == nil)
         }
         delegate.handle(URL(string: "knips://fullscreen")!, fromLink: false)
-        check("eigener Kanal (Test-Befehl) ohne Rückfrage", calls == [.captureFullscreen] && commands.confirmation == nil)
+        check("eigener Kanal (Test-Befehl) ohne Rückfrage", calls == [.captureFullscreen] && sources == [.user] && commands.confirmation == nil)
 
-        link("fullscreen")
-        let remember = try dialog(.fullscreen)
-        remember.model.dontAskAgain = true
-        try await Task.sleep(nanoseconds: armed)
-        remember.confirm()
-        check("Aufnehmen mit „Nicht mehr fragen“ schaltet die Einstellung ein", calls == [.captureFullscreen]
-              && settings.linkCaptureWithoutConfirm && defaults.bool(forKey: key))
-
-        print("Einstellung an:")
-        for (command, action) in [("fullscreen", HotkeyAction.captureFullscreen), ("last", .captureLastArea), ("record", .toggleRecording)] {
-            link(command)
-            check("\(command) direkt", calls == [action] && commands.confirmation == nil)
+        print("Absender:")
+        let chrome = LinkSender.describe(path: URL(fileURLWithPath: "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper"))
+        check("äußerstes App-Bundle: \(chrome)", chrome == "„Google Chrome“")
+        let tool = LinkSender.describe(path: URL(fileURLWithPath: "/usr/bin/open"))
+        check("Programm ohne Bundle: \(tool)", tool == "Das Programm „open“")
+        var token = audit_token_t()
+        var count = mach_msg_type_number_t(MemoryLayout<audit_token_t>.size / MemoryLayout<integer_t>.size)
+        let kr = withUnsafeMutablePointer(to: &token) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_AUDIT_TOKEN), $0, &count) }
         }
+        let tokenData = withUnsafeBytes(of: &token) { Data($0) }
+        let own = kr == KERN_SUCCESS ? LinkSender.describe(auditToken: tokenData) : nil
+        check("eigener Prozess über das Audit-Token: \(own ?? "–")", own == "„Knips“")
+        check("ohne Apple Event: unbekannt", LinkSender.describe(nil) == nil && LinkSender.describe(auditToken: Data(count: 32)) == nil)
+        // Echtes Apple Event (GURL) an den eigenen Prozess — der Absender ist dann Knips selbst. Wie in der App landet es
+        // in `application(_:open:)`; die Rückfrage muss den Absender nennen.
+        let receiver = LinkEventReceiver(delegate: delegate)
+        let events = NSAppleEventManager.shared()
+        events.setEventHandler(receiver, andSelector: #selector(LinkEventReceiver.handle(_:reply:)),
+                               forEventClass: AEEventClass(kInternetEventClass), andEventID: AEEventID(kAEGetURL))
+        defer { events.removeEventHandler(forEventClass: AEEventClass(kInternetEventClass), andEventID: AEEventID(kAEGetURL)) }
+        let gurl = NSAppleEventDescriptor(eventClass: AEEventClass(kInternetEventClass), eventID: AEEventID(kAEGetURL),
+                                          targetDescriptor: NSAppleEventDescriptor(processIdentifier: getpid()),
+                                          returnID: AEReturnID(kAutoGenerateReturnID), transactionID: AETransactionID(kAnyTransactionID))
+        gurl.setParam(NSAppleEventDescriptor(string: "knips://fullscreen"), forKeyword: AEKeyword(keyDirectObject))
+        _ = try? gurl.sendEvent(options: [.noReply], timeout: 2)
+        for _ in 0..<20 where commands.confirmation == nil { pumpEvents(for: 0.1) }
+        let viaEvent = commands.confirmation?.model.prompt.message ?? "–"
+        print("     Text: \(viaEvent)")
+        check("Apple Event: Absender aus keySenderAuditTokenAttr in der Rückfrage", receiver.received == 1 && viaEvent.hasPrefix("„Knips“ möchte"))
+        commands.confirmation?.cancel()
 
-        // Einstellung in Allgemein (Fenster etwas höher, damit die neue Karte ganz drauf ist)
-        settings.linkCaptureWithoutConfirm = false
+        print("Text per Link:")
+        var copied = 0
+        let sample = "Kundendaten\nE-Mail: erika.mustermann@example.com\nTelefon: +49 170 1234567"
+        commands.confirmTextCopy(sample) { copied += 1 }
+        pumpEvents(for: 0.25)
+        let text = try dialog("text")
+        text.confirm()
+        check("vor der Schutzzeit wird nichts kopiert", copied == 0 && commands.confirmation === text)
+        try await windowShot(text.window!, out.appendingPathComponent("link-text-kopieren.png"))
+        try press(text.window!, "\r", 36)
+        check("⏎ = Kopieren", copied == 1 && commands.confirmation == nil)
+        commands.confirmTextCopy(sample) { copied += 1 }
+        pumpEvents(for: 0.25)
+        try press(try dialog("text").window!, "\u{1b}", 53)
+        check("Esc = nichts kopiert", copied == 1 && commands.confirmation == nil)
+
+        print("Auswahl-Overlay per Link (nur Modell und Ansicht, nie auf dem Bildschirm):")
+        guard let screen = NSScreen.main else { throw CaptureError.noDisplay }
+        let target = WindowInfo(windowID: 1, frame: CGRect(x: screen.frame.minX + 100, y: screen.frame.minY + 100, width: 400, height: 300),
+                                owner: "Test", title: "Fenster")
+        var results: [String] = []
+        var overlays: [SelectionOverlay] = []   // die Ansicht hält ihr Overlay nur `unowned`
+        func overlay(link: Bool, windowMode: Bool) -> (SelectionOverlay, SelectionView) {
+            let o = SelectionOverlay(screens: [screen], windows: [target], purpose: .text, windowMode: windowMode,
+                                     armDelay: link ? LinkConfirmWindowController.armDelay : 0) { result in
+                switch result {
+                case .area: results.append("Bereich")
+                case .window: results.append("Fenster")
+                case .fullScreen: results.append("Bildschirm")
+                case .cancelled: results.append("abgebrochen")
+                }
+            }
+            overlays.append(o)
+            let v = SelectionView(screen: screen, overlay: o)
+            v.frame = NSRect(origin: .zero, size: screen.frame.size)
+            o.mouseMoved(to: CGPoint(x: target.frame.midX, y: target.frame.midY))
+            return (o, v)
+        }
+        func click(_ view: SelectionView) {
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                guard let e = NSEvent.mouseEvent(with: type, location: CGPoint(x: 300, y: 250), modifierFlags: [], timestamp: 0,
+                                                 windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { continue }
+                if type == .leftMouseDown { view.mouseDown(with: e) } else { view.mouseUp(with: e) }
+            }
+        }
+        func overlayCheck(_ name: String, _ expected: [String]) {
+            let ok = results == expected
+            print("   \(ok ? "ok    " : "FALSCH") \(name) → \(results.isEmpty ? "nichts" : results.joined(separator: ", "))")
+            if !ok { failed.append(name) }
+            results.removeAll()
+        }
+        let (keyOverlay, _) = overlay(link: true, windowMode: false)
+        _ = keyOverlay.debugKey(36)
+        overlayCheck("⏎ vor der Schutzzeit nimmt nichts auf", [])
+        let (_, clickView) = overlay(link: true, windowMode: true)
+        click(clickView)
+        overlayCheck("Klick im Fenstermodus vor der Schutzzeit nimmt nichts auf", [])
+        try await Task.sleep(nanoseconds: armed)
+        _ = keyOverlay.debugKey(36)
+        overlayCheck("⏎ nach der Schutzzeit = ganzer Bildschirm", ["Bildschirm"])
+        click(clickView)
+        overlayCheck("Klick nach der Schutzzeit = Fenster", ["Fenster"])
+        let (direct, directView) = overlay(link: false, windowMode: true)
+        click(directView)
+        overlayCheck("über Kürzel geöffnet: Klick sofort", ["Fenster"])
+        _ = direct.debugKey(53)
+        let (escape, _) = overlay(link: true, windowMode: false)
+        _ = escape.debugKey(53)
+        overlayCheck("Esc wirkt sofort", ["abgebrochen"])
+
+        // Hinweis in Einstellungen → Datenschutz (Fenster etwas höher, damit die Karte ganz drauf ist)
         let controller = SettingsWindowController()
-        SettingsNavigation.shared.pane = .general
-        controller.window!.setContentSize(NSSize(width: SettingsWindowController.size.width, height: 860))
-        try await windowShot(controller.window!, out.appendingPathComponent("link-einstellung-allgemein.png"))
+        SettingsNavigation.shared.pane = .privacy
+        controller.window!.setContentSize(NSSize(width: SettingsWindowController.size.width, height: 1000))
+        try await windowShot(controller.window!, out.appendingPathComponent("link-einstellungen-datenschutz.png"))
         controller.window!.orderOut(nil)
+        overlays.removeAll()
         if !failed.isEmpty { throw CheckFailed(message: "Link-Rückfrage falsch: \(failed.joined(separator: ", "))") }
     }
 
@@ -856,7 +969,7 @@ import Vision
         smart.append(cut)
         editor.model.annotations = smart
         try await windowShot(editor.window!, out.appendingPathComponent("live-editor-schlaue-balken.png"))
-        print("   Sichtbarer Text ohne Zensur:\n" + editor.model.visibleText().split(separator: "\n").map { "     | " + $0 }.joined(separator: "\n"))
+        print("   Sichtbarer Text ohne Zensur:\n" + (await editor.model.renderedText()).split(separator: "\n").map { "     | " + $0 }.joined(separator: "\n"))
         editor.model.selectedID = nil
         editor.model.tool = .arrow
         try await windowShot(editor.window!, out.appendingPathComponent("live-editor-pfeil.png"))
@@ -1097,6 +1210,111 @@ import Vision
             print("Text kopieren (Karte):\n" + text.split(separator: "\n").map { "     | " + $0 }.joined(separator: "\n"))
             print(text.contains("@") ? "FEHLER: E-Mail trotz Balken im Text" : "   ✓ keine E-Mail im kopierten Text")
         }
+        editor.window?.orderOut(nil)
+
+        var failed: [String] = []
+        func check(_ ok: Bool, _ name: String) {
+            print("   \(ok ? "ok    " : "FALSCH") \(name)")
+            if !ok { failed.append(name) }
+        }
+
+        // „Text kopieren“ im Editor: Texterkennung auf dem fertigen Bild. Früher kamen Weggeschnittenes und ein Wort,
+        // das ein Balken zu weniger als 15 % verdeckt, vollständig mit.
+        print("Text kopieren (Editor) mit Zuschnitt und angeschnittenem Schlüssel:")
+        let textItem = try store.addImage(image, scale: 2)
+        await store.waitUntilWritten(textItem.id)
+        let textEditor = EditorWindowController(item: textItem, base: image, document: ImageDocument(), tool: .redact)
+        await textEditor.model.waitForText()
+        guard let key = textEditor.model.textLines.flatMap(\.words).first(where: { $0.text.contains("live_") })?.rect else {
+            throw CheckFailed(message: "Schlüssel im Testbild nicht erkannt")
+        }
+        var keyBar = Annotation(kind: .redact, start: CGPoint(x: key.minX - 4, y: key.minY - 6),
+                                end: CGPoint(x: key.minX + key.width * 0.12, y: key.maxY + 6))
+        keyBar.redactStyle = .solid
+        textEditor.model.annotations = [keyBar]
+        textEditor.model.crop = CGRect(x: 700, y: 0, width: 2100, height: key.maxY + 60)   // ohne Seitenleiste und Bestellzeilen
+        let before = TextLayout.plainText(textEditor.model.textLines, excluding: [keyBar.rect])
+        let copied = await textEditor.model.renderedText()
+        print(copied.split(separator: "\n").map { "     | " + $0 }.joined(separator: "\n"))
+        print("   bisher (Erkennung auf dem Original): Schlüssel \(before.contains(sampleStripeKey) ? "vollständig" : "nicht") im Text, "
+              + "Weggeschnittenes \(before.contains("Bestellung") ? "dabei" : "nicht dabei")")
+        check(copied.contains("Mustermann"), "sichtbarer Text kommt mit")
+        check(!copied.contains(sampleStripeKey) && !copied.contains("sk_live"), "angeschnittener Schlüssel kommt nicht vollständig mit")
+        check(!copied.contains("Bestellung") && !copied.contains("Hinweis") && !copied.contains("Übersicht"), "Weggeschnittenes fehlt")
+        textEditor.window?.orderOut(nil)
+
+        // Zwischenablage nach dem Zensieren — eine private Zwischenablage statt der echten.
+        print("Zwischenablage:")
+        let board = NSPasteboard(name: NSPasteboard.Name("de.birkgroup.knips.selbsttest.\(UUID().uuidString)"))
+        Clipboard.testPasteboard = board
+        defer {
+            Clipboard.testPasteboard = nil
+            board.releaseGlobally()
+        }
+        let settings = AppSettings.shared   // Sandbox-Domäne
+        settings.copyToClipboard = true
+        settings.showQuickAccess = false
+        settings.openEditorAfterCapture = false
+        func pasted() -> CGImage? {
+            board.data(forType: .png).flatMap { CGImageSourceCreateWithData($0 as CFData, nil) }.flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
+        }
+        guard let screen = NSScreen.main, let shot = CaptureCoordinator.shared.finish(image: image, scale: 2, screen: screen, source: .user) else {
+            throw CheckFailed(message: "Aufnahme nicht angelegt")
+        }
+        await store.waitUntilWritten(shot.id)
+        // Balken über der E-Mail-Zeile; die Zwischenablage hat Bildschirmgröße (1×), also halbe Koordinaten.
+        let emailBar = CGRect(x: 760, y: 470, width: 1300, height: 100)
+        let inPaste = CGRect(x: emailBar.minX / 2 + 10, y: emailBar.minY / 2 + 10, width: emailBar.width / 2 - 20, height: emailBar.height / 2 - 20)
+        let light = pasted().map { brightness($0, inPaste) } ?? -1
+        check(light > 0.5, "Aufnahme liegt in der Zwischenablage (Helligkeit E-Mail-Zeile \(String(format: "%.2f", light)))")
+        let shotEditor = EditorWindowController(item: shot, base: image, document: ImageDocument(), tool: .redact)
+        var emailRedaction = Annotation(kind: .redact, start: emailBar.origin, end: CGPoint(x: emailBar.maxX, y: emailBar.maxY))
+        emailRedaction.redactStyle = .solid
+        shotEditor.model.checkpoint()
+        shotEditor.model.annotations = [emailRedaction]
+        shotEditor.save(close: true)
+        let dark = pasted().map { brightness($0, inPaste) } ?? -1
+        check(dark >= 0 && dark < 0.1, "nach Zensieren + „Fertig“: zensierte Fassung in der Zwischenablage (\(String(format: "%.2f", dark)))")
+        board.clearContents()
+        board.setString("fremd", forType: .string)
+        let again = EditorWindowController(item: store.item(with: shot.id)!, base: image, document: store.loadImageDocument(for: shot), tool: .redact)
+        again.model.checkpoint()
+        again.model.annotations = []
+        again.save(close: true)
+        check(board.string(forType: .string) == "fremd" && pasted() == nil, "inzwischen etwas anderes kopiert: bleibt unberührt")
+        let changes = board.changeCount
+        let linked = CaptureCoordinator.shared.finish(image: image, scale: 2, screen: screen, source: .link)
+        check(linked != nil && board.changeCount == changes, "Aufnahme per Link: nicht in die Zwischenablage")
+
+        // knips://pin: nur Bilddaten und Bilddateien, nie eine Adresse aus dem Netz.
+        print("Anpinnen aus der Zwischenablage:")
+        board.clearContents()
+        board.writeObjects([URL(string: "http://10.255.255.1/bild.png")! as NSURL])
+        let started = Date()
+        let remote = Clipboard.image()
+        check(remote == nil && Date().timeIntervalSince(started) < 1,
+              "http-Adresse wird nicht geladen (\(Int(Date().timeIntervalSince(started) * 1000)) ms)")
+        let file = out.appendingPathComponent("anpinnen.png")
+        try write(image, file)
+        board.clearContents()
+        board.writeObjects([file as NSURL])
+        check(Clipboard.image()?.width == image.width, "Bilddatei wird geladen")
+        if !failed.isEmpty { throw CheckFailed(message: "Ausgabe falsch: \(failed.joined(separator: "; "))") }
+    }
+
+    /// Mittlere Helligkeit (0…1) eines Ausschnitts (Pixel, Ursprung oben links).
+    private static func brightness(_ image: CGImage, _ rect: CGRect) -> CGFloat {
+        let w = Int(rect.width), h = Int(rect.height)
+        guard let crop = image.cropping(to: rect),
+              let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return -1 }
+        ctx.draw(crop, in: CGRect(x: 0, y: 0, width: w, height: h))
+        guard let data = ctx.data else { return -1 }
+        let p = data.bindMemory(to: UInt8.self, capacity: w * h * 4)
+        var sum = 0
+        for i in 0..<(w * h) { sum += Int(p[i * 4]) + Int(p[i * 4 + 1]) + Int(p[i * 4 + 2]) }
+        return CGFloat(sum) / CGFloat(w * h * 3 * 255)
     }
 
     // MARK: Echte Aufnahme (nur Metadaten, keine Bildinhalte)
@@ -1149,6 +1367,19 @@ import Vision
         let fileDuration = try await asset.load(.duration).seconds
         print("Aufnahme: \(Int(size.width))×\(Int(size.height)), \(String(format: "%.2f", fileDuration)) s (Recorder: \(String(format: "%.2f", duration)) s)")
         try? FileManager.default.removeItem(at: url)
+    }
+}
+
+/// Nimmt im Selbsttest `links` ein GURL-Apple-Event entgegen und reicht es wie NSApplication an `application(_:open:)`.
+private final class LinkEventReceiver: NSObject {
+    let delegate: AppDelegate
+    private(set) var received = 0
+    init(delegate: AppDelegate) { self.delegate = delegate }
+
+    @objc func handle(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
+        guard let raw = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue, let url = URL(string: raw) else { return }
+        received += 1
+        onMainActor { delegate.application(NSApp, open: [url]) }
     }
 }
 #endif

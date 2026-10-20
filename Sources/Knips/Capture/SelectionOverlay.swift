@@ -14,6 +14,8 @@ enum SelectionResult {
 /// Vollbild-Overlay je Bildschirm. Erscheint sofort über dem laufenden Bildschirm; das Standbild
 /// wird darunter im Hintergrund aufgenommen und nachgereicht (`setFrozen`).
 /// Ziehen = Bereich, Leertaste = Fenstermodus, ⏎ = ganzer Bildschirm, Esc = Abbruch.
+/// Per knips://-Link geöffnet (`armDelay` > 0) gelten ⏎ und Klicks erst nach der Schutzzeit — ein Tastendruck oder
+/// Klick, der gerade für eine andere App gedacht war, als das Overlay erschien, nimmt so nichts auf.
 @MainActor final class SelectionOverlay {
     let purpose: SelectionPurpose
     let windowInfos: [WindowInfo]
@@ -25,14 +27,20 @@ enum SelectionResult {
     private(set) var mouse: CGPoint = NSEvent.mouseLocation
     var windowMode: Bool { didSet { refreshAll() } }
     var isDragging = false
+    /// Nimmt ⏎ und Klicks an (sofort, außer per Link geöffnet).
+    private(set) var armed: Bool
 
     init(screens: [NSScreen], windows: [WindowInfo], purpose: SelectionPurpose, windowMode: Bool,
-         completion: @escaping (SelectionResult) -> Void) {
+         armDelay: TimeInterval = 0, completion: @escaping (SelectionResult) -> Void) {
         self.screens = screens
         self.windowInfos = windows
         self.purpose = purpose
         self.windowMode = windowMode
         self.completion = completion
+        armed = armDelay <= 0
+        if !armed {
+            DispatchQueue.main.asyncAfter(deadline: .now() + armDelay) { [weak self] in self?.armed = true }
+        }
     }
 
     func present() {
@@ -63,7 +71,7 @@ enum SelectionResult {
         if let target, let view = target.contentView { target.makeFirstResponder(view) }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
-            return self.handleKey(event) ? nil : event
+            return self.handleKey(event.keyCode) ? nil : event
         }
         NSCursor.crosshair.set()
         refreshAll()
@@ -79,13 +87,14 @@ enum SelectionResult {
 
     var isActive: Bool { completion != nil }
 
-    private func handleKey(_ event: NSEvent) -> Bool {
-        switch event.keyCode {
+    private func handleKey(_ keyCode: UInt16) -> Bool {
+        switch keyCode {
         case 53: finish(.cancelled); return true
         case 49:
             if !isDragging { windowMode.toggle() }
             return true
         case 36, 76:
+            guard armed else { return true }
             if let screen = screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) ?? screens.first {
                 finish(.fullScreen(screen))
             }
@@ -99,6 +108,11 @@ enum SelectionResult {
         mouse = global
         refreshAll()
     }
+
+    #if KNIPS_DEV
+    /// Nur für Selbsttests: Taste ohne Ereignis-Monitor.
+    func debugKey(_ keyCode: UInt16) -> Bool { handleKey(keyCode) }
+    #endif
 
     func refreshAll() { views.forEach { $0.refresh() } }
 
@@ -279,6 +293,7 @@ final class SelectionView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        guard overlay.armed else { return }
         dragStart = clamp(convert(event.locationInWindow, from: nil))
         selection = nil
         overlay.isDragging = true
@@ -300,6 +315,8 @@ final class SelectionView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         overlay.isDragging = false
+        // Nur Klicks, die auf dem Overlay begonnen haben (per Link erst nach der Schutzzeit).
+        guard dragStart != nil else { return }
         defer { dragStart = nil }
         if let r = selection, r.width >= 4, r.height >= 4 {
             overlay.finish(.area(screen, r.integral))

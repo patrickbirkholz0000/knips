@@ -31,10 +31,12 @@ import SwiftUI
         window.isReleasedWhenClosed = false
         window.contentMinSize = NSSize(width: 640, height: 420)
         window.contentView = NSHostingView(rootView: HistoryView(store: CaptureStore.shared))
-        window.setFrameAutosaveName("KnipsHistory")
+        // Fensterposition merkt sich AppKit in der echten Domäne — Selbsttests legen das Fenster neben den Bildschirm.
+        let autosave = Paths.testRoot == nil
+        if autosave { window.setFrameAutosaveName("KnipsHistory") }
         super.init(window: window)
         window.delegate = self
-        if !window.setFrameUsingName("KnipsHistory") { window.center() }
+        if !autosave || !window.setFrameUsingName("KnipsHistory") { window.center() }
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { nil }
@@ -202,7 +204,7 @@ private struct HistoryCard: View {
         if item.kind == .image { Telemetry.count(.copyImage) }
         Task {
             await CaptureStore.shared.waitUntilWritten(item.id)
-            if item.kind == .image { Clipboard.copy(imageFile: item.fileURL) } else { Clipboard.copy(fileURL: item.fileURL) }
+            if item.kind == .image { Clipboard.copy(imageFile: item.fileURL, item: item.id) } else { Clipboard.copy(fileURL: item.fileURL) }
             HUD.show("Kopiert")
         }
     }

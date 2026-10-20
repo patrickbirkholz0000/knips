@@ -76,9 +76,10 @@ struct ConsentView: View {
                 Spacer()
                 Button("Nein danke") { choose(false) }
                     .buttonStyle(PillButtonStyle())
+                // Bewusst ohne ⏎: Das Fenster holt sich beim Start den Fokus, ein Tastendruck für eine andere App
+                // darf keine Zustimmung sein.
                 Button("Anonym mitzählen") { choose(true) }
                     .buttonStyle(PillButtonStyle(primary: true))
-                    .keyboardShortcut(.defaultAction)
             }
         }
         .padding(.horizontal, 30)

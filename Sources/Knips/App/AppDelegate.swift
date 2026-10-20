@@ -15,8 +15,8 @@ import ScreenCaptureKit
             onMainActor { CaptureCoordinator.shared.screensChanged() }
         }
 
-        if UserDefaults.standard.object(forKey: "didFirstLaunch") == nil {
-            UserDefaults.standard.set(true, forKey: "didFirstLaunch")
+        if UserDefaults.knips.object(forKey: "didFirstLaunch") == nil {
+            UserDefaults.knips.set(true, forKey: "didFirstLaunch")
             if Bundle.main.bundlePath.hasPrefix("/Applications") { AppSettings.shared.launchAtLogin = true }
         }
         Telemetry.shared.start()
@@ -47,15 +47,17 @@ import ScreenCaptureKit
     }
 
     /// `knips://area|window|fullscreen|record|last|text|scroll|pin|menu|history|settings` — für Raycast,
-    /// Stream Deck, Kurzbefehle. Sofort aufnehmende Befehle fragen vorher nach (`LinkCommands`).
+    /// Stream Deck, Kurzbefehle. Sofort aufnehmende Befehle fragen vorher nach (`LinkCommands`) und nennen dabei
+    /// den Absender des Apple Events, falls er sich bestimmen lässt.
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls where url.scheme == "knips" { handle(url, fromLink: true) }
+        let sender = LinkSender.describe(NSAppleEventManager.shared().currentAppleEvent)
+        for url in urls where url.scheme == "knips" { handle(url, fromLink: true, sender: sender) }
     }
 
     /// `fromLink`: über einen knips://-Link von außen; nur der Test-Kanal der Sandbox übergibt `false`.
-    func handle(_ url: URL, fromLink: Bool) {
+    func handle(_ url: URL, fromLink: Bool, sender: String? = nil) {
         let command = url.host ?? url.path.replacingOccurrences(of: "/", with: "")
-        if LinkCommands.shared.run(command, fromLink: fromLink) { return }
+        if LinkCommands.shared.run(command, fromLink: fromLink, sender: sender) { return }
         switch command {
         #if KNIPS_DEV
         case "debug-sample" where Paths.testRoot != nil:
@@ -192,12 +194,15 @@ import ScreenCaptureKit
 /// Bietet einmalig an, die macOS-Bildschirmfoto-Kürzel für Knips freizumachen.
 @MainActor enum ShortcutTakeover {
     static func offerIfNeeded() {
+        // Die Test-Sandbox hat eigene (leere) Einstellungen — sie würde sonst bei jedem Start fragen und die echten
+        // macOS-Kürzel umschreiben.
+        guard Paths.testRoot == nil else { return }
         let combos = Array(AppSettings.shared.activeHotkeys.values)
         let ids = SystemShortcuts.conflictingIDs(for: combos)
         guard !ids.isEmpty else { return }
         let asked = "askedShortcutTakeover"
-        guard !UserDefaults.standard.bool(forKey: asked) else { return }
-        UserDefaults.standard.set(true, forKey: asked)
+        guard !UserDefaults.knips.bool(forKey: asked) else { return }
+        UserDefaults.knips.set(true, forKey: asked)
 
         let list = combos.filter { SystemShortcuts.conflict(for: $0) != nil }.map(\.display).sorted().joined(separator: ", ")
         var info: [String] = []

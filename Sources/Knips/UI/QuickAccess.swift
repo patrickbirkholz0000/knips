@@ -160,7 +160,7 @@ import UniformTypeIdentifiers
         Task {
             await CaptureStore.shared.waitUntilWritten(item.id)
             switch item.kind {
-            case .image: Clipboard.copy(imageFile: item.fileURL)
+            case .image: Clipboard.copy(imageFile: item.fileURL, item: item.id)
             case .video, .gif: Clipboard.copy(fileURL: item.fileURL)
             }
         }

@@ -45,10 +45,12 @@ import SwiftUI
         window.contentMinSize = NSSize(width: Self.size.width, height: 520)
         window.contentMaxSize = NSSize(width: Self.size.width, height: 1400)
         window.contentView = NSHostingView(rootView: SettingsRoot(settings: AppSettings.shared, nav: SettingsNavigation.shared))
-        window.setFrameAutosaveName("KnipsSettings2")
+        // Fensterposition merkt sich AppKit in der echten Domäne — Selbsttests legen das Fenster neben den Bildschirm.
+        let autosave = Paths.testRoot == nil
+        if autosave { window.setFrameAutosaveName("KnipsSettings2") }
         super.init(window: window)
         window.delegate = self
-        if !window.setFrameUsingName("KnipsSettings2") { window.center() }
+        if !autosave || !window.setFrameUsingName("KnipsSettings2") { window.center() }
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { nil }
@@ -76,8 +78,8 @@ enum Theme {
 
 @MainActor final class SettingsNavigation: ObservableObject {
     static let shared = SettingsNavigation()
-    @Published var pane: SettingsPane = SettingsPane(rawValue: UserDefaults.standard.string(forKey: "settingsPane") ?? "") ?? .general {
-        didSet { UserDefaults.standard.set(pane.rawValue, forKey: "settingsPane") }
+    @Published var pane: SettingsPane = SettingsPane(rawValue: UserDefaults.knips.string(forKey: "settingsPane") ?? "") ?? .general {
+        didSet { UserDefaults.knips.set(pane.rawValue, forKey: "settingsPane") }
     }
 }
 
@@ -453,10 +455,6 @@ private struct GeneralPane: View {
                 Row(title: "Beim Anmelden öffnen") {
                     Switch(isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
                 }
-            }
-            Card(title: "Befehle per Link",
-                 footer: "Sonst fragt Knips nach, bevor knips://fullscreen, knips://last oder knips://record aufnehmen – solche Links kann jede App und jede Webseite öffnen.") {
-                Row(title: "Aufnahmen per Link ohne Rückfrage") { Switch(isOn: $settings.linkCaptureWithoutConfirm) }
             }
         }
     }
@@ -867,7 +865,9 @@ private struct PrivacyPane: View {
                 RowDivider()
                 InfoLine(symbol: "checkmark.shield", text: "Geteilte Dateien sind immer die zensierte Fassung")
                 RowDivider()
-                InfoLine(symbol: "doc.on.clipboard", text: "„Text kopieren“ lässt zensierte Wörter weg")
+                InfoLine(symbol: "doc.on.clipboard", text: "„Text kopieren“ lässt Zensiertes und Weggeschnittenes weg")
+                RowDivider()
+                InfoLine(symbol: "link", text: "Aufnahmen per knips://-Link nur nach Rückfrage")
             }
         }
         .onReceive(timer) { _ in

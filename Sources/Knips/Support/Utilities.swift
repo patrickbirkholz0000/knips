@@ -195,19 +195,32 @@ private final class LazyImageProvider: NSObject, NSPasteboardItemDataProvider {
 
 enum Clipboard {
     private static var provider: LazyImageProvider?
+    /// Aufnahme, die Knips zuletzt in die Zwischenablage gelegt hat, mit dem `changeCount` danach. Solange niemand
+    /// anderes etwas kopiert hat, ersetzt der Editor sie beim Speichern durch die neue (zensierte) Fassung.
+    private static var owner: (item: UUID, changeCount: Int)?
+
+    #if KNIPS_DEV
+    /// Nur Selbsttests: eine private Zwischenablage (`NSPasteboard(name:)`) statt der echten.
+    static var testPasteboard: NSPasteboard?
+    #endif
+
+    /// Die echte Zwischenablage — in der Test-Sandbox nie, dort höchstens die private des Selbsttests.
+    private static var board: NSPasteboard? {
+        #if KNIPS_DEV
+        if let testPasteboard { return testPasteboard }
+        #endif
+        return Paths.testRoot != nil ? nil : .general
+    }
 
     static func copy(image: CGImage, fileURL: URL?) {
         copy(ImagePromise(image), fileURL: fileURL)
     }
 
-    /// Tests in der Sandbox dürfen die echte Zwischenablage nie anfassen.
-    private static var disabled: Bool { Paths.testRoot != nil }
-
     /// Sofort zurück: die Daten werden erst beim Einfügen geliefert. PNG und TIFF gibt es immer
     /// (manche Apps lesen nur diese), bei JPEG-Ausgabe zusätzlich und bevorzugt JPEG.
-    static func copy(_ promise: ImagePromise, fileURL: URL?) {
-        guard !disabled else { return }
-        let pb = NSPasteboard.general
+    /// `item`: Aufnahme, aus der das Bild stammt — damit der Editor es nach dem Zensieren ersetzen kann.
+    static func copy(_ promise: ImagePromise, fileURL: URL?, item id: UUID? = nil) {
+        guard let pb = board else { return }
         pb.clearContents()
         let item = NSPasteboardItem()
         let provider = LazyImageProvider(promise: promise)
@@ -218,10 +231,20 @@ enum Clipboard {
         item.setDataProvider(provider, forTypes: types)
         if let fileURL { item.setString(fileURL.absoluteString, forType: .fileURL) }
         pb.writeObjects([item])
+        owner = id.map { ($0, pb.changeCount) }
+    }
+
+    /// Nach dem Speichern im Editor: Liegt noch das Bild dieser Aufnahme in der Zwischenablage (seitdem hat niemand
+    /// etwas anderes kopiert), kommt die neue Fassung hinein — sonst fügte ⌘V weiter das unzensierte Original ein.
+    @discardableResult
+    static func replace(item id: UUID, with promise: ImagePromise, fileURL: URL) -> Bool {
+        guard let pb = board, let owner, owner.item == id, owner.changeCount == pb.changeCount else { return false }
+        copy(promise, fileURL: fileURL, item: id)
+        return true
     }
 
     /// Fertige Bilddatei: Daten direkt übernehmen, nichts neu kodieren.
-    static func copy(imageFile url: URL) {
+    static func copy(imageFile url: URL, item id: UUID? = nil) {
         guard let format = ImageFormat(fileExtension: url.pathExtension),
               let data = try? Data(contentsOf: url),
               let src = CGImageSourceCreateWithData(data as CFData, nil),
@@ -229,31 +252,35 @@ enum Clipboard {
             copy(fileURL: url)
             return
         }
-        copy(ImagePromise(image: image, data: data, format: format), fileURL: url)
+        copy(ImagePromise(image: image, data: data, format: format), fileURL: url, item: id)
     }
 
     static func copy(text: String) {
-        guard !disabled else { return }
-        let pb = NSPasteboard.general
+        guard let pb = board else { return }
         pb.clearContents()
         pb.setString(text, forType: .string)
+        owner = nil
     }
 
     static func copy(fileURL: URL) {
-        guard !disabled else { return }
-        let pb = NSPasteboard.general
+        guard let pb = board else { return }
         pb.clearContents()
         pb.writeObjects([fileURL as NSURL])
+        owner = nil
     }
 
+    /// Bild zum Anpinnen: Bilddaten oder eine Bilddatei. Nur Datei-URLs — eine http(s)-Adresse in der
+    /// Zwischenablage würde sonst synchron im Hauptthread aus dem Netz geladen.
     static func image() -> CGImage? {
-        let pb = NSPasteboard.general
+        guard let pb = board else { return nil }
         if let data = pb.data(forType: .png) ?? pb.data(forType: .tiff),
            let src = CGImageSourceCreateWithData(data as CFData, nil),
            let img = CGImageSourceCreateImageAtIndex(src, 0, nil) {
             return img
         }
-        if let urls = pb.readObjects(forClasses: [NSURL.self]) as? [URL], let url = urls.first {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true,
+                                                             .urlReadingContentsConformToTypes: [UTType.image.identifier]]
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: options) as? [URL], let url = urls.first(where: \.isFileURL) {
             return ImageIOHelper.load(url)
         }
         return nil

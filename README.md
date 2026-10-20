@@ -37,7 +37,7 @@ Die Oberfläche ist auf Deutsch. [English version below](#english).
   Zeile, mit ⌥ bzw. Alt nur über das Wort.
 - Auto-Zensur (in den Einstellungen einschaltbar): findet E-Mail-Adressen, IBANs, Telefonnummern,
   Kartennummern, API-Schlüssel und IP-Adressen per Texterkennung.
-- „Text kopieren“ lässt zensierte Wörter weg.
+- „Text kopieren“ lässt zensierte und weggeschnittene Stellen weg.
 
 **Video-Editor**
 
@@ -48,7 +48,8 @@ Die Oberfläche ist auf Deutsch. [English version below](#english).
 **Ablage**
 
 - Gespeichert und geteilt wird immer die gerenderte, also bereits zensierte Fassung. Kopieren und
-  Herausziehen geben nie das Original weiter.
+  Herausziehen geben nie das Original weiter. Liegt eine Aufnahme noch in der Zwischenablage, wenn du sie
+  im Editor zensierst und speicherst, ersetzt Knips sie dort durch die zensierte Fassung (macOS).
 - Das Original bleibt mit dem Bearbeitungsstand getrennt erhalten (Standard: 30 Tage), damit sich eine
   Zensur später noch ändern lässt.
 - PNG oder JPEG, standardmäßig in Bildschirmgröße (1×), auf Wunsch in voller Auflösung.
@@ -102,6 +103,12 @@ Bildschirm, Esc bricht ab, ⇧ bzw. Umschalt zieht ein Quadrat.
 
 **Im Editor:** V Auswählen, A Pfeil, R Rechteck, O Ellipse, L Linie, T Text, N Nummerierung,
 H Markieren, X Zensieren, C Zuschneiden. Zoom mit ⌘+ / ⌘− / ⌘0 / ⌘1 (Windows: Strg).
+
+**Links (macOS):** `knips://area`, `window`, `fullscreen`, `last`, `record`, `text`, `scroll`, `pin`, `menu`,
+`history` und `settings`, zum Beispiel für Raycast, Stream Deck oder Kurzbefehle. Solche Links kann jede App
+und jede Webseite öffnen. Deshalb fragt Knips vor `fullscreen`, `last` und `record` immer nach und nennt die
+App, die den Link geöffnet hat. Abschalten lässt sich das nicht. Was per Link aufgenommen wird, landet nicht
+von selbst in der Zwischenablage; erkannter Text erst, wenn du in der Rückfrage zustimmst.
 
 ## Datenschutz
 
@@ -216,6 +223,11 @@ Get the packages from [Releases](https://github.com/patrickbirkholz0000/knips/re
 
 Default shortcuts: area ⇧⌘4 / Print, window ⇧⌘2 / Alt+Print, full screen ⇧⌘3 / Ctrl+Print, start/stop
 recording ⇧⌘5 / Shift+Print. All shortcuts can be changed in the settings.
+
+On macOS, `knips://` links (area, window, fullscreen, last, record, text, scroll, pin, menu, history, settings) work
+with Raycast, Stream Deck or Shortcuts. Since any app or website can open them, `fullscreen`, `last` and `record`
+always ask first and name the app that opened the link; this cannot be turned off. Captures triggered by a link are
+never copied to the clipboard automatically, recognized text only after you confirm.
 
 ### Privacy
 

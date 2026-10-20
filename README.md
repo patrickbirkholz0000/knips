@@ -104,7 +104,8 @@ der Installer sie von Microsoft nach. Drei Wege, alle mit demselben Installer:
 
 Danach:
 
-- Knips liegt im Infobereich der Taskleiste.
+- Knips liegt im Infobereich der Taskleiste und startet ab dann mit Windows (abschaltbar unter
+  Einstellungen → Allgemein → „Mit Windows starten“).
 - Unter Windows 11 öffnet die Druck-Taste den Bildschirmausschnitt. Knips fragt beim ersten Start, ob es
   die Taste übernehmen darf. Zurückgeben lässt sie sich unter Einstellungen → Tastaturkürzel.
 - **Deinstallieren:** Einstellungen → Apps → Installierte Apps → Knips → Deinstallieren (oder

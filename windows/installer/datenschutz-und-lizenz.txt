@@ -32,6 +32,16 @@ https://privacy.microsoft.com/de-de/privacystatement
 Vollständige Datenschutzerklärung von Knips:
 https://github.com/patrickbirkholz0000/knips#datenschutz
 
+WAS KNIPS AN WINDOWS ÄNDERT
+
+Knips installiert sich nur für dein Benutzerkonto und startet ab dem
+ersten Start mit Windows (abschaltbar unter Einstellungen → Allgemein →
+„Mit Windows starten“). Unter Windows 11 öffnet die Druck-Taste den
+Bildschirmausschnitt; Knips fragt beim ersten Start, ob es die Taste
+übernehmen darf. Zurückgeben lässt sie sich unter Einstellungen →
+Tastaturkürzel. Deinstallieren: Einstellungen → Apps → Installierte
+Apps → Knips.
+
 LIZENZ
 
 Knips ist freie Software unter der GNU General Public License,

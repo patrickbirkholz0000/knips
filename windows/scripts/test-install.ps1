@@ -149,3 +149,5 @@ try {
 
 if ($failures -gt 0) { Write-Host "$failures Prüfung(en) fehlgeschlagen." -ForegroundColor Red; exit 1 }
 Write-Host 'Alle Prüfungen bestanden.' -ForegroundColor Green
+# Sonst übernähme der Schritt den Exit-Code des letzten (absichtlich fehlschlagenden) Kindprozesses.
+exit 0

@@ -123,7 +123,8 @@ final class PinView: NSView {
 
     override func layout() {
         super.layout()
-        controlsModel.percent = Int((bounds.width / naturalWidth * 100).rounded())
+        let percent = Int((bounds.width / naturalWidth * 100).rounded())
+        if controlsModel.percent != percent { controlsModel.percent = percent }
         let size = controls.fittingSize
         // Passt die Pille nicht ins Bild (sehr klein gezogen), bleibt sie unsichtbar; Esc/Doppelklick schließen weiter.
         controls.isHidden = size.width + 2 * Self.controlsInset > bounds.width || size.height + 2 * Self.controlsInset > bounds.height

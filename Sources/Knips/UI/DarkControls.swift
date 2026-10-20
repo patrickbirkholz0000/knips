@@ -276,6 +276,8 @@ enum AreaFrame {
 // MARK: - Schwebendes Panel
 
 /// Panel für Leisten über anderen Apps: randlos, durchsichtig, nimmt keinen Fokus, immer dunkel.
+/// Ohne `ignoresMouse` bleibt die Voreinstellung: Klicks auf ganz durchsichtige Stellen (der Rand für den
+/// Schatten um die Pille) gehen an die App darunter.
 @MainActor enum FloatingPanel {
     static func make(_ rect: NSRect, ignoresMouse: Bool, level: NSWindow.Level = .statusBar) -> NSPanel {
         let p = ClickablePanel(contentRect: rect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -284,7 +286,7 @@ enum AreaFrame {
         p.hasShadow = false
         p.level = level
         p.hidesOnDeactivate = false
-        p.ignoresMouseEvents = ignoresMouse
+        if ignoresMouse { p.ignoresMouseEvents = true }
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         p.appearance = Brand.Dark.appearance
         p.setFrame(rect, display: false)

@@ -5,6 +5,7 @@ mod app;
 mod cards;
 mod commands;
 mod coordinator;
+mod crash;
 mod editor;
 mod hotkeys;
 mod hud;
@@ -16,7 +17,11 @@ mod promise;
 mod recording;
 mod scroll;
 #[cfg(feature = "dev")]
+mod pe;
+#[cfg(feature = "dev")]
 mod selftest;
+#[cfg(feature = "dev")]
+mod selftest_media;
 mod settings;
 mod store;
 mod telemetry;
@@ -27,6 +32,7 @@ mod wm;
 use tauri::{Manager, RunEvent, WindowEvent};
 
 fn main() {
+    crash::install_panic_hook();
     let args: Vec<String> = std::env::args().collect();
     #[cfg(feature = "dev")]
     if args.get(1).map(String::as_str) == Some("--selftest") {

@@ -407,7 +407,31 @@ impl Overlay {
 // Overlay-Thread
 // ---------------------------------------------------------------------------------------------
 
+/// Gibt `ACTIVE`/`THREAD_ID` frei — normal per `release` vor `on_done`, sonst beim Abwickeln eines
+/// Panics. Ohne ihn bliebe `ACTIVE` nach einem Absturz stehen und jede weitere Auswahl würde mit
+/// „Auswahl läuft bereits“ abgelehnt.
+struct ActiveGuard(bool);
+
+impl ActiveGuard {
+    fn release(mut self) {
+        self.0 = false;
+        THREAD_ID.store(0, Ordering::Release);
+        ACTIVE.store(false, Ordering::Release);
+    }
+}
+
+impl Drop for ActiveGuard {
+    fn drop(&mut self) {
+        if self.0 {
+            log::error!("Overlay-Thread abgestürzt — Auswahl freigegeben");
+            THREAD_ID.store(0, Ordering::Release);
+            ACTIVE.store(false, Ordering::Release);
+        }
+    }
+}
+
 fn overlay_thread(frozen: Vec<Frozen>, windows: Vec<WindowInfo>, purpose: Purpose, window_mode: bool, on_done: Box<dyn FnOnce(Selection) + Send>) {
+    let guard = ActiveGuard(true);
     unsafe {
         let _ = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         // Nachrichtenwarteschlange anlegen, bevor die Thread-ID veröffentlicht wird (PostThreadMessage).
@@ -419,7 +443,7 @@ fn overlay_thread(frozen: Vec<Frozen>, windows: Vec<WindowInfo>, purpose: Purpos
     match unsafe { create_overlay(frozen, windows, purpose, window_mode) } {
         Err(e) => {
             log::error!("Overlay: {e}");
-            ACTIVE.store(false, Ordering::Release);
+            guard.release();
             on_done(Selection::Cancelled);
             return;
         }
@@ -455,8 +479,7 @@ fn overlay_thread(frozen: Vec<Frozen>, windows: Vec<WindowInfo>, purpose: Purpos
             force_foreground(prev_fg);
         }
     }
-    THREAD_ID.store(0, Ordering::Release);
-    ACTIVE.store(false, Ordering::Release);
+    guard.release();
     on_done(result);
 }
 
@@ -519,9 +542,9 @@ unsafe fn create_overlay(frozen: Vec<Frozen>, windows: Vec<WindowInfo>, purpose:
             )
             .map_err(|e| anyhow!("Fenster: {e}"))?;
             // Ab hier gehört das Fenster der MonWin (Drop zerstört es, auch im Fehlerfall).
-            if let Err(e) = SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) {
-                log::warn!("Overlay: aus Aufnahmen ausschließen fehlgeschlagen: {e}");
-            }
+            // Vor Windows 10 2004 nicht gesetzt (wäre schwarz statt unsichtbar); das Standbild
+            // ist dann ohnehin schon aufgenommen.
+            crate::win::capture::set_excluded(hwnd, "Overlay");
             let size = (f.image.width() as i32, f.image.height() as i32);
             let dpi = (f.monitor.scale * 96.0) as f32;
             let mut mon = MonWin { hwnd, frozen: f, target: None, scene: None, size, dpi, drag_start: None, selection: None };

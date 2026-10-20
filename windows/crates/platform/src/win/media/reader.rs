@@ -95,10 +95,50 @@ fn current_stride(reader: &IMFSourceReader) -> Option<i32> {
     }
 }
 
+/// Höchstens so viele Zeitstempel für die wirksame Bildrate (Bildschirmaufnahmen: nur Bilder mit
+/// Änderungen, also selbst bei 60 fps mindestens 50 s Bewegung). Nur Entpacken, kein Dekodieren.
+const FPS_SCAN: usize = 3000;
+
+/// Zeitstempel der ersten `limit` Videoproben (komprimiert gelesen, ohne Decoder; 100 ns).
+fn sample_times(path: &Path, limit: usize) -> Result<Vec<i64>> {
+    let reader = open_reader(path, false)?;
+    let mut out = Vec::new();
+    // SAFETY: Ausgabezeiger zeigen auf lokale Variablen; Reader ist gültig.
+    unsafe {
+        reader.SetStreamSelection(ALL, false).ctx("Ströme abwählen")?;
+        reader.SetStreamSelection(VIDEO, true).ctx("Videostrom wählen")?;
+        while out.len() < limit {
+            let mut flags = 0u32;
+            let mut ts = 0i64;
+            let mut sample: Option<IMFSample> = None;
+            reader.ReadSample(VIDEO, 0, None, Some(&mut flags), Some(&mut ts), Some(&mut sample)).ctx("Probe lesen")?;
+            if flags & MF_SOURCE_READERF_ERROR.0 as u32 != 0 {
+                bail!("Lesefehler im Video");
+            }
+            if sample.is_some() {
+                out.push(ts);
+            }
+            if flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0 {
+                break;
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// `fps` ist die **wirksame** Bildrate (`pure::effective_fps`): Bildschirmaufnahmen haben variable
+/// Bildrate, die Angabe im MP4 ist nur der Durchschnitt.
 pub fn probe(path: &Path) -> Result<VideoInfo> {
     let _com = enter()?;
     let (_r, m) = open_rgb(path)?;
-    Ok(VideoInfo { duration: m.duration, width: m.w, height: m.h, fps: m.fps, hevc: m.hevc, has_audio: m.has_audio })
+    let fps = match sample_times(path, FPS_SCAN) {
+        Ok(times) => pure::effective_fps(m.fps, &times),
+        Err(e) => {
+            log::debug!("Bildabstände nicht lesbar ({e:#}), nehme die Angabe {:.2} fps", m.fps);
+            m.fps
+        }
+    };
+    Ok(VideoInfo { duration: m.duration, width: m.w, height: m.h, fps, hevc: m.hevc, has_audio: m.has_audio })
 }
 
 struct Cur {

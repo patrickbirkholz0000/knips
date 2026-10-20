@@ -2,6 +2,7 @@
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 use anyhow::{anyhow, bail, Result};
 use knips_core::gifenc::GifWriter;
@@ -78,9 +79,10 @@ fn pump_audio(
 
 /// Zensiertes, gekürztes MP4 (H.264; HEVC-Quellen bleiben HEVC). Ton wird mitgenommen.
 ///
-/// Das Ergebnis hat konstante Bildrate (Quell-Bildrate, 1…60): Zensurfelder können mitten in
-/// einem langen, unveränderten Quellbild beginnen oder sich bewegen, das gelingt nur, wenn jedes
-/// Ausgabebild seine eigene Zeit bekommt.
+/// Das Ergebnis hat konstante Bildrate (`pure::export_fps` der wirksamen Quellrate: 24…60, sonst 30):
+/// Zensurfelder können mitten in einem langen, unveränderten Quellbild beginnen oder sich bewegen,
+/// das gelingt nur, wenn jedes Ausgabebild seine eigene Zeit bekommt. Bildschirmaufnahmen haben
+/// variable Bildrate — stehende Quellbilder werden zeitgenau wiederholt (`frame_at`).
 pub fn export_mp4(
     src: &Path,
     dst: &Path,
@@ -110,6 +112,7 @@ fn export_mp4_inner(
     let end = doc.trim_end.unwrap_or(info.duration).clamp(start, info.duration.max(start));
     let fps = pure::export_fps(info.fps);
     let count = pure::export_frame_count(end - start, fps);
+    log::info!("Export: Quelle {:.2} fps (wirksam) → {fps} fps, {count} Bilder", info.fps);
     let (ew, eh) = (pure::even(info.width), pure::even(info.height));
 
     let mut frames = FrameReader::open(src, None)?;
@@ -231,6 +234,39 @@ fn export_gif_inner(
     Ok((gw, gh))
 }
 
+/// HEVC schreiben **und** lesen können (siehe `media::hevc_available`): winziges Testvideo im
+/// Temp-Ordner, einmal pro Prozess.
+pub fn hevc_usable() -> bool {
+    static R: OnceLock<bool> = OnceLock::new();
+    *R.get_or_init(|| {
+        if !hevc_encoder_available() {
+            return false;
+        }
+        let path = std::env::temp_dir().join(format!("knips-hevc-probe-{}.mp4", std::process::id()));
+        let r = (|| -> Result<bool> {
+            let img = RgbaImage::from_pixel(640, 360, image::Rgba([70, 110, 190, 255]));
+            write_test_video(&path, 640, 360, 30, 3, true, &mut |_| img.clone())?;
+            let info = probe(&path)?;
+            if !info.hevc {
+                return Ok(false); // Schreiber ist auf H.264 ausgewichen
+            }
+            let mut reader = FrameReader::open(&path, None)?;
+            Ok(reader.frame_at(0.0)?.is_some())
+        })();
+        remove(&path);
+        match r {
+            Ok(ok) => {
+                log::info!("HEVC {}", if ok { "nutzbar" } else { "nicht nutzbar (Encoder weicht auf H.264 aus)" });
+                ok
+            }
+            Err(e) => {
+                log::info!("HEVC nicht nutzbar (Decoder fehlt?): {e:#}");
+                false
+            }
+        }
+    })
+}
+
 /// Testvideo aus erzeugten Bildern schreiben (Selbsttests `track`, `video`).
 pub fn write_test_video(
     path: &Path,
@@ -241,22 +277,53 @@ pub fn write_test_video(
     hevc: bool,
     frame: &mut dyn FnMut(usize) -> RgbaImage,
 ) -> Result<()> {
+    let fps = fps.max(1);
+    let bounds: Vec<i64> = (0..=count).map(|i| pure::cfr_pts(i, fps)).collect();
+    write_timed(path, width, height, fps, &bounds, hevc, frame)
+}
+
+/// Testvideo mit variabler Bildrate wie eine Bildschirmaufnahme: Bild `i` beginnt bei `times[i]`
+/// (Sekunden, aufsteigend) und steht bis zum nächsten bzw. bis `duration`. Angabe im Container 30 fps.
+pub fn write_test_video_vfr(
+    path: &Path,
+    width: u32,
+    height: u32,
+    times: &[f64],
+    duration: f64,
+    frame: &mut dyn FnMut(usize) -> RgbaImage,
+) -> Result<()> {
+    let mut bounds: Vec<i64> = times.iter().map(|&t| pure::secs_to_ticks(t)).collect();
+    bounds.push(pure::secs_to_ticks(duration));
+    if bounds.windows(2).any(|w| w[1] <= w[0]) {
+        bail!("Zeiten müssen aufsteigen und vor dem Ende liegen.");
+    }
+    write_timed(path, width, height, 30, &bounds, false, frame)
+}
+
+/// `bounds`: Beginn jedes Bildes und zuletzt das Ende (Länge = Bildanzahl + 1), 100 ns.
+fn write_timed(
+    path: &Path,
+    width: u32,
+    height: u32,
+    fps: u32,
+    bounds: &[i64],
+    hevc: bool,
+    frame: &mut dyn FnMut(usize) -> RgbaImage,
+) -> Result<()> {
     let _com = enter()?;
-    if count == 0 {
+    if bounds.len() < 2 {
         bail!("Keine Bilder zum Schreiben.");
     }
-    let fps = fps.max(1);
     let (w, h) = (pure::even(width), pure::even(height));
     let hevc = hevc && hevc_encoder_available();
     let spec = VideoSpec { w, h, fps, hevc, bitrate: pure::bitrate(w, h, fps, hevc), hardware: true };
     let r = (|| -> Result<()> {
         let writer = Mp4Writer::create_with_fallback(path, &spec, None)?.writer;
         let mut nv12 = Vec::new();
-        for i in 0..count {
+        for (i, span) in bounds.windows(2).enumerate() {
             let img = frame(i);
             to_nv12(&img, w, h, &mut nv12);
-            let pts = pure::cfr_pts(i, fps);
-            writer.write_video(&nv12, pts, pure::cfr_pts(i + 1, fps) - pts)?;
+            writer.write_video(&nv12, span[0], span[1] - span[0])?;
         }
         writer.finalize()
     })();

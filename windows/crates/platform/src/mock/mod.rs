@@ -84,9 +84,27 @@ pub mod capture {
         }
     }
 
-    /// Fenster aus allen Aufnahmen ausschließen (`WDA_EXCLUDEFROMCAPTURE`) bzw. wieder zulassen.
+    /// Fenster aus allen Aufnahmen ausschließen (`WDA_EXCLUDEFROMCAPTURE`) bzw. wieder zulassen. Vor
+    /// Windows 10 2004 ohne Wirkung (siehe `exclusion_supported`).
     pub fn exclude_from_capture(hwnd: isize, exclude: bool) {
         let _ = (hwnd, exclude);
+    }
+
+    /// Kann Windows eigene Fenster aus Aufnahmen herausnehmen? (ab Windows 10 2004)
+    pub fn exclusion_supported() -> bool {
+        true
+    }
+
+    /// Sichtbare unter `handles` ausblenden (für ein Standbild, wenn `exclusion_supported` nicht gilt)
+    /// und warten, bis der Bildschirm ohne sie gezeichnet ist. Liefert die ausgeblendeten Fenster.
+    pub fn hide_for_capture(handles: &[isize]) -> Vec<isize> {
+        let _ = handles;
+        Vec::new()
+    }
+
+    /// Mit `hide_for_capture` ausgeblendete Fenster wieder zeigen, ohne sie zu aktivieren.
+    pub fn show_after_capture(handles: &[isize]) {
+        let _ = handles;
     }
 
     /// Eigenes Fenster fotografieren (Selbsttests). Darf nicht ausgeschlossen sein.
@@ -392,12 +410,28 @@ pub mod media {
         pub has_audio: bool,
     }
 
+    /// Fehlermeldung, wenn Media Foundation fehlt (Windows N/KN ohne Media Feature Pack).
+    pub const MISSING_HINT: &str = "Für Videos braucht Windows das „Media Feature Pack“. Diese Windows-Ausgabe (N/KN) enthält es nicht. \
+Installieren unter Einstellungen → Apps → Optionale Features → Feature hinzufügen → „Media Feature Pack“, danach neu starten. \
+Screenshots funktionieren auch ohne.";
+
+    /// Media Foundation vorhanden? Ohne sind Aufnahme, Video-Editor und Video-/GIF-Export gesperrt.
+    /// In der Attrappe mit `KNIPS_TEST_NO_MEDIA` abschaltbar.
+    pub fn available() -> bool {
+        std::env::var_os("KNIPS_TEST_NO_MEDIA").is_none()
+    }
+
     pub fn probe(path: &Path) -> Result<VideoInfo> {
         let _ = path;
         bail!("Video nur unter Windows")
     }
 
     pub fn hevc_encoder_available() -> bool {
+        false
+    }
+
+    /// HEVC nutzbar: Encoder vorhanden **und** das Ergebnis lässt sich wieder lesen.
+    pub fn hevc_available() -> bool {
         false
     }
 
@@ -455,6 +489,10 @@ pub mod media {
         }
         /// Verwirft die Aufnahme und löscht die Datei.
         pub fn cancel(self) {}
+        /// Hinweise ohne Abbruch, z. B. „Mikrofon verweigert — Video ohne Ton“ (beim Start oder später).
+        pub fn warnings(&self) -> Vec<String> {
+            vec![]
+        }
     }
 
     /// Zensiertes, gekürztes MP4 (H.264; HEVC-Quellen bleiben HEVC). Ton wird mitgenommen.
@@ -496,6 +534,20 @@ pub mod media {
         frame: &mut dyn FnMut(usize) -> RgbaImage,
     ) -> Result<()> {
         let _ = (path, width, height, fps, count, hevc, frame);
+        bail!("Video nur unter Windows")
+    }
+
+    /// Testvideo mit variabler Bildrate (wie eine Bildschirmaufnahme): Bild `i` ab `times[i]` Sekunden,
+    /// das letzte bis `duration` (Selbsttest `video`).
+    pub fn write_test_video_vfr(
+        path: &Path,
+        width: u32,
+        height: u32,
+        times: &[f64],
+        duration: f64,
+        frame: &mut dyn FnMut(usize) -> RgbaImage,
+    ) -> Result<()> {
+        let _ = (path, width, height, times, duration, frame);
         bail!("Video nur unter Windows")
     }
 }

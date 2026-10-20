@@ -54,13 +54,15 @@ export default function MenuPanel(_: { params: string[]; query: URLSearchParams 
     // In den schmalen Kacheln „Umschalt+“ als ⇧ kürzen, damit der Titel nie abgeschnitten wird.
     return l ? <span className="menu-shortcut">{compact ? l.replace("Umschalt+", "⇧+") : l}</span> : null;
   };
-  const tile = (title: string, icon: React.ReactNode, action: HotkeyAction | null, run: () => void, red = false) => (
-    <button className={"menu-tile" + (red ? " red" : "")} onClick={run}>
+  const tile = (title: string, icon: React.ReactNode, action: HotkeyAction | null, run: () => void, red = false, off?: string) => (
+    <button className={"menu-tile" + (red ? " red" : "") + (off ? " off" : "")} onClick={run} title={off}>
       <span className="ico">{icon}</span>
       <span className="label">{title}</span>
       {action && shortcut(action, true)}
     </button>
   );
+  // Windows N/KN ohne Media Feature Pack: Klick zeigt den Hinweis (Rust), die Kachel ist gedämpft.
+  const noVideo = boot?.mediaAvailable === false && !recording ? "Braucht das Media Feature Pack von Windows" : undefined;
   const perform = (a: HotkeyAction) => () => api.perform(a);
   const ic = { size: 14, strokeWidth: 1.9 };
 
@@ -82,7 +84,7 @@ export default function MenuPanel(_: { params: string[]; query: URLSearchParams 
       <div className="menu-grid">
         {tile("Fenster", <AppWindow {...ic} />, "captureWindow", perform("captureWindow"))}
         {tile("Bildschirm", <Monitor {...ic} />, "captureFullscreen", perform("captureFullscreen"))}
-        {tile(recording ? "Stoppen" : "Video", recording ? <CircleStop {...ic} /> : <CircleDot {...ic} />, "toggleRecording", perform("toggleRecording"), recording)}
+        {tile(recording ? "Stoppen" : "Video", recording ? <CircleStop {...ic} /> : <CircleDot {...ic} />, "toggleRecording", perform("toggleRecording"), recording, noVideo)}
         {tile("Letzter Bereich", <RotateCcw {...ic} />, "captureLastArea", perform("captureLastArea"))}
         {tile("Scrollen", <FileDown {...ic} />, "captureScrolling", perform("captureScrolling"))}
         {tile("Text erfassen", <ScanText {...ic} />, "captureText", perform("captureText"))}

@@ -14,8 +14,10 @@ use knips_platform::{capture, clipboard, monitors, Frozen, Monitor};
 use parking_lot::Mutex;
 
 use crate::app::knips;
+use crate::crash::OnDrop;
 use crate::promise::output_promise;
 use crate::telemetry::count;
+use crate::wm;
 
 #[derive(Default)]
 pub struct Coordinator {
@@ -53,14 +55,26 @@ impl Coordinator {
         if overlay::is_active() || knips().recording.is_busy() || self.preparing.swap(true, Ordering::SeqCst) {
             return;
         }
+        // Zurücksetzen auch nach einem Absturz beim Standbild — sonst bliebe jede weitere Auswahl aus.
+        let _preparing = OnDrop(|| self.preparing.store(false, Ordering::SeqCst));
         crate::menu::close(&knips().app);
         let result = (|| -> Result<()> {
+            // Vor Windows 10 2004: eigene Fenster ausblenden, bis die Auswahl vorbei ist (siehe `wm::cloak_for_capture`).
+            let cloak = wm::cloak_for_capture();
             let frozen = capture::freeze(&monitors::list())?;
             let windows = capture::windows();
             let kept = frozen.clone();
-            overlay::present(frozen, windows, purpose, window_mode, Box::new(move |selection| on_result(selection, kept)))
+            overlay::present(
+                frozen,
+                windows,
+                purpose,
+                window_mode,
+                Box::new(move |selection| {
+                    drop(cloak);
+                    on_result(selection, kept)
+                }),
+            )
         })();
-        self.preparing.store(false, Ordering::SeqCst);
         if let Err(err) = result {
             report(&err);
         }
@@ -79,7 +93,10 @@ impl Coordinator {
             return;
         }
         let monitor = monitors::at_cursor();
-        match capture::freeze(std::slice::from_ref(&monitor)) {
+        let cloak = wm::cloak_for_capture();
+        let frozen = capture::freeze(std::slice::from_ref(&monitor));
+        drop(cloak);
+        match frozen {
             Ok(mut frozen) if !frozen.is_empty() => {
                 knips().shutter();
                 let f = frozen.remove(0);
@@ -150,7 +167,10 @@ impl Coordinator {
             self.capture_interactive(false);
             return;
         };
-        match capture::freeze(std::slice::from_ref(&monitor)) {
+        let cloak = wm::cloak_for_capture();
+        let frozen = capture::freeze(std::slice::from_ref(&monitor));
+        drop(cloak);
+        match frozen {
             Ok(frozen) => {
                 if let Some(image) = frozen.first().and_then(|f| imageops::crop(&f.image, rect)) {
                     knips().shutter();
@@ -225,6 +245,11 @@ impl Coordinator {
         if recording.is_busy() {
             // Läuft: speichern. Countdown: abbrechen.
             recording.stop(true);
+            return;
+        }
+        // Windows N/KN ohne Media Feature Pack: kein Video — Hinweis statt Auswahl.
+        if !knips_platform::media::available() {
+            crate::recording::media_missing_hint();
             return;
         }
         self.present_overlay(Purpose::Recording, false, |selection, _| {

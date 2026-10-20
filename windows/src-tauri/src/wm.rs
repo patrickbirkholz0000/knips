@@ -114,6 +114,29 @@ pub fn exclude_from_capture(window: &WebviewWindow) {
     }
 }
 
+/// Eigene Fenster, die für ein Standbild ausgeblendet wurden; zeigt sie beim Drop wieder (ohne Fokus).
+pub struct CaptureCloak(Vec<isize>);
+
+impl Drop for CaptureCloak {
+    fn drop(&mut self) {
+        if !self.0.is_empty() {
+            knips_platform::capture::show_after_capture(&self.0);
+        }
+    }
+}
+
+/// Vor Windows 10 2004 kann Windows eigene Fenster nicht aus Aufnahmen herausnehmen
+/// (`capture::exclusion_supported`): Dann werden alle sichtbaren Knips-Fenster (Karten, Einblendung,
+/// Pins, Editor …) für das Standbild kurz ausgeblendet. Sonst nichts zu tun.
+pub fn cloak_for_capture() -> CaptureCloak {
+    if knips_platform::capture::exclusion_supported() {
+        return CaptureCloak(Vec::new());
+    }
+    let Some(k) = crate::app::try_knips() else { return CaptureCloak(Vec::new()) };
+    let handles: Vec<isize> = k.app.webview_windows().values().filter(|w| w.is_visible().unwrap_or(false)).filter_map(hwnd).collect();
+    CaptureCloak(knips_platform::capture::hide_for_capture(&handles))
+}
+
 pub fn hwnd(window: &WebviewWindow) -> Option<isize> {
     #[cfg(windows)]
     {

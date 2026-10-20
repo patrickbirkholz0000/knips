@@ -218,17 +218,32 @@ function Shortcuts({ boot }: { boot: Bootstrap }) {
   );
 }
 
-function Recording({ boot: { settings: s, hotkeyLabels } }: { boot: Bootstrap }) {
+function Recording({ boot: { settings: s, hotkeyLabels, hevcAvailable, mediaAvailable } }: { boot: Bootstrap }) {
   return (
     <>
-      <Card title="Video" footer="Gemessen am Vollbild je 4 Sekunden: Retina-H.264 2,2 MB · 1×-H.264 1,2 MB · 1×-HEVC 0,9 MB. HEVC spielt nicht jeder PC ab.">
+      {!mediaAvailable && (
+        <Notice tone="orange" icon={<AlertTriangle size={17} fill="currentColor" stroke="#fff" />}
+          title="Videos brauchen das Media Feature Pack"
+          detail="Diese Windows-Ausgabe (N/KN) enthält es nicht – Bildschirmaufnahmen und der Video-Editor sind deshalb aus. Screenshots funktionieren wie gewohnt. Nach der Installation Windows neu starten.">
+          <Pill kind="primary" onClick={() => api.openUrl("ms-settings:optionalfeatures")}>Optionale Features öffnen …</Pill>
+        </Notice>
+      )}
+      <Card title="Video" footer={hevcAvailable
+        ? "Gemessen am Vollbild je 4 Sekunden: Retina-H.264 2,2 MB · 1×-H.264 1,2 MB · 1×-HEVC 0,9 MB. HEVC spielt nicht jeder PC ab."
+        : "Gemessen am Vollbild je 4 Sekunden: Retina-H.264 2,2 MB · 1×-H.264 1,2 MB. HEVC gibt es mit der „HEVC-Videoerweiterung“ aus dem Microsoft Store."}>
         <Row title="Größe">
           <Choice value={s.recordingAtScreenSize} options={[[true, "Bildschirmgröße (1×)"], [false, "Volle Auflösung (2×)"]]} onChange={(v) => set({ recordingAtScreenSize: v })} />
         </Row>
         <Div />
-        <Row title="Format">
-          <Choice value={s.recordingHevc} options={[[false, "H.264 – überall abspielbar"], [true, "HEVC – kleiner"]]} onChange={(v) => set({ recordingHevc: v })} />
-        </Row>
+        {hevcAvailable ? (
+          <Row title="Format">
+            <Choice value={s.recordingHevc} options={[[false, "H.264 – überall abspielbar"], [true, "HEVC – kleiner"]]} onChange={(v) => set({ recordingHevc: v })} />
+          </Row>
+        ) : (
+          <Row title="Format" subtitle="HEVC ist auf diesem PC nicht verfügbar">
+            <span className="st-val">H.264</span>
+          </Row>
+        )}
         <Div />
         <Row title="Bildrate">
           <Choice value={s.recordingFps} options={[[30, "30 fps"], [60, "60 fps"]]} onChange={(v) => set({ recordingFps: v })} />
@@ -241,7 +256,7 @@ function Recording({ boot: { settings: s, hotkeyLabels } }: { boot: Bootstrap })
         <Div />
         <Row title="Countdown 3 – 2 – 1"><Switch on={s.recordingCountdown} onChange={(v) => set({ recordingCountdown: v })} /></Row>
       </Card>
-      <Card title="Ton" footer="Für gesprochene Erklärungen. Beim ersten Mal fragt Windows nach dem Mikrofon.">
+      <Card title="Ton" footer="Für gesprochene Erklärungen. Desktop-Apps fragt Windows meist nicht nach: Unter Datenschutz → Mikrofon müssen „Zugriff auf das Mikrofon“ und „Desktop-Apps den Zugriff erlauben“ an sein. Fehlt der Zugriff, sagt Knips Bescheid und das Video bleibt ohne Ton.">
         <Row title="Mikrofon aufnehmen"><Switch on={s.recordingMicrophone} onChange={(v) => set({ recordingMicrophone: v })} /></Row>
       </Card>
       <Card title="Stoppen">
@@ -407,7 +422,7 @@ function Privacy({ boot }: { boot: Bootstrap }) {
           <span className="st-ok"><CheckCircle2 size={15} />Erlaubt</span>
         </Perm>
         <Div />
-        <Perm icon={<Mic size={16} />} title="Mikrofon" detail="Nur für Aufnahmen mit Kommentar">
+        <Perm icon={<Mic size={16} />} title="Mikrofon" detail="Nur für Aufnahmen mit Kommentar – dort auch „Desktop-Apps den Zugriff erlauben“">
           <Pill kind="primary" onClick={() => api.openUrl("ms-settings:privacy-microphone")}>Einstellungen öffnen …</Pill>
         </Perm>
       </Card>

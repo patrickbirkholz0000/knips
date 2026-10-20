@@ -28,3 +28,9 @@ pub use types::*;
 
 /// `true` unter Windows, `false` in der Attrappe.
 pub const IS_REAL: bool = cfg!(windows);
+
+/// Reine Video-Rechnungen (Bildrate, Zeit, Pixel) ohne Windows-Aufrufe: auch auf dem Mac testen
+/// (`cargo test -p knips-platform`).
+#[cfg(all(test, not(windows)))]
+#[path = "win/media/pure.rs"]
+mod media_pure;

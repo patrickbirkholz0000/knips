@@ -57,11 +57,25 @@ enum Msg {
 
 type OnError = Arc<dyn Fn(String) + Send + Sync>;
 type WriterSlot = Arc<Mutex<Option<Mp4Writer>>>;
+/// Hinweise, die die Aufnahme nicht abbrechen (Mikrofon fehlt/verweigert) — für die Oberfläche.
+type Warnings = Arc<Mutex<Vec<String>>>;
+
+/// Mikrofon nicht nutzbar: Kurzfassung für die Einblendung steht in der App, hier die Ursache.
+fn mic_warning(e: &anyhow::Error) -> String {
+    let detail = format!("{e:#}");
+    // E_ACCESSDENIED: Datenschutz-Einstellung (Mikrofon, „Desktop-Apps den Zugriff erlauben“) ist aus.
+    if detail.contains("0x80070005") {
+        format!("Windows verweigert den Zugriff auf das Mikrofon ({detail}).")
+    } else {
+        format!("Das Mikrofon ließ sich nicht öffnen ({detail}).")
+    }
+}
 
 /// Bildschirmaufnahme (Windows.Graphics.Capture → Media Foundation, H.264/HEVC-MP4, AAC-Mikro).
 pub struct Recorder {
     tx: Sender<Msg>,
     join: Option<JoinHandle<std::result::Result<f64, String>>>,
+    warnings: Warnings,
 }
 
 impl Recorder {
@@ -74,12 +88,14 @@ impl Recorder {
         let (tx, rx) = channel::<Msg>();
         let (init_tx, init_rx) = channel::<std::result::Result<(), String>>();
         let tx2 = tx.clone();
+        let warnings: Warnings = Arc::new(Mutex::new(Vec::new()));
+        let warnings2 = warnings.clone();
         let join = std::thread::Builder::new()
             .name("knips-recorder".into())
-            .spawn(move || session_main(opts, on_error, tx2, rx, init_tx))
+            .spawn(move || session_main(opts, on_error, warnings2, tx2, rx, init_tx))
             .map_err(|e| anyhow!("Aufnahme-Thread: {e}"))?;
         match init_rx.recv_timeout(Duration::from_secs(20)) {
-            Ok(Ok(())) => Ok(Recorder { tx, join: Some(join) }),
+            Ok(Ok(())) => Ok(Recorder { tx, join: Some(join), warnings }),
             Ok(Err(m)) => {
                 let _ = join.join();
                 bail!("{m}")
@@ -107,6 +123,11 @@ impl Recorder {
         self.shutdown_cancel();
     }
 
+    /// Hinweise ohne Abbruch, z. B. „Mikrofon verweigert — Video ohne Ton“ (beim Start oder später).
+    pub fn warnings(&self) -> Vec<String> {
+        self.warnings.lock().clone()
+    }
+
     fn shutdown_cancel(&mut self) {
         if let Some(j) = self.join.take() {
             let _ = self.tx.send(Msg::Cancel);
@@ -124,6 +145,7 @@ impl Drop for Recorder {
 fn session_main(
     opts: RecordOptions,
     on_error: OnError,
+    warnings: Warnings,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
     init: Sender<std::result::Result<(), String>>,
@@ -137,7 +159,7 @@ fn session_main(
         }
     };
     let path = opts.path.clone();
-    let mut s = match Session::new(opts, on_error, tx) {
+    let mut s = match Session::new(opts, on_error, warnings, tx) {
         Ok(s) => s,
         Err(e) => {
             let m = format!("Die Aufnahme konnte nicht gestartet werden: {e:#}");
@@ -207,8 +229,12 @@ struct Session {
 }
 
 impl Session {
-    fn new(opts: RecordOptions, on_error: OnError, tx: Sender<Msg>) -> Result<Self> {
+    fn new(opts: RecordOptions, on_error: OnError, warnings: Warnings, tx: Sender<Msg>) -> Result<Self> {
         let (dw, dh) = (pure::even(opts.width) as usize, pure::even(opts.height) as usize);
+        // Graphics Capture gibt es ab Windows 10 1803, Bildschirme/freie Threads ab 1903.
+        if !GraphicsCaptureSession::IsSupported().unwrap_or(false) {
+            bail!("Diese Windows-Version unterstützt keine Bildschirmaufnahme (Windows.Graphics.Capture, ab Windows 10 Version 1903).");
+        }
 
         // Direct3D-Gerät (BGRA für Capture) und Mehrfädigkeitsschutz.
         let mut device: Option<ID3D11Device> = None;
@@ -258,6 +284,7 @@ impl Session {
                 Ok(m) => Some(m),
                 Err(e) => {
                     log::warn!("Mikrofon nicht verfügbar, Aufnahme ohne Ton: {e:#}");
+                    warnings.lock().push(mic_warning(&e));
                     None
                 }
             }
@@ -267,7 +294,8 @@ impl Session {
 
         let fps = opts.fps.clamp(1, 120);
         let (w, h) = (dw as u32, dh as u32);
-        let spec = VideoSpec { w, h, fps, hevc: opts.hevc && super::writer::hevc_encoder_available(), bitrate: 0, hardware: true };
+        // HEVC nur, wenn sich das Ergebnis auch lesen lässt (Encoder und Decoder, `media::hevc_available`).
+        let spec = VideoSpec { w, h, fps, hevc: opts.hevc && super::hevc_available(), bitrate: 0, hardware: true };
         let spec = VideoSpec { bitrate: pure::bitrate(w, h, fps, spec.hevc), ..spec };
         let _ = std::fs::remove_file(&opts.path);
         let created = Mp4Writer::create_with_fallback(&opts.path, &spec, mic.as_ref().map(|m| &m.pcm.0))?;
@@ -301,8 +329,12 @@ impl Session {
             }))
             .ctx("Schließereignis")?;
         let capture = pool.CreateCaptureSession(&item).ctx("Aufnahmesitzung")?;
-        capture.SetIsCursorCaptureEnabled(opts.show_cursor).ctx("Mauszeiger")?;
-        // Gelben Rahmen ausblenden, wo das System es erlaubt (Windows 11); Fehler sind egal.
+        // Beides gibt es erst in neueren Windows-Versionen (Mauszeiger: IGraphicsCaptureSession2 ab
+        // Windows 10 2004, Rahmen: IGraphicsCaptureSession3 ab Windows 11). Fehlt es, bleibt die
+        // Vorgabe des Systems (Mauszeiger sichtbar, gelber Rahmen) — kein Grund, nicht aufzunehmen.
+        if let Err(e) = capture.SetIsCursorCaptureEnabled(opts.show_cursor) {
+            log::info!("Mauszeiger-Schalter nicht verfügbar ({}), Systemvorgabe bleibt", e.message().trim());
+        }
         let _ = capture.SetIsBorderRequired(false);
 
         let mut s = Session {
@@ -345,9 +377,10 @@ impl Session {
             s.hook = start_hook(tx);
         }
         match mic {
-            Some(m) if audio_ok => s.mic = Some(start_mic(m, writer, video_first)),
+            Some(m) if audio_ok => s.mic = Some(start_mic(m, writer, video_first, warnings)),
             Some(m) => {
                 // Schreiber hat keine Tonspur bekommen: Gerät gleich wieder freigeben.
+                warnings.lock().push("Der Ton ließ sich nicht kodieren (AAC-Encoder fehlt).".into());
                 // SAFETY: Quelle wurde in `init_mic` geöffnet und nirgends sonst benutzt.
                 unsafe {
                     let _ = m.source.Shutdown();
@@ -803,7 +836,7 @@ fn init_mic() -> Result<MicSetup> {
     }
 }
 
-fn start_mic(m: MicSetup, writer: WriterSlot, video_first: Arc<AtomicI64>) -> MicHandle {
+fn start_mic(m: MicSetup, writer: WriterSlot, video_first: Arc<AtomicI64>, warnings: Warnings) -> MicHandle {
     let stop = Arc::new(AtomicBool::new(false));
     let (done_tx, done_rx) = channel::<()>();
     let stop2 = stop.clone();
@@ -811,7 +844,9 @@ fn start_mic(m: MicSetup, writer: WriterSlot, video_first: Arc<AtomicI64>) -> Mi
     let spawned = std::thread::Builder::new().name("knips-mic".into()).spawn(move || {
         let m = m;
         let _com = com_init();
-        mic_loop(&m.0, &writer, &stop2, &video_first);
+        if let Err(e) = mic_loop(&m.0, &writer, &stop2, &video_first) {
+            warnings.lock().push(e);
+        }
         // SAFETY: gibt das Gerät frei (Mikrofon-Symbol verschwindet).
         unsafe {
             let _ = m.0.source.Shutdown();
@@ -824,7 +859,8 @@ fn start_mic(m: MicSetup, writer: WriterSlot, video_first: Arc<AtomicI64>) -> Mi
     MicHandle { stop, done: done_rx }
 }
 
-fn mic_loop(m: &MicSetup, writer: &WriterSlot, stop: &AtomicBool, video_first: &AtomicI64) {
+/// Liest bis `stop`. `Err` = Mikrofon ist unterwegs ausgefallen (Rest des Videos ohne Ton).
+fn mic_loop(m: &MicSetup, writer: &WriterSlot, stop: &AtomicBool, video_first: &AtomicI64) -> std::result::Result<(), String> {
     let mut clock = AudioClock::default();
     while !stop.load(Ordering::SeqCst) {
         let mut flags = 0u32;
@@ -834,11 +870,11 @@ fn mic_loop(m: &MicSetup, writer: &WriterSlot, stop: &AtomicBool, video_first: &
         let r = unsafe { m.reader.ReadSample(AUDIO, 0, None, Some(&mut flags), Some(&mut ts), Some(&mut sample)) };
         if let Err(e) = r {
             log::warn!("Mikrofon-Lesefehler, Aufnahme geht ohne Ton weiter: {e}");
-            return;
+            return Err(mic_warning(&werr("Mikrofon lesen", e)));
         }
         if flags & MF_SOURCE_READERF_ERROR.0 as u32 != 0 || flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0 {
             log::warn!("Mikrofon-Strom beendet (Flags {flags:#x})");
-            return;
+            return Err("Das Mikrofon wurde während der Aufnahme getrennt — ab dort fehlt der Ton.".into());
         }
         let Some(sample) = sample else { continue };
         let first = video_first.load(Ordering::SeqCst);
@@ -860,6 +896,7 @@ fn mic_loop(m: &MicSetup, writer: &WriterSlot, stop: &AtomicBool, video_first: &
             }
         }
     }
+    Ok(())
 }
 
 // ───────────────────────── Maus-Hook ─────────────────────────

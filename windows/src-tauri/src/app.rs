@@ -41,6 +41,7 @@ pub struct Knips {
     pub hotkey_failures: Mutex<Vec<HotkeyAction>>,
     ocr_available: OnceLock<bool>,
     hevc_available: OnceLock<bool>,
+    media_available: OnceLock<bool>,
 }
 
 static KNIPS: OnceLock<Arc<Knips>> = OnceLock::new();
@@ -66,7 +67,10 @@ pub struct Bootstrap {
     pub platform: &'static str,
     pub version: String,
     pub ocr_available: bool,
+    /// HEVC aufnehmen und wieder lesen (Encoder **und** Decoder); sonst nur H.264 anbieten.
     pub hevc_available: bool,
+    /// Media Foundation vorhanden (fehlt in Windows N/KN ohne Media Feature Pack): sonst kein Video.
+    pub media_available: bool,
     /// Nutzungsstatistik: `null` = noch nicht beantwortet.
     pub telemetry_consent: Option<bool>,
 }
@@ -96,6 +100,8 @@ impl Knips {
             version: self.app.package_info().version.to_string(),
             ocr_available: self.ocr_available.get().copied().unwrap_or(false),
             hevc_available: self.hevc_available.get().copied().unwrap_or(false),
+            // Bis zur Prüfung (Hintergrund, Millisekunden) nichts sperren.
+            media_available: self.media_available.get().copied().unwrap_or(true),
             telemetry_consent: self.telemetry.consent(),
             settings,
         }
@@ -135,6 +141,25 @@ impl Knips {
         use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
         self.app.dialog().message(message).title(title).kind(MessageDialogKind::Warning).show(|_| {});
     }
+
+    /// Hinweis mit Knopf, der eine Windows-Einstellungsseite (`ms-settings:…`) öffnet, und „Schließen“.
+    pub fn alert_with_settings(&self, title: &str, message: &str, button: &str, url: &'static str) {
+        log::warn!("{title}: {message}");
+        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+        self.app
+            .dialog()
+            .message(message)
+            .title(title)
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(button.into(), "Schließen".into()))
+            .show(move |open| {
+                if open {
+                    if let Err(err) = knips_platform::shell::open_url(url) {
+                        log::warn!("{url} nicht geöffnet: {err:#}");
+                    }
+                }
+            });
+    }
 }
 
 /// Start der App: Zustand anlegen, Fenster vorwärmen, Kürzel, Tray.
@@ -162,6 +187,7 @@ pub fn setup(app: &AppHandle) -> anyhow::Result<()> {
         hotkey_failures: Mutex::new(vec![]),
         ocr_available: OnceLock::new(),
         hevc_available: OnceLock::new(),
+        media_available: OnceLock::new(),
     });
     let _ = KNIPS.set(state.clone());
 
@@ -174,8 +200,14 @@ pub fn setup(app: &AppHandle) -> anyhow::Result<()> {
     // Fähigkeiten des Systems im Hintergrund prüfen (WinRT/Media Foundation nie im UI-Thread).
     std::thread::spawn(|| {
         let k = knips();
+        let media = knips_platform::media::available();
+        let _ = k.media_available.set(media);
+        if !media {
+            k.broadcast_bootstrap();
+        }
         let _ = k.ocr_available.set(knips_platform::ocr::available());
-        let _ = k.hevc_available.set(knips_platform::media::hevc_encoder_available());
+        // Encoder und Decoder (kurzes Testvideo); ohne Media Foundation sofort `false`.
+        let _ = k.hevc_available.set(knips_platform::media::hevc_available());
         k.broadcast_bootstrap();
     });
 

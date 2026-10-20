@@ -7,16 +7,20 @@ import ScreenCaptureKit
     private var overlay: SelectionOverlay?
     /// Zuletzt aufgenommener Bereich (Bildschirm + Rechteck in Punkten) für „Letzten Bereich wiederholen“.
     private var lastArea: (displayID: CGDirectDisplayID, rect: CGRect)?
+    /// Quelle des laufenden Scroll-Screenshots — `ScrollCaptureController` meldet sein Ergebnis ohne Quelle.
+    private var scrollSource: CaptureSource = .user
 
-    func perform(_ action: HotkeyAction) {
+    /// `source`: `.link` für knips://-Links (`LinkCommands`) — dann nimmt das Overlay ⏎ und Klicks erst nach der
+    /// Schutzzeit an, und die Aufnahme landet nicht von selbst in der Zwischenablage.
+    func perform(_ action: HotkeyAction, source: CaptureSource = .user) {
         switch action {
-        case .captureArea: captureInteractive(windowMode: false)
-        case .captureWindow: captureInteractive(windowMode: true)
-        case .captureFullscreen: captureFullscreen()
-        case .captureLastArea: captureLastArea()
-        case .captureText: captureText()
-        case .captureScrolling: captureScrolling()
-        case .toggleRecording: toggleRecording()
+        case .captureArea: captureInteractive(windowMode: false, source: source)
+        case .captureWindow: captureInteractive(windowMode: true, source: source)
+        case .captureFullscreen: captureFullscreen(source: source)
+        case .captureLastArea: captureLastArea(source: source)
+        case .captureText: captureText(source: source)
+        case .captureScrolling: captureScrolling(source: source)
+        case .toggleRecording: toggleRecording(source: source)
         case .pinClipboard: pinClipboard()
         }
     }
@@ -33,14 +37,14 @@ import ScreenCaptureKit
     }
 
     /// Overlay erscheint sofort; das Standbild wird darunter aufgenommen und nachgereicht.
-    private func presentOverlay(purpose: SelectionPurpose, windowMode: Bool,
+    private func presentOverlay(purpose: SelectionPurpose, windowMode: Bool, source: CaptureSource,
                                 onResult: @escaping (SelectionResult, Task<Frozen, Error>) -> Void) {
         guard overlay == nil, !RecordingController.shared.isBusy else { return }
         guard ensurePermission() else { return }
         let screens = NSScreen.screens
         let freeze = startFreeze(screens)
-        let overlay = SelectionOverlay(screens: screens, windows: ScreenCapture.windows(), purpose: purpose,
-                                       windowMode: windowMode) { [weak self] result in
+        let overlay = SelectionOverlay(screens: screens, windows: ScreenCapture.windows(), purpose: purpose, windowMode: windowMode,
+                                       armDelay: source == .link ? LinkConfirmWindowController.armDelay : 0) { [weak self] result in
             self?.overlay = nil
             onResult(result, freeze)
         }
@@ -59,13 +63,13 @@ import ScreenCaptureKit
 
     // MARK: Screenshot
 
-    func captureInteractive(windowMode: Bool) {
-        presentOverlay(purpose: .screenshot, windowMode: windowMode) { [weak self] result, freeze in
-            self?.handleScreenshot(result, freeze: freeze)
+    func captureInteractive(windowMode: Bool, source: CaptureSource = .user) {
+        presentOverlay(purpose: .screenshot, windowMode: windowMode, source: source) { [weak self] result, freeze in
+            self?.handleScreenshot(result, freeze: freeze, source: source)
         }
     }
 
-    func captureFullscreen() {
+    func captureFullscreen(source: CaptureSource = .user) {
         guard overlay == nil else { return }
         guard ensurePermission() else { return }
         let screen = NSScreen.withMouse
@@ -75,14 +79,14 @@ import ScreenCaptureKit
                 guard let frozen = try await ScreenCapture.freeze([screen], content: content).first else { return }
                 Sounds.playShutter()
                 Telemetry.count(.captureFullscreen)
-                finish(image: frozen.image, scale: frozen.scale, screen: screen)
+                finish(image: frozen.image, scale: frozen.scale, screen: screen, source: source)
             } catch {
                 report(error)
             }
         }
     }
 
-    private func handleScreenshot(_ result: SelectionResult, freeze: Task<Frozen, Error>) {
+    private func handleScreenshot(_ result: SelectionResult, freeze: Task<Frozen, Error>, source: CaptureSource) {
         if case .cancelled = result { return }
         // Auslöser sofort beim Loslassen — die Arbeit danach läuft im Hintergrund weiter.
         Sounds.playShutter()
@@ -95,22 +99,22 @@ import ScreenCaptureKit
             case .fullScreen(let screen):
                 guard let f = still(for: screen) else { return }
                 Telemetry.count(.captureFullscreen)
-                finish(image: f.image, scale: f.scale, screen: screen)
+                finish(image: f.image, scale: f.scale, screen: screen, source: source)
             case .area(let screen, let rect):
                 guard let f = still(for: screen), let image = ScreenCapture.crop(f, localRect: rect) else { return }
                 lastArea = (screen.displayID, rect)
                 Telemetry.count(.captureArea)
-                finish(image: image, scale: f.scale, screen: screen)
+                finish(image: image, scale: f.scale, screen: screen, source: source)
             case .window(let w, let screen):
                 guard let f = still(for: screen) else { return }
                 Telemetry.count(.captureWindow)
                 if let image = try? await ScreenCapture.captureWindow(w, content: frozen.content, scale: f.scale) {
-                    finish(image: image, scale: f.scale, screen: screen)
+                    finish(image: image, scale: f.scale, screen: screen, source: source)
                 } else {
                     // Fallback: Ausschnitt aus dem Standbild
                     let local = w.frame.offsetBy(dx: -screen.frame.minX, dy: -screen.frame.minY)
                         .intersection(CGRect(origin: .zero, size: screen.frame.size))
-                    if let image = ScreenCapture.crop(f, localRect: local) { finish(image: image, scale: f.scale, screen: screen) }
+                    if let image = ScreenCapture.crop(f, localRect: local) { finish(image: image, scale: f.scale, screen: screen, source: source) }
                 }
             }
         }
@@ -125,11 +129,11 @@ import ScreenCaptureKit
     #endif
 
     /// Gleicher Ausschnitt wie beim letzten Mal — ohne Overlay.
-    func captureLastArea() {
+    func captureLastArea(source: CaptureSource = .user) {
         guard overlay == nil, ensurePermission() else { return }
         guard let last = lastArea, let screen = NSScreen.screens.first(where: { $0.displayID == last.displayID }) else {
             HUD.show("Noch kein Bereich aufgenommen", symbol: "rectangle.dashed")
-            captureInteractive(windowMode: false)
+            captureInteractive(windowMode: false, source: source)
             return
         }
         Task {
@@ -139,7 +143,7 @@ import ScreenCaptureKit
                       let image = ScreenCapture.crop(frozen, localRect: last.rect) else { return }
                 Sounds.playShutter()
                 Telemetry.count(.captureLastArea)
-                finish(image: image, scale: frozen.scale, screen: screen)
+                finish(image: image, scale: frozen.scale, screen: screen, source: source)
             } catch {
                 report(error)
             }
@@ -147,13 +151,14 @@ import ScreenCaptureKit
     }
 
     /// Bereich wählen, dann scrollen — Knips setzt die Abschnitte zu einem langen Bild zusammen.
-    func captureScrolling() {
+    func captureScrolling(source: CaptureSource = .user) {
         let scroll = ScrollCaptureController.shared
         if scroll.active {
             scroll.finish(save: true)
             return
         }
-        presentOverlay(purpose: .scroll, windowMode: false) { result, freeze in
+        presentOverlay(purpose: .scroll, windowMode: false, source: source) { [weak self] result, freeze in
+            self?.scrollSource = source
             Task {
                 guard let frozen = try? await freeze.value else { return }
                 let area: (NSScreen, CGRect)?
@@ -170,9 +175,9 @@ import ScreenCaptureKit
         }
     }
 
-    /// Bereich ziehen → erkannter Text in die Zwischenablage, keine Datei.
-    func captureText() {
-        presentOverlay(purpose: .text, windowMode: false) { result, freeze in
+    /// Bereich ziehen → erkannter Text in die Zwischenablage, keine Datei. Per Link erst nach Rückfrage mit Vorschau.
+    func captureText(source: CaptureSource = .user) {
+        presentOverlay(purpose: .text, windowMode: false, source: source) { [weak self] result, freeze in
             Task {
                 guard let frozen = try? await freeze.value else { return }
                 let image: CGImage?
@@ -189,40 +194,55 @@ import ScreenCaptureKit
                 let text = await Task.detached(priority: .userInitiated) { TextLayout.plainText(TextLayout.lines(in: image)) }.value
                 if text.isEmpty {
                     HUD.show("Kein Text gefunden", symbol: "text.magnifyingglass")
+                } else if source == .link {
+                    LinkCommands.shared.confirmTextCopy(text) { self?.copyRecognized(text) }
                 } else {
-                    Clipboard.copy(text: text)
-                    let lines = text.split(separator: "\n").count
-                    HUD.show("Text kopiert · \(lines) Zeile\(lines == 1 ? "" : "n")", symbol: "text.viewfinder")
+                    self?.copyRecognized(text)
                 }
             }
         }
     }
 
-    /// Legt die Aufnahme an. Kodieren und Schreiben laufen im Hintergrund; die Zwischenablage
-    /// liefert die PNG-Daten erst, wenn eine App sie anfragt.
+    private func copyRecognized(_ text: String) {
+        Clipboard.copy(text: text)
+        let lines = text.split(separator: "\n").count
+        HUD.show("Text kopiert · \(lines) Zeile\(lines == 1 ? "" : "n")", symbol: "text.viewfinder")
+    }
+
+    /// Ergebnis eines Scroll-Screenshots (`ScrollCaptureController`) — mit der Quelle, mit der er begonnen wurde.
     func finish(image: CGImage, scale: CGFloat, screen: NSScreen) {
+        finish(image: image, scale: scale, screen: screen, source: scrollSource)
+    }
+
+    /// Legt die Aufnahme an. Kodieren und Schreiben laufen im Hintergrund; die Zwischenablage
+    /// liefert die PNG-Daten erst, wenn eine App sie anfragt. Per Link ausgelöst (`source == .link`) kommt
+    /// nichts von selbst in die Zwischenablage — kopieren geht dann über Karte oder Editor.
+    @discardableResult
+    func finish(image: CGImage, scale: CGFloat, screen: NSScreen, source: CaptureSource) -> CaptureItem? {
         let settings = AppSettings.shared
         let output = settings.outputPromise(sourceScale: scale) { image }
         do {
             let item = try CaptureStore.shared.addImage(image, scale: scale, output: output)
-            if settings.copyToClipboard { Clipboard.copy(output, fileURL: item.fileURL) }
+            if settings.copyToClipboard, source == .user { Clipboard.copy(output, fileURL: item.fileURL) }
             if settings.showQuickAccess { QuickAccessController.shared.show(item, on: screen) }
             if settings.openEditorAfterCapture { EditorWindowController.show(item) }
+            return item
         } catch {
             report(error)
+            return nil
         }
     }
 
     // MARK: Bildschirmaufnahme
 
-    func toggleRecording() {
+    func toggleRecording(source: CaptureSource = .user) {
         let recorder = RecordingController.shared
         if recorder.isBusy {
             // Läuft: speichern. Countdown: abbrechen.
             recorder.stop(save: true)
             return
         }
-        presentOverlay(purpose: .recording, windowMode: false) { result, freeze in
+        presentOverlay(purpose: .recording, windowMode: false, source: source) { result, freeze in
             Task {
                 guard let frozen = try? await freeze.value else { return }
                 let area: (NSScreen, CGRect)?

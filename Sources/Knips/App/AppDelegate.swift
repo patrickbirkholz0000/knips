@@ -44,15 +44,17 @@ import ScreenCaptureKit
     }
 
     /// `knips://area|window|fullscreen|record|last|text|scroll|pin|menu|history|settings` — für Raycast,
-    /// Stream Deck, Kurzbefehle. Sofort aufnehmende Befehle fragen vorher nach (`LinkCommands`).
+    /// Stream Deck, Kurzbefehle. Sofort aufnehmende Befehle fragen vorher nach (`LinkCommands`) und nennen dabei
+    /// den Absender des Apple Events, falls er sich bestimmen lässt.
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls where url.scheme == "knips" { handle(url, fromLink: true) }
+        let sender = LinkSender.describe(NSAppleEventManager.shared().currentAppleEvent)
+        for url in urls where url.scheme == "knips" { handle(url, fromLink: true, sender: sender) }
     }
 
     /// `fromLink`: über einen knips://-Link von außen; nur der Test-Kanal der Sandbox übergibt `false`.
-    func handle(_ url: URL, fromLink: Bool) {
+    func handle(_ url: URL, fromLink: Bool, sender: String? = nil) {
         let command = url.host ?? url.path.replacingOccurrences(of: "/", with: "")
-        if LinkCommands.shared.run(command, fromLink: fromLink) { return }
+        if LinkCommands.shared.run(command, fromLink: fromLink, sender: sender) { return }
         switch command {
         #if KNIPS_DEV
         case "debug-sample" where Paths.testRoot != nil:

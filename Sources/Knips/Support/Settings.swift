@@ -87,9 +87,6 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
     @Published var disabledHotkeys: Set<HotkeyAction> {
         didSet { d.set(disabledHotkeys.map(\.rawValue).sorted(), forKey: "disabledHotkeys") }
     }
-    /// knips://fullscreen, knips://last und knips://record (Start) ohne Rückfrage ausführen (standardmäßig aus,
-    /// weil jede App und jede Webseite solche Links öffnen kann — siehe `LinkCommands`).
-    @Published var linkCaptureWithoutConfirm: Bool { didSet { d.set(linkCaptureWithoutConfirm, forKey: "linkCaptureWithoutConfirm") } }
     @Published var hotkeys: [HotkeyAction: KeyCombo] {
         didSet {
             if let data = try? JSONEncoder().encode(Dictionary(uniqueKeysWithValues: hotkeys.map { ($0.key.rawValue, $0.value) })) {
@@ -129,7 +126,9 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
             autoRedactKinds = Set(SensitiveDetector.Kind.allCases)
         }
         retentionDays = d.object(forKey: "retentionDays") as? Int ?? 30
-        linkCaptureWithoutConfirm = d.object(forKey: "linkCaptureWithoutConfirm") as? Bool ?? false
+        // Bis 20.10.2026 ließ sich die Rückfrage vor Aufnahmen per Link hier abschalten. Jedes andere Programm kann
+        // die Benutzereinstellungen umschreiben — die Rückfrage kommt deshalb immer (`LinkCommands`).
+        d.removeObject(forKey: "linkCaptureWithoutConfirm")
         var keys: [HotkeyAction: KeyCombo] = [:]
         if let data = d.data(forKey: "hotkeys"),
            let stored = try? JSONDecoder().decode([String: KeyCombo].self, from: data) {

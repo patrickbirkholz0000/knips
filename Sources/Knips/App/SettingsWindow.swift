@@ -448,10 +448,6 @@ private struct GeneralPane: View {
                     Switch(isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
                 }
             }
-            Card(title: "Befehle per Link",
-                 footer: "Sonst fragt Knips nach, bevor knips://fullscreen, knips://last oder knips://record aufnehmen – solche Links kann jede App und jede Webseite öffnen.") {
-                Row(title: "Aufnahmen per Link ohne Rückfrage") { Switch(isOn: $settings.linkCaptureWithoutConfirm) }
-            }
         }
     }
 }
@@ -862,6 +858,8 @@ private struct PrivacyPane: View {
                 InfoLine(symbol: "checkmark.shield", text: "Geteilte Dateien sind immer die zensierte Fassung")
                 RowDivider()
                 InfoLine(symbol: "doc.on.clipboard", text: "„Text kopieren“ lässt zensierte Wörter weg")
+                RowDivider()
+                InfoLine(symbol: "link", text: "Aufnahmen per knips://-Link nur nach Rückfrage")
             }
         }
         .onReceive(timer) { _ in

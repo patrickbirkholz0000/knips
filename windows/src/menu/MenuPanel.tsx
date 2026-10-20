@@ -1,17 +1,20 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
-  AppWindow, ArrowRight, BoxSelect, CircleDot, CircleStop, FileDown, Folder, Images, Monitor, Pin, Play, Power,
-  RotateCcw, ScanText, Scan, Settings as Gear,
+  AppWindow, ArrowRight, BoxSelect, CircleDot, CircleStop, FileDown, Images, Monitor, Pin, Play, RotateCcw, ScanText,
 } from "lucide-react";
 import { api, events } from "../shared/ipc";
 import { useBootstrap } from "../shared/hooks";
+import { duration } from "../shared/format";
 import type { CaptureItem, HotkeyAction } from "../shared/types";
 import Thumbnail from "../shared/Thumbnail";
+import { BrandMark, Wordmark } from "../shared/brand";
 import { itemTitle } from "../shared/ipc";
 import { useRecordingState } from "../recording/useRecordingState";
+import { Keycaps } from "./Keycaps";
 import "./menu.css";
 import "./mock";
 
+// Menü-Panel (docs/design.md, „Menü-Panel“): immer dunkel (--k-dark-*), unabhängig von Hell/Dunkel.
 export default function MenuPanel(_: { params: string[]; query: URLSearchParams }) {
   const boot = useBootstrap();
   const rec = useRecordingState();
@@ -49,39 +52,53 @@ export default function MenuPanel(_: { params: string[]; query: URLSearchParams 
   }, []);
 
   const label = (a: HotkeyAction) => boot?.hotkeyLabels[a];
-  const shortcut = (a: HotkeyAction, compact = false) => {
+  // In den schmalen Kacheln „Umschalt+“ zu „Umsch+“ kürzen (ein ⇧ wäre bei 1× und 9,5 px nicht lesbar); wird es
+  // trotzdem eng, kürzt sich das Kürzel, nie der Titel.
+  const shortcut = (a: HotkeyAction) => {
     const l = label(a);
-    // In den schmalen Kacheln „Umschalt+“ als ⇧ kürzen, damit der Titel nie abgeschnitten wird.
-    return l ? <span className="menu-shortcut">{compact ? l.replace("Umschalt+", "⇧+") : l}</span> : null;
+    return l ? <span className="mp-shortcut" title={l}>{l.replace("Umschalt+", "Umsch+")}</span> : null;
   };
   const tile = (title: string, icon: React.ReactNode, action: HotkeyAction | null, run: () => void, red = false, off?: string) => (
     <button className={"menu-tile" + (red ? " red" : "") + (off ? " off" : "")} onClick={run} title={off}>
       <span className="ico">{icon}</span>
       <span className="label">{title}</span>
-      {action && shortcut(action, true)}
+      {action && shortcut(action)}
     </button>
   );
   // Windows N/KN ohne Media Feature Pack: Klick zeigt den Hinweis (Rust), die Kachel ist gedämpft.
   const noVideo = boot?.mediaAvailable === false && !recording ? "Braucht das Media Feature Pack von Windows" : undefined;
   const perform = (a: HotkeyAction) => () => api.perform(a);
-  const ic = { size: 14, strokeWidth: 1.9 };
+  const ic = { size: 15, strokeWidth: 1.8 };
+  const areaKey = label("captureArea");
 
   return (
-    <div className="menu" ref={ref}>
-      <div className="menu-header">
-        <Scan size={14} strokeWidth={2.4} color="rgba(255,255,255,0.85)" />
-        <span className="title">Knips</span>
-        {recording && <span className="rec">Aufnahme läuft</span>}
+    <div className="mp" ref={ref}>
+      <div className="mp-head">
+        <span className="mp-brand">
+          <BrandMark size={22} recording={recording} />
+          <Wordmark size={18} recording={recording} />
+        </span>
+        <span className={"mp-status" + (recording ? " rec" : "")}>
+          <i className="mp-dot" />
+          {recording ? (
+            <>
+              Aufnahme <span className="mp-mono">{duration(rec.elapsed)}</span>
+            </>
+          ) : (
+            "Bereit"
+          )}
+        </span>
       </div>
 
-      <button className="menu-primary" onClick={perform("captureArea")}>
-        <BoxSelect size={15} strokeWidth={2} />
-        <span>Bereich aufnehmen</span>
-        <span className="grow" />
-        {shortcut("captureArea")}
+      <button className="mp-primary" onClick={perform("captureArea")}>
+        <span className="mp-primary-ico">
+          <BoxSelect size={17} strokeWidth={1.9} />
+        </span>
+        <span className="mp-primary-label">Bereich aufnehmen</span>
+        {areaKey && <Keycaps label={areaKey} />}
       </button>
 
-      <div className="menu-grid">
+      <div className="mp-grid">
         {tile("Fenster", <AppWindow {...ic} />, "captureWindow", perform("captureWindow"))}
         {tile("Bildschirm", <Monitor {...ic} />, "captureFullscreen", perform("captureFullscreen"))}
         {tile(recording ? "Stoppen" : "Video", recording ? <CircleStop {...ic} /> : <CircleDot {...ic} />, "toggleRecording", perform("toggleRecording"), recording, noVideo)}
@@ -94,19 +111,19 @@ export default function MenuPanel(_: { params: string[]; query: URLSearchParams 
 
       {recent.length > 0 && (
         <>
-          <div className="menu-divider" />
-          <div className="menu-recent">
-            <div className="menu-recent-head">
-              <span className="t">Zuletzt</span>
-              <button className="menu-all" onClick={() => api.openHistory()}>
-                Alle anzeigen <ArrowRight size={11} strokeWidth={2.4} />
+          <div className="mp-divider" />
+          <div className="mp-recent">
+            <div className="mp-recent-head">
+              <span className="mp-overline">Zuletzt</span>
+              <button className="mp-all" onClick={() => api.openHistory()}>
+                Alle anzeigen <ArrowRight size={12} strokeWidth={2.2} />
               </button>
             </div>
-            <div className="menu-thumbs">
+            <div className="mp-thumbs">
               {recent.map((item) => (
                 <button
                   key={item.id}
-                  className="menu-thumb"
+                  className="mp-thumb"
                   title={itemTitle(item)}
                   draggable
                   onClick={() => api.itemOpen(item.id)}
@@ -115,10 +132,10 @@ export default function MenuPanel(_: { params: string[]; query: URLSearchParams 
                     api.itemStartDrag(item.id);
                   }}
                 >
-                  <Thumbnail item={item} className="th" />
+                  <Thumbnail item={item} className="th" background="var(--k-dark-raised)" />
                   {item.kind !== "image" && (
                     <span className="kind">
-                      {item.kind === "gif" ? <Images size={8} strokeWidth={2.6} color="#fff" /> : <Play size={8} strokeWidth={2.6} fill="#fff" color="#fff" />}
+                      {item.kind === "gif" ? <Images size={9} strokeWidth={2.4} /> : <Play size={8} strokeWidth={0} fill="currentColor" />}
                     </span>
                   )}
                 </button>
@@ -128,17 +145,17 @@ export default function MenuPanel(_: { params: string[]; query: URLSearchParams 
         </>
       )}
 
-      <div className="menu-divider" />
-      <div className="menu-footer">
-        <button className="menu-foot" onClick={() => api.openSettings()}>
-          <Gear size={12} strokeWidth={2} /> Einstellungen
+      <div className="mp-divider" />
+      <div className="mp-foot">
+        <button className="mp-foot-btn" onClick={() => api.openSettings()}>
+          Einstellungen
         </button>
-        <button className="menu-foot" onClick={() => api.openSaveFolder()}>
-          <Folder size={12} strokeWidth={2} /> Ordner
+        <button className="mp-foot-btn" onClick={() => api.openSaveFolder()}>
+          Ordner
         </button>
         <span className="sp" />
-        <button className="menu-foot" onClick={() => api.quitApp()}>
-          <Power size={12} strokeWidth={2} /> Beenden
+        <button className="mp-foot-btn" onClick={() => api.quitApp()}>
+          Beenden
         </button>
       </div>
     </div>

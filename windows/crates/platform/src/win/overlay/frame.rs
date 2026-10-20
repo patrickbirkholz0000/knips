@@ -2,7 +2,8 @@
 //!
 //! Ein durchklickbares Layered-Fenster (UpdateLayeredWindow, Per-Pixel-Alpha) auf eigenem Thread mit
 //! eigener Nachrichtenschleife. Das Fenster liegt 3 pt außerhalb des Bereichs; die Linie (2 pt, Strich 6 /
-//! Lücke 4) sitzt 1 pt innerhalb der Fensterkante. Nimmt nie den Fokus, nicht in Aufnahmen.
+//! Lücke 4, mit dunklem Saum) sitzt 1 pt innerhalb der Fensterkante. Farben aus `brand.rs`: Aufnahme-Rot
+//! bzw. Königsblau hell. Nimmt nie den Fokus, nicht in Aufnahmen.
 
 use std::ffi::c_void;
 use std::sync::mpsc;
@@ -20,8 +21,10 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use super::gfx::Factories;
-use super::layout;
+use knips_core::RgbaImage;
+
+use super::gfx::{self, Factories};
+use super::{brand, layout};
 use super::{FrameColor, IRect};
 
 /// Dauerhafter Rahmen; schließt beim Drop (WM_CLOSE an den Fensterthread, dann Join).
@@ -158,6 +161,57 @@ unsafe fn create_and_draw(rect: IRect, color: FrameColor) -> Result<HWND> {
     }
 }
 
+/// Rahmen zeichnen (Fenstergröße `bw` × `bh` in pt): dunkler Saum, darauf die Strichlinie 2 pt (Strich 6 / Lücke 4)
+/// 1 pt innerhalb der Kante — Aufnahme-Rot bei Bildschirmaufnahmen, Königsblau hell beim Scroll-Screenshot.
+unsafe fn draw_frame(rt: &ID2D1RenderTarget, f: &Factories, bw: f64, bh: f64, color: FrameColor) -> windows::core::Result<()> {
+    unsafe {
+        let line = match color {
+            FrameColor::Recording => brand::FRAME_RECORDING,
+            FrameColor::Scroll => brand::FRAME_SCROLL,
+        };
+        let brush = rt.CreateSolidColorBrush(&gfx::color(line), None)?;
+        let halo = rt.CreateSolidColorBrush(&gfx::color(brand::FRAME_HALO), None)?;
+        // Strichlängen in D2D = Vielfache der Linienbreite: 6 pt Strich / 4 pt Lücke.
+        let dashed = |width: f32| {
+            let sp = D2D1_STROKE_STYLE_PROPERTIES {
+                startCap: D2D1_CAP_STYLE_FLAT,
+                endCap: D2D1_CAP_STYLE_FLAT,
+                dashCap: D2D1_CAP_STYLE_FLAT,
+                lineJoin: D2D1_LINE_JOIN_MITER,
+                miterLimit: 10.0,
+                dashStyle: D2D1_DASH_STYLE_CUSTOM,
+                dashOffset: 0.0,
+            };
+            f.d2d.CreateStrokeStyle(&sp, Some(&[6.0 / width, 4.0 / width]))
+        };
+        let (line_w, halo_w) = (FRAME_WIDTH, FRAME_WIDTH + 1.5);
+        let style = dashed(line_w)?;
+        let halo_style = dashed(halo_w)?;
+        let path = D2D_RECT_F { left: 1.0, top: 1.0, right: (bw - 1.0) as f32, bottom: (bh - 1.0) as f32 };
+
+        rt.BeginDraw();
+        rt.Clear(Some(&D2D1_COLOR_F { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }));
+        // Saum bleibt innerhalb der 3 pt Abstand zum Bereich (1 pt + 1,75 pt).
+        rt.DrawRectangle(&path, &halo, halo_w, &halo_style);
+        rt.DrawRectangle(&path, &brush, line_w, &style);
+        rt.EndDraw(None, None)
+    }
+}
+
+const FRAME_WIDTH: f32 = 2.0;
+
+/// Rahmen offscreen (Selbsttest): gleiche Zeichnung auf einer WIC-Bitmap. COM muss initialisiert sein.
+pub fn render_offscreen(area: (i32, i32), scale: f64, color: FrameColor) -> Result<RgbaImage> {
+    let (_, _, ww, wh, _) = layout::frame_window_rect((0, 0, area.0, area.1), scale);
+    let f = Factories::new().map_err(|e| anyhow!("Direct2D: {e}"))?;
+    let bmp = gfx::wic_bitmap(ww as u32, wh as u32).map_err(|e| anyhow!("WIC: {e}"))?;
+    {
+        let rt = gfx::wic_target(&f, &bmp, (96.0 * scale) as f32).map_err(|e| anyhow!("Renderziel: {e}"))?;
+        unsafe { draw_frame(&rt, &f, ww as f64 / scale, wh as f64 / scale, color) }.map_err(|e| anyhow!("Zeichnen: {e}"))?;
+    }
+    gfx::read_wic(&bmp, ww as u32, wh as u32).map_err(|e| anyhow!("Lesen: {e}"))
+}
+
 /// Rahmen mit Direct2D in eine 32-Bit-DIB (vormultipliziertes Alpha) zeichnen und per UpdateLayeredWindow setzen.
 unsafe fn draw_layered(hwnd: HWND, win: (i32, i32, i32, i32), dpi: f32, scale: f64, color: FrameColor) -> Result<()> {
     unsafe {
@@ -202,29 +256,7 @@ unsafe fn draw_layered(hwnd: HWND, win: (i32, i32, i32, i32), dpi: f32, scale: f
             dcrt.BindDC(memdc, &RECT { left: 0, top: 0, right: ww, bottom: wh })?;
             let rt: ID2D1RenderTarget = dcrt.cast()?;
             rt.SetDpi(dpi, dpi);
-            let (r, g, b) = match color {
-                FrameColor::Recording => (1.0, 59.0 / 255.0, 48.0 / 255.0),
-                FrameColor::Scroll => (0.0, 122.0 / 255.0, 1.0),
-            };
-            let brush = rt.CreateSolidColorBrush(&D2D1_COLOR_F { r, g, b, a: 1.0 }, None)?;
-            // Strichlängen in D2D = Vielfache der Linienbreite (2 pt): 6 pt Strich → 3, 4 pt Lücke → 2.
-            let sp = D2D1_STROKE_STYLE_PROPERTIES {
-                startCap: D2D1_CAP_STYLE_FLAT,
-                endCap: D2D1_CAP_STYLE_FLAT,
-                dashCap: D2D1_CAP_STYLE_FLAT,
-                lineJoin: D2D1_LINE_JOIN_MITER,
-                miterLimit: 10.0,
-                dashStyle: D2D1_DASH_STYLE_CUSTOM,
-                dashOffset: 0.0,
-            };
-            let style = f.d2d.CreateStrokeStyle(&sp, Some(&[3.0, 2.0]))?;
-            let (bw, bh) = (ww as f64 / scale, wh as f64 / scale);
-            let path = D2D_RECT_F { left: 1.0, top: 1.0, right: (bw - 1.0) as f32, bottom: (bh - 1.0) as f32 };
-
-            rt.BeginDraw();
-            rt.Clear(Some(&D2D1_COLOR_F { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }));
-            rt.DrawRectangle(&path, &brush, 2.0, &style);
-            rt.EndDraw(None, None)?;
+            draw_frame(&rt, &f, ww as f64 / scale, wh as f64 / scale, color)?;
             Ok(())
         })();
 

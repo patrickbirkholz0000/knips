@@ -178,10 +178,18 @@ pub mod overlay {
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum FrameColor {
-        /// Rot — Bildschirmaufnahme.
+        /// Aufnahme-Rot (#E8523F) — Bildschirmaufnahme.
         Recording,
-        /// Akzentblau — Scroll-Screenshot.
+        /// Königsblau hell (#9AA6FF) — Scroll-Screenshot.
         Scroll,
+    }
+
+    /// Aufnahmerahmen in ein Bild rendern (Selbsttest `selection`): Fenster um einen Bereich von `area`
+    /// Pixeln bei Skalierung `scale`, transparent bis auf den Rahmen. Die Attrappe liefert nur die leere Fläche.
+    pub fn render_frame_offscreen(area: (i32, i32), scale: f64, color: FrameColor) -> Result<RgbaImage> {
+        let _ = color;
+        let o = (3.0 * scale).round().max(1.0) as u32;
+        Ok(RgbaImage::new(area.0.max(1) as u32 + 2 * o, area.1.max(1) as u32 + 2 * o))
     }
 
     /// Gestrichelter Rahmen (2 px, Strich 6/Lücke 4) 3 px außerhalb des Bereichs. Klicks gehen

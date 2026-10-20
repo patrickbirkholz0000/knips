@@ -1,74 +1,108 @@
-/* Menü-Panel — Maße aus MenuPanel.swift; 20 px breiter als auf dem Mac (340 pt), weil die Windows-Kürzel
-   Wörter sind („Strg+Druck“ statt ⌘⇧3) und „Bildschirm“ in Segoe UI sonst abgeschnitten wurde. */
-.menu {
+/* Menü-Panel (docs/design.md, „Menü-Panel“): immer dunkel, Radius 16, Kopf mit Zeichen + Wortmarke und Status,
+   Hauptaktion mit Mono-Tastenkappen, Raster, ZULETZT, leiser Fuß. Nur --k-dark-* — hängt nicht von data-theme ab.
+   360 px breit (Mac 340 pt): Die Windows-Kürzel sind Wörter („Strg+Druck“ statt ⌘⇧3); Rust kennt die Breite
+   (menu.rs, WIDTH). */
+.mp {
   width: 360px;
   padding: 14px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  background: rgb(28, 28, 31);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 18px;
-  color: #fff;
+  background: var(--k-dark);
+  border: 1px solid var(--k-dark-line);
+  border-radius: var(--k-radius-panel);
+  color: var(--k-dark-ink);
+  font-family: var(--k-font);
   overflow: hidden;
 }
-.menu svg { flex: none; }
-.menu-divider { height: 1px; background: rgba(255, 255, 255, 0.08); flex: none; }
-.menu-header { display: flex; align-items: center; gap: 9px; padding: 0 4px; }
-.menu-header .title { font-size: 14px; font-weight: 600; }
-.menu-header .rec { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--red); }
+.mp svg { flex: none; }
+.mp button:focus-visible { outline: 2px solid var(--k-dark-accent); outline-offset: 1px; }
+.mp-mono { font-family: var(--k-mono); font-variant-numeric: tabular-nums; }
+.mp-divider { height: 1px; background: var(--k-dark-line); flex: none; }
 
-.menu-primary {
-  display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 12px; width: 100%;
-  border-radius: 11px; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1);
-  font-size: 13.5px; font-weight: 500; color: #fff; text-align: left;
-  transition: background 0.1s ease-out;
+/* Kopf: Zeichen + Wortmarke links, Status rechts (Punkt wie die Lampe: Königsblau in Ruhe, Rot pulsierend beim Video). */
+.mp-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; height: 26px; padding: 0 2px 0 4px; }
+.mp-brand { display: inline-flex; align-items: center; gap: 8px; }
+.mp-status {
+  display: inline-flex; align-items: center; gap: 7px; height: 24px; padding: 0 10px;
+  border-radius: var(--k-radius-pill); background: var(--k-dark-raised);
+  font-size: 12px; font-weight: 500; color: var(--k-dark-muted); white-space: nowrap;
 }
-.menu-primary:hover { background: rgba(255, 255, 255, 0.11); }
-.menu-primary .grow { flex: 1; }
+.mp-status.rec { color: var(--k-dark-ink); }
+.mp-status .mp-mono { font-size: 11.5px; }
+.mp-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--k-dark-accent); flex: none; }
+.mp-status.rec .mp-dot {
+  background: var(--k-dark-record);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--k-dark-record) 20%, transparent);
+  animation: mp-pulse 1.4s ease-in-out infinite;
+}
+@keyframes mp-pulse { 50% { opacity: 0.4; } }
 
-/* In den Kacheln hat der Titel Vorrang: wird es eng, kürzt sich das Kürzel, nie der Titel. */
-.menu-tile .menu-shortcut { font-size: 9.5px; margin-left: auto; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.menu-shortcut { flex: none; font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.4); white-space: nowrap; }
+/* Hauptaktion: große gehobene Zeile, Kürzel als Tastenkappen. */
+.mp-primary {
+  display: flex; align-items: center; gap: 11px; width: 100%; height: 52px; padding: 0 12px 0 10px;
+  border-radius: 12px; background: var(--k-dark-raised); border: 1px solid var(--k-dark-line);
+  color: var(--k-dark-ink); text-align: left; transition: background var(--k-t-fast);
+}
+.mp-primary:hover { background: var(--k-dark-hover); }
+.mp-primary-ico {
+  width: 32px; height: 32px; border-radius: 9px; flex: none; display: flex; align-items: center; justify-content: center;
+  color: var(--k-dark-accent); background: color-mix(in srgb, var(--k-dark-accent) 14%, transparent);
+}
+.mp-primary-label { flex: 1; min-width: 0; font-size: 14px; font-weight: 500; white-space: nowrap; }
 
-.menu-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; }
+/* Raster der weiteren Aktionen: Icon, Name, Kürzel leise in Mono. */
+.mp-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 6px; }
 .menu-tile {
-  display: flex; align-items: center; gap: 7px; height: 38px; padding: 0 5px 0 9px; min-width: 0;
-  border-radius: 9px; font-size: 12.5px; font-weight: 500; color: rgba(255, 255, 255, 0.92); text-align: left;
-  transition: background 0.1s ease-out;
+  display: flex; align-items: center; gap: 6px; height: 38px; padding: 0 6px 0 8px; min-width: 0;
+  border-radius: var(--k-radius-field); font-size: 12.5px; font-weight: 500; color: var(--k-dark-ink); text-align: left;
+  transition: background var(--k-t-fast);
 }
-.menu-tile:hover { background: rgba(255, 255, 255, 0.1); }
-.menu-tile .ico { width: 16px; flex: none; display: flex; justify-content: center; color: rgba(255, 255, 255, 0.75); }
+.menu-tile:hover { background: var(--k-dark-hover); }
+.menu-tile .ico { width: 16px; flex: none; display: flex; justify-content: center; color: var(--k-dark-muted); }
+.menu-tile:hover .ico { color: var(--k-dark-ink); }
 .menu-tile .label { flex: none; white-space: nowrap; }
-.menu-tile.red, .menu-tile.red .ico { color: var(--red); }
+.mp-shortcut {
+  margin-left: auto; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  font-family: var(--k-mono); font-size: 9.5px; font-weight: 400; letter-spacing: -0.03em;
+  color: var(--k-dark-muted); white-space: nowrap;
+}
+/* Während eines Videos: „Stoppen“ in Aufnahme-Rot. */
+.menu-tile.red, .menu-tile.red .ico { color: var(--k-dark-record); }
 /* Nicht verfügbar (Video ohne Media Feature Pack): gedämpft, Klick zeigt den Hinweis. */
-.menu-tile.off { opacity: 0.45; }
+.menu-tile.off { opacity: 0.42; }
 
-.menu-recent { display: flex; flex-direction: column; gap: 8px; }
-.menu-recent-head { display: flex; align-items: center; justify-content: space-between; padding: 0 4px; }
-.menu-recent-head .t { font-size: 11px; font-weight: 600; color: rgba(255, 255, 255, 0.45); }
-.menu-all { display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: rgba(255, 255, 255, 0.6); transition: color 0.1s ease-out; }
-.menu-all:hover { color: rgba(255, 255, 255, 0.95); }
-.menu-thumbs { display: flex; gap: 8px; }
-.menu-thumb {
-  position: relative; width: 70px; height: 46px; border-radius: 7px; overflow: hidden; flex: none;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+/* ZULETZT */
+.mp-recent { display: flex; flex-direction: column; gap: 9px; }
+.mp-recent-head { display: flex; align-items: center; justify-content: space-between; padding: 0 0 0 4px; }
+.mp-overline {
+  font-family: var(--k-mono); font-size: 11px; font-weight: 500; text-transform: uppercase;
+  letter-spacing: var(--k-overline-tracking); color: var(--k-dark-muted);
 }
-.menu-thumb > .th { position: absolute; inset: 0; }
-.menu-thumb::after {
-  content: ""; position: absolute; inset: 0; border-radius: 7px; pointer-events: none;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12); transition: box-shadow 0.1s ease-out;
+.mp-all {
+  display: flex; align-items: center; gap: 4px; height: 24px; padding: 0 6px; border-radius: var(--k-radius-sm);
+  font-size: 12px; font-weight: 500; color: var(--k-dark-muted); transition: color var(--k-t-fast), background var(--k-t-fast);
 }
-.menu-thumb:hover::after { box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.5); }
-.menu-thumb .kind {
-  position: absolute; left: 4px; bottom: 4px; width: 14px; height: 14px; border-radius: 50%;
-  background: rgba(0, 0, 0, 0.6); display: flex; align-items: center; justify-content: center;
+.mp-all:hover { color: var(--k-dark-ink); background: var(--k-dark-hover); }
+.mp-thumbs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.mp-thumb { position: relative; height: 50px; border-radius: 8px; overflow: hidden; }
+.mp-thumb > .th { position: absolute; inset: 0; }
+.mp-thumb::after {
+  content: ""; position: absolute; inset: 0; border-radius: 8px; pointer-events: none;
+  box-shadow: inset 0 0 0 1px var(--k-dark-line); transition: box-shadow var(--k-t-fast);
+}
+.mp-thumb:hover::after { box-shadow: inset 0 0 0 1.5px var(--k-dark-accent); }
+.mp-thumb .kind {
+  position: absolute; left: 4px; bottom: 4px; width: 16px; height: 16px; border-radius: 50%;
+  background: color-mix(in srgb, var(--k-dark) 82%, transparent); color: var(--k-dark-ink);
+  display: flex; align-items: center; justify-content: center;
 }
 
-.menu-footer { display: flex; align-items: center; gap: 4px; }
-.menu-footer .sp { flex: 1; }
-.menu-foot {
-  display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 8px; border-radius: 7px;
-  font-size: 12px; font-weight: 500; color: rgba(255, 255, 255, 0.6); transition: background 0.1s, color 0.1s;
+/* Fuß: leise Textknöpfe */
+.mp-foot { display: flex; align-items: center; gap: 2px; margin: -2px -4px -4px; }
+.mp-foot .sp { flex: 1; }
+.mp-foot-btn {
+  height: 28px; padding: 0 9px; border-radius: var(--k-radius-sm);
+  font-size: 12.5px; font-weight: 500; color: var(--k-dark-muted); transition: background var(--k-t-fast), color var(--k-t-fast);
 }
-.menu-foot:hover { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.95); }
+.mp-foot-btn:hover { background: var(--k-dark-hover); color: var(--k-dark-ink); }

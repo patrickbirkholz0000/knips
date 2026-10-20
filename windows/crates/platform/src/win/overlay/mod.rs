@@ -2,6 +2,7 @@
 //!
 //! Aufbau:
 //! - `layout.rs`: reine Geometrie (auf dem Mac getestet).
+//! - `brand.rs`: Farben, Schriften, Strichstärken (Werte aus tokens.css, docs/design.md).
 //! - `gfx.rs`: Direct2D/DirectWrite-Zeichnen, geteilt zwischen Fenster und Offscreen-Test.
 //! - `frame.rs`: gestrichelter Rahmen (`FrameWindow`).
 //! - hier: öffentliche Schnittstelle, Overlay-Thread, Fensterprozedur, Eingabe.
@@ -12,6 +13,7 @@
 //! (Beenden, Vordergrund, Capture laufen immer außerhalb). Ergebnis → `PostQuitMessage`; nach der
 //! Schleife: Fenster zerstören, Vordergrund zurück, dann `on_done` genau einmal.
 
+mod brand;
 mod frame;
 mod gfx;
 mod layout;
@@ -58,9 +60,9 @@ pub enum Selection {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FrameColor {
-    /// Rot — Bildschirmaufnahme.
+    /// Aufnahme-Rot (#E8523F) — Bildschirmaufnahme.
     Recording,
-    /// Akzentblau — Scroll-Screenshot.
+    /// Königsblau hell (#9AA6FF) — Scroll-Screenshot.
     Scroll,
 }
 
@@ -156,6 +158,19 @@ pub fn render_offscreen(
     })
 }
 
+/// Aufnahmerahmen in ein Bild rendern (Selbsttest `selection`): Fenster um einen Bereich von `area`
+/// Pixeln bei Skalierung `scale`, transparent bis auf den Rahmen — dieselbe Zeichnung wie `FrameWindow`.
+pub fn render_frame_offscreen(area: (i32, i32), scale: f64, color: FrameColor) -> Result<RgbaImage> {
+    std::thread::scope(|s| {
+        s.spawn(|| -> Result<RgbaImage> {
+            let _com = ComScope::new();
+            frame::render_offscreen(area, scale, color)
+        })
+        .join()
+        .map_err(|_| anyhow!("Rendern abgestürzt"))?
+    })
+}
+
 struct ComScope(bool);
 
 impl ComScope {
@@ -212,7 +227,7 @@ fn build_scene(
         mouse: mouse_local,
         hole,
         selection,
-        work_top_pt: (monitor.work.y - monitor.rect.y) as f64 / monitor.scale,
+        work_bottom_pt: (monitor.work.bottom() - monitor.rect.y) as f64 / monitor.scale,
     }
 }
 

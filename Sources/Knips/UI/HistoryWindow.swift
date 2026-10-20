@@ -4,11 +4,16 @@ import SwiftUI
 /// Alle Aufnahmen auf einen Blick — gleiche Gestaltung wie die Einstellungen (helle Fläche, weiße Karten).
 @MainActor final class HistoryWindowController: NSWindowController, NSWindowDelegate {
     private static var instance: HistoryWindowController?
+    /// Bei DockPresence angemeldet (zwischen Öffnen und Schließen) — erneutes Öffnen zählt nicht doppelt.
+    private var inDock = false
 
     static func show() {
         Telemetry.count(.historyOpen)
         if instance == nil { instance = HistoryWindowController() }
-        DockPresence.windowOpened()
+        if let instance, !instance.inDock {
+            instance.inDock = true
+            DockPresence.windowOpened()
+        }
         instance?.showWindow(nil)
         instance?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -34,7 +39,12 @@ import SwiftUI
 
     @available(*, unavailable) required init?(coder: NSCoder) { nil }
 
-    func windowWillClose(_ notification: Notification) { DockPresence.windowClosed() }
+    func windowWillClose(_ notification: Notification) {
+        if inDock {
+            inDock = false
+            DockPresence.windowClosed()
+        }
+    }
 }
 
 enum HistoryFilter: String, CaseIterable, Identifiable {

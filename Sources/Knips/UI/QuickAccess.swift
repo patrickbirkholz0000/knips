@@ -46,6 +46,30 @@ import UniformTypeIdentifiers
                 self.model.cards.forEach { self.scheduleAutoClose($0.id) }
             }
             .store(in: &cancellables)
+        // Bildschirm abgesteckt oder umgestellt: Karten auf einen vorhandenen Bildschirm umziehen.
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            onMainActor { self?.screensChanged() }
+        }
+    }
+
+    /// Der Bildschirm der Karten, solange es ihn noch gibt — sonst der Hauptbildschirm.
+    private var currentScreen: NSScreen {
+        if let screen, let live = NSScreen.screens.first(where: { $0.displayID == screen.displayID }) { return live }
+        return NSScreen.screens.first ?? NSScreen.withMouse
+    }
+
+    func screensChanged() {
+        let screen = currentScreen
+        self.screen = screen
+        let grid = Self.grid(in: screen.visibleFrame)
+        model.rows = grid.rows
+        // Kleinerer Bildschirm: was nicht mehr passt, fällt weg (älteste zuerst).
+        while model.cards.count > grid.rows * grid.columns {
+            let old = model.cards.removeFirst()
+            timers[old.id]?.cancel()
+            timers[old.id] = nil
+        }
+        layout(animated: false)
     }
 
     var actions: QuickAccessActions {
@@ -222,7 +246,7 @@ import UniformTypeIdentifiers
         guard let panel else { return }
         let n = model.cards.count
         if n == 0 { panel.orderOut(nil); return }
-        let screen = screen ?? NSScreen.withMouse
+        let screen = currentScreen
         let size = Self.panelSize(cards: n, rows: model.rows)
         let vf = screen.visibleFrame
         let frame = NSRect(x: vf.minX + Self.margin, y: vf.minY + Self.margin, width: size.width, height: size.height)

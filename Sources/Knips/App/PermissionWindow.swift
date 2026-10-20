@@ -8,7 +8,8 @@ import SwiftUI
 
     static func show() {
         if instance == nil { instance = PermissionWindowController() }
-        DockPresence.windowOpened()
+        // Schon offen: nicht noch einmal zählen, sonst bliebe das Dock-Symbol nach dem Schließen stehen.
+        if instance?.window?.isVisible != true { DockPresence.windowOpened() }
         instance?.showWindow(nil)
         instance?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)

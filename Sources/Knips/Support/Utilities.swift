@@ -302,7 +302,7 @@ extension NSScreen {
 
     static var withMouse: NSScreen {
         let p = NSEvent.mouseLocation
-        return screens.first { NSMouseInRect(p, $0.frame, false) } ?? main ?? screens[0]
+        return screens.first { NSMouseInRect(p, $0.frame, false) } ?? main ?? screens.first ?? NSScreen()
     }
 
     /// Höhe des Hauptbildschirms — Bezug für die Umrechnung Quartz (oben links) ↔ Cocoa (unten links).

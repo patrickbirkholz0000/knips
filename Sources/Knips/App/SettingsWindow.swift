@@ -7,6 +7,8 @@ import SwiftUI
 @MainActor final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private static var instance: SettingsWindowController?
     static let size = NSSize(width: 900, height: 640)
+    /// Bei DockPresence angemeldet (zwischen Öffnen und Schließen) — erneutes Öffnen zählt nicht doppelt.
+    private var inDock = false
 
     /// Fenster unsichtbar anlegen, damit das erste Öffnen nicht hängt.
     static func prewarm() {
@@ -20,7 +22,10 @@ import SwiftUI
         Telemetry.count(.settingsOpen)
         if instance == nil { instance = SettingsWindowController() }
         if let pane { SettingsNavigation.shared.pane = pane }
-        DockPresence.windowOpened()
+        if let instance, !instance.inDock {
+            instance.inDock = true
+            DockPresence.windowOpened()
+        }
         instance?.showWindow(nil)
         instance?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -50,7 +55,10 @@ import SwiftUI
 
     func windowWillClose(_ notification: Notification) {
         HotkeyRecorderState.shared.cancel()
-        DockPresence.windowClosed()
+        if inDock {
+            inDock = false
+            DockPresence.windowClosed()
+        }
     }
 }
 

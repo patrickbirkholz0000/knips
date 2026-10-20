@@ -84,7 +84,8 @@ import SwiftUI
 
     // MARK: Aktionen
 
-    /// Speichert im Hintergrund — das Fenster reagiert (und schließt) sofort.
+    /// Speichert im Hintergrund — das Fenster reagiert (und schließt) sofort. Liegt die Aufnahme noch in der
+    /// Zwischenablage, kommt dort die neue (zensierte) Fassung hinein.
     @discardableResult
     private func persist(_ output: ImagePromise? = nil) -> ImagePromise {
         let promise = output ?? model.renderPromise()
@@ -92,6 +93,7 @@ import SwiftUI
             item = CaptureStore.shared.saveImage(output: promise, document: model.document, for: item,
                                                  size: model.outputSize, outputScale: Double(model.scale * model.outputFactor))
             model.dirty = false
+            Clipboard.replace(item: item.id, with: promise, fileURL: item.fileURL)
             Telemetry.count(promise.format == .png ? .exportPNG : .exportJPEG)
         }
         return promise
@@ -111,7 +113,7 @@ import SwiftUI
     func copyImage() {
         canvas.commitPendingEdits()
         let output = persist()
-        Clipboard.copy(output, fileURL: item.fileURL)
+        Clipboard.copy(output, fileURL: item.fileURL, item: item.id)
         Telemetry.count(.copyImage)
         model.showToast("In die Zwischenablage kopiert")
     }
@@ -120,8 +122,7 @@ import SwiftUI
         canvas.commitPendingEdits()
         Telemetry.count(.copyText)
         Task {
-            await model.waitForText()
-            let text = model.visibleText()
+            let text = await model.renderedText()
             if text.isEmpty {
                 model.showToast("Kein Text gefunden")
             } else {
@@ -378,7 +379,7 @@ struct EditorToolbar: View {
                 iconButton("arrow.uturn.forward", help: "Wiederholen (⇧⌘Z)", enabled: model.canRedo) { model.redo() }
             }
             FrameButton(model: model)
-            iconButton("text.viewfinder", help: "Text kopieren — zensierte Wörter werden zu █", enabled: true, action: actions.copyText)
+            iconButton("text.viewfinder", help: "Text kopieren — ohne Zensiertes und Weggeschnittenes", enabled: true, action: actions.copyText)
             iconButton("pin", help: "Anpinnen (schwebt über allen Fenstern)", enabled: true, action: actions.pin)
             Button { actions.copy() } label: { Label("Kopieren", systemImage: "doc.on.doc") }
                 .buttonStyle(ToolbarButtonStyle(prominent: false))

@@ -1,11 +1,27 @@
 // Knips-Telemetrie (Cloudflare Worker): nimmt anonyme Nutzungszähler an und zeigt sie auf /stats.
 // Gespeichert werden nie IP-Adresse, User-Agent oder die install_id selbst — nur ihr gesalzener Hash.
+// Liefert außerdem das Windows-Installationsskript aus (GET /install.ps1).
+
+// Beim Bündeln als Text eingelesen (wrangler.toml, [[rules]]): die Datei aus dem Repo, keine Kopie.
+import INSTALL_PS1 from "../../windows/install.ps1";
 
 const REPO = "https://github.com/patrickbirkholz0000/knips";
 const MAX_BODY = 4096;
 const MAX_COUNT = 10000;
 const MAX_PINGS_PER_DAY = 48;
+const MAX_NEW_INSTALLS_PER_DAY = 5000;
 const RETENTION_DAYS = 400;
+// Ohne BOM: `irm … | iex` bekäme sonst ein unsichtbares Zeichen vor dem Skript.
+const INSTALL_SCRIPT = INSTALL_PS1.replace(/^\uFEFF/, "");
+
+// Auf jeder Antwort (nur dieser Worker, nicht zonenweit).
+const SECURITY_HEADERS = {
+  "Strict-Transport-Security": "max-age=31536000",
+  "X-Frame-Options": "DENY",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+};
+const DEFAULT_CSP = "default-src 'none'; frame-ancestors 'none'";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Erlaubte Ereignisse mit Beschriftung für /stats. Alles andere wird verworfen.
@@ -38,18 +54,7 @@ const EVENTS = {
 
 export default {
   async fetch(request, env) {
-    const { pathname, searchParams } = new URL(request.url);
-    try {
-      if (pathname === "/v1/ping") {
-        return request.method === "POST" ? await ping(request, env) : plain("Nur POST", 405, { Allow: "POST" });
-      }
-      if (pathname === "/v1/health") return plain("ok");
-      if (pathname === "/stats") return await stats(request, env, searchParams);
-      if (pathname === "/") return Response.redirect(REPO, 302);
-      return plain("Nicht gefunden", 404);
-    } catch {
-      return plain("Vorübergehender Fehler", 503);
-    }
+    return secure(await route(request, env));
   },
 
   // Täglich: alles älter als 400 Tage löschen.
@@ -59,12 +64,75 @@ export default {
       env.DB.prepare("DELETE FROM daily_events WHERE day < ?").bind(cutoff),
       env.DB.prepare("DELETE FROM daily WHERE day < ?").bind(cutoff),
     ]);
+    // Getrennt: Fehlt die Tabelle (schema.sql noch nicht eingespielt), soll das Löschen oben trotzdem laufen.
+    try {
+      await env.DB.prepare("DELETE FROM daily_new WHERE day < ?").bind(cutoff).run();
+    } catch {
+      // nichts — die Tabelle enthält nur Tageszahlen
+    }
   },
 };
+
+async function route(request, env) {
+  const { pathname, searchParams } = new URL(request.url);
+  try {
+    if (pathname === "/v1/ping") {
+      return request.method === "POST" ? await ping(request, env) : plain("Nur POST", 405, { Allow: "POST" });
+    }
+    if (pathname === "/v1/health") return plain("ok");
+    if (pathname === "/install.ps1") {
+      return request.method === "GET" || request.method === "HEAD"
+        ? installScript(request)
+        : plain("Nur GET", 405, { Allow: "GET, HEAD" });
+    }
+    if (pathname === "/stats") return await stats(request, env, searchParams);
+    if (pathname === "/") return new Response(null, { status: 302, headers: { Location: REPO } });
+    return plain("Nicht gefunden", 404);
+  } catch {
+    return plain("Vorübergehender Fehler", 503);
+  }
+}
+
+function secure(response) {
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
+  const csp = headers.get("Content-Security-Policy");
+  if (!csp) headers.set("Content-Security-Policy", DEFAULT_CSP);
+  else if (!/frame-ancestors/.test(csp)) headers.set("Content-Security-Policy", `${csp}; frame-ancestors 'none'`);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+// Ratenbegrenzung je IP-Adresse über das Rate-Limiting-Binding. Die Adresse dient nur als Schlüssel im
+// flüchtigen Zähler von Cloudflare und wird weder gespeichert noch geloggt. Ohne Binding oder Adresse
+// (lokale Tests) wird nicht begrenzt, bei einem Fehler des Bindings ebenfalls nicht.
+async function withinLimit(limiter, request) {
+  const ip = request.headers.get("cf-connecting-ip");
+  if (!limiter || !ip) return true;
+  try {
+    const { success } = await limiter.limit({ key: ip });
+    return success;
+  } catch {
+    return true;
+  }
+}
+
+// ---------- Installationsskript ----------
+
+function installScript(request) {
+  return new Response(request.method === "HEAD" ? null : INSTALL_SCRIPT, {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "public, max-age=300",
+      "Content-Disposition": 'inline; filename="install.ps1"',
+    },
+  });
+}
 
 // ---------- Annahme ----------
 
 async function ping(request, env) {
+  // 429 statt 204: Die Apps behalten ihre Zähler dann und senden später noch einmal.
+  if (!(await withinLimit(env.PING_LIMITER, request))) return plain("Zu viele Anfragen", 429, { "Retry-After": "60" });
   const raw = await readLimited(request, MAX_BODY);
   if (raw === null) return plain("Zu groß", 413);
   let body;
@@ -82,6 +150,10 @@ async function ping(request, env) {
   const hash = await installHash(p.installId, env.SALT);
   const cc = request.cf?.country;
   const country = typeof cc === "string" && /^[A-Z0-9]{2}$/.test(cc) ? cc : null;
+
+  // Höchstens 5000 neue Installationen pro UTC-Tag (Schutz gegen massenhaft erfundene IDs); darüber still
+  // verwerfen. Zählt nur, wer noch nie gesendet hat.
+  if (!(await acceptNewInstall(env, day, hash))) return new Response(null, { status: 204 });
 
   // Zeile des Tages anlegen bzw. auffrischen (fehlende Angaben überschreiben bekannte nicht);
   // ab 48 Pings pro Tag passiert nichts mehr.
@@ -109,6 +181,24 @@ async function ping(request, env) {
       ).bind(day, hash, name, count)));
   }
   return new Response(null, { status: 204 });
+}
+
+async function acceptNewInstall(env, day, hash) {
+  try {
+    const known = await env.DB.prepare("SELECT 1 FROM daily WHERE install_hash = ?1 LIMIT 1").bind(hash).first();
+    if (known) return true;
+    // Hochzählen nur unter der Grenze; ohne Rückgabezeile ist sie erreicht.
+    const counted = await env.DB.prepare(
+      `INSERT INTO daily_new (day, installs) VALUES (?1, 1)
+       ON CONFLICT (day) DO UPDATE SET installs = daily_new.installs + 1
+       WHERE daily_new.installs < ?2
+       RETURNING installs`,
+    ).bind(day, MAX_NEW_INSTALLS_PER_DAY).first();
+    return counted !== null;
+  } catch {
+    // Fehlt z. B. die Tabelle daily_new (schema.sql nicht eingespielt), lieber annehmen als alles verlieren.
+    return true;
+  }
 }
 
 function parsePing(b) {
@@ -198,6 +288,11 @@ async function authorized(request, env) {
 }
 
 async function stats(request, env, params) {
+  // Anmeldeversuche je IP begrenzen. Das Binding kann den Stand nur zählend abfragen, deshalb zählt jede Anfrage
+  // mit Zugangsdaten (auch erfolgreiche) — sonst ließe sich nach Erreichen der Grenze weiter raten.
+  if (request.headers.has("authorization") && !(await withinLimit(env.STATS_LIMITER, request))) {
+    return plain("Zu viele Anmeldeversuche, bitte in einer Minute noch einmal.", 429, { "Retry-After": "60" });
+  }
   if (!(await authorized(request, env))) {
     return plain("Anmeldung nötig", 401, { "WWW-Authenticate": 'Basic realm="Knips-Statistik", charset="UTF-8"' });
   }
@@ -262,7 +357,7 @@ async function stats(request, env, params) {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
-      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
       "Referrer-Policy": "no-referrer",
       "X-Robots-Tag": "noindex",
     },

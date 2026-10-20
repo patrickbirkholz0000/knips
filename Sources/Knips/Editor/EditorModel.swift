@@ -86,7 +86,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
             } else if oldValue == .crop {
                 cropDraft = nil
             }
-            if tool != .crop { UserDefaults.standard.set(tool.rawValue, forKey: "editorTool") }
+            if tool != .crop { UserDefaults.knips.set(tool.rawValue, forKey: "editorTool") }
         }
     }
     @Published var color: RGBA
@@ -104,7 +104,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
     var zoomCenter: CGPoint = .zero
     /// Anzeige für die Zoom-Leiste: 100 % = so groß wie auf dem Bildschirm.
     @Published var zoomPercent = 100
-    /// Erkannte Textzeilen (im Hintergrund beim Öffnen) — für schlaue Balken und „Text kopieren“.
+    /// Erkannte Textzeilen des Originals (im Hintergrund beim Öffnen) — für die schlauen Balken.
     private(set) var textLines: [TextLine] = []
     private(set) var textReady = false
     private var textWaiters: [CheckedContinuation<Void, Never>] = []
@@ -124,7 +124,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
         self.annotations = document.annotations
         self.crop = document.crop
         self.frame = document.frame
-        let d = UserDefaults.standard
+        let d = UserDefaults.knips
         self.tool = initialTool ?? EditorTool(rawValue: d.string(forKey: "editorTool") ?? "") ?? .redact
         if let data = d.data(forKey: "editorColor"), let c = try? JSONDecoder().decode(RGBA.self, from: data) {
             self.color = c
@@ -179,9 +179,12 @@ enum EditorTool: String, CaseIterable, Identifiable {
         return line.rect.insetBy(dx: -pad, dy: -pad * 0.7).intersection(fullRect)
     }
 
-    /// Erkannter Text ohne zensierte Stellen.
-    func visibleText() -> String {
-        TextLayout.plainText(textLines, excluding: annotations.filter { $0.kind == .redact }.map(\.rect))
+    /// „Text kopieren“: Texterkennung auf dem fertigen Bild mit Zuschnitt und Zensur, wie auf der Karte. Was
+    /// verdeckt oder weggeschnitten ist, kann so nie mitkommen — auch kein knapp angeschnittenes Wort.
+    func renderedText() async -> String {
+        let promise = fullResolutionPromise()
+        guard let image = await promise.imageValue() else { return "" }
+        return await Task.detached(priority: .userInitiated) { TextLayout.plainText(TextLayout.lines(in: image)) }.value
     }
 
     var fullRect: CGRect { CGRect(x: 0, y: 0, width: base.width, height: base.height) }
@@ -191,12 +194,12 @@ enum EditorTool: String, CaseIterable, Identifiable {
         guard style != frame else { return }
         checkpoint()
         frame = style
-        if let style { UserDefaults.standard.set(try? JSONEncoder().encode(style), forKey: "lastFrameStyle") }
+        if let style { UserDefaults.knips.set(try? JSONEncoder().encode(style), forKey: "lastFrameStyle") }
     }
 
     /// Zuletzt benutzter Rahmen als Vorschlag.
     static var lastFrameStyle: FrameStyle {
-        (UserDefaults.standard.data(forKey: "lastFrameStyle")).flatMap { try? JSONDecoder().decode(FrameStyle.self, from: $0) } ?? FrameStyle()
+        (UserDefaults.knips.data(forKey: "lastFrameStyle")).flatMap { try? JSONDecoder().decode(FrameStyle.self, from: $0) } ?? FrameStyle()
     }
     var selected: Annotation? { annotations.first { $0.id == selectedID } }
 
@@ -282,7 +285,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
 
     func setColor(_ c: RGBA) {
         color = c
-        if let data = try? JSONEncoder().encode(c) { UserDefaults.standard.set(data, forKey: "editorColor") }
+        if let data = try? JSONEncoder().encode(c) { UserDefaults.knips.set(data, forKey: "editorColor") }
         guard let sel = selected, sel.kind != .redact else { return }
         checkpoint()
         update(sel.id) { $0.color = c }
@@ -290,7 +293,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
 
     func setSize(_ s: StrokeSize) {
         size = s
-        UserDefaults.standard.set(s.rawValue, forKey: "editorSize")
+        UserDefaults.knips.set(s.rawValue, forKey: "editorSize")
         guard let sel = selected, sel.kind != .redact, sel.kind != .highlight else { return }
         checkpoint()
         update(sel.id) { $0.size = s }

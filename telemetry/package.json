@@ -1,0 +1,14 @@
+{
+  "name": "knips-telemetry",
+  "private": true,
+  "description": "Knips-Telemetrie und Installationsskript: Cloudflare Worker unter https://knips.velno.ai",
+  "license": "GPL-3.0-or-later",
+  "scripts": {
+    "dev": "wrangler dev --local",
+    "check": "wrangler deploy --dry-run --outdir .wrangler/dry-run",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.147.0"
+  }
+}

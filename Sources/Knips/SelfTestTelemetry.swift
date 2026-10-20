@@ -125,10 +125,12 @@ extension SelfTest {
         check(!resolve([:], args: ["Knips", "--selftest", "render", "/tmp/x"], dev: false).enabled, "Selbsttest: gesperrt")
         check(!resolve(["CI": "true"], dev: false).enabled && !resolve(["GITHUB_ACTIONS": "true"], dev: false).enabled
               && resolve(["CI": "false"], dev: false).enabled, "CI: gesperrt")
-        check(resolve(["KNIPS_TELEMETRY_URL": "http://127.0.0.1:9"], dev: false).endpoint.absoluteString == "http://127.0.0.1:9/v1/ping"
-              && resolve(["KNIPS_TELEMETRY_URL": "http://127.0.0.1:9/x/ping"], dev: false).endpoint.absoluteString == "http://127.0.0.1:9/x/ping"
-              && resolve(["KNIPS_TELEMETRY_URL": "kaputt"], dev: false).endpoint == TelemetryConfig.defaultEndpoint,
-              "KNIPS_TELEMETRY_URL ersetzt den Endpunkt")
+        check(resolve(["KNIPS_TELEMETRY_URL": "http://127.0.0.1:9"], dev: true).endpoint.absoluteString == "http://127.0.0.1:9/v1/ping"
+              && resolve(["KNIPS_TELEMETRY_URL": "http://127.0.0.1:9/x/ping"], dev: true).endpoint.absoluteString == "http://127.0.0.1:9/x/ping"
+              && resolve(["KNIPS_TELEMETRY_URL": "kaputt"], dev: true).endpoint == TelemetryConfig.defaultEndpoint,
+              "Entwickler-Build: KNIPS_TELEMETRY_URL ersetzt den Endpunkt")
+        check(resolve(["KNIPS_TELEMETRY_URL": "http://127.0.0.1:9"], dev: false).endpoint == TelemetryConfig.defaultEndpoint,
+              "Weitergabe-Build: KNIPS_TELEMETRY_URL wirkt nicht")
         check(!TelemetryConfig.current.enabled, "dieser Prozess (--selftest): gesperrt — \(TelemetryConfig.current.blockedReason ?? "-")")
         check(!Telemetry.shared.isCounting && !Telemetry.shared.shouldAsk && Telemetry.shared.defaults != .standard,
               "Telemetry.shared in der Sandbox: zählt nicht, fragt nicht, eigene Domäne")
@@ -250,7 +252,7 @@ extension SelfTest {
         if live {
             let liveEnv = ProcessInfo.processInfo.environment
             guard liveEnv["KNIPS_TELEMETRY"] == "1" else { throw CheckFailed(message: "Live-Versand nur mit KNIPS_TELEMETRY=1") }
-            let liveConfig = TelemetryConfig(endpoint: resolve(liveEnv.filter { $0.key == "KNIPS_TELEMETRY_URL" }, dev: false).endpoint,
+            let liveConfig = TelemetryConfig(endpoint: resolve(liveEnv.filter { $0.key == "KNIPS_TELEMETRY_URL" }, dev: true).endpoint,
                                              channel: "dev", blockedReason: nil)
             let liveT = Telemetry(defaults: defaults, config: liveConfig)
             liveT.setConsent(true)

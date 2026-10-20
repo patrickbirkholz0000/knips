@@ -307,8 +307,10 @@ struct FrameSignature {
     init(_ image: CGImage) {
         let w = 32, h = 18
         var buffer = [UInt8](repeating: 0, count: w * h)
-        if let ctx = CGContext(data: &buffer, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
-                               space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) {
+        // Der Zeiger gilt nur innerhalb des Blocks — der Kontext darf ihn nicht überleben.
+        buffer.withUnsafeMutableBytes { raw in
+            guard let ctx = CGContext(data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                                      space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return }
             ctx.interpolationQuality = .medium
             ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
         }
@@ -331,8 +333,9 @@ struct ExactSignature {
     init(_ image: CGImage) {
         let w = 160, h = 90
         var buffer = [UInt8](repeating: 0, count: w * h)
-        if let ctx = CGContext(data: &buffer, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
-                               space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) {
+        buffer.withUnsafeMutableBytes { raw in
+            guard let ctx = CGContext(data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                                      space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return }
             ctx.interpolationQuality = .low
             ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
         }

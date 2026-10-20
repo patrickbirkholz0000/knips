@@ -1,6 +1,33 @@
 import AVFoundation
 import ScreenCaptureKit
 
+/// Was `RecordingController` von einer Aufnahme braucht. Selbsttests setzen eine Attrappe ein,
+/// die nie den Bildschirm aufnimmt.
+protocol RecordingSession: AnyObject, Sendable {
+    var url: URL { get }
+    func start() async throws
+    /// Beendet die Aufnahme und liefert die Dauer in Sekunden.
+    func stop() async throws -> Double
+    /// Bricht ab und löscht die Datei.
+    func cancel() async
+}
+
+/// Bildschirmaufnahme mit festen Einstellungen.
+final class ScreenRecordingSession: RecordingSession, @unchecked Sendable {
+    let recorder: ScreenRecorder
+    let options: ScreenRecorder.Options
+    var url: URL { recorder.url }
+
+    init(recorder: ScreenRecorder, options: ScreenRecorder.Options) {
+        self.recorder = recorder
+        self.options = options
+    }
+
+    func start() async throws { try await recorder.start(options) }
+    func stop() async throws -> Double { try await recorder.stop() }
+    func cancel() async { await recorder.cancel() }
+}
+
 /// SCStream → AVAssetWriter (H.264-MP4). Läuft komplett auf einer eigenen Queue.
 final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     enum RecorderError: LocalizedError {
@@ -28,6 +55,8 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
 
     let url: URL
     var onStreamError: ((Error) -> Void)?
+    /// Der Writer nimmt nichts mehr an (z. B. Platte voll) — einmal gemeldet, aus der Aufnahme-Queue.
+    var onWriterError: ((Error) -> Void)?
 
     private let queue = DispatchQueue(label: "de.birkgroup.knips.recorder", qos: .userInitiated)
     private var stream: SCStream?
@@ -35,6 +64,7 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     private var videoInput: AVAssetWriterInput?
     private var audioInput: AVAssetWriterInput?
     private var started = false
+    private var failed = false
     private var firstPTS = CMTime.invalid
     private var lastPTS = CMTime.invalid
     private var fps = 30
@@ -161,7 +191,9 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     // MARK: SCStreamOutput
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard sampleBuffer.isValid, let writer, writer.status == .writing else { return }
+        guard sampleBuffer.isValid, let writer, !failed else { return }
+        if writer.status == .failed { return writerFailed(writer) }
+        guard writer.status == .writing else { return }
         if type == .screen {
             guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
                   let raw = attachments.first?[.status] as? Int,
@@ -173,8 +205,8 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
                 started = true
                 firstPTS = pts
             }
-            if videoInput.isReadyForMoreMediaData, videoInput.append(sampleBuffer) {
-                lastPTS = pts
+            if videoInput.isReadyForMoreMediaData {
+                if videoInput.append(sampleBuffer) { lastPTS = pts } else if writer.status == .failed { writerFailed(writer) }
             }
             return
         }
@@ -187,5 +219,12 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         onStreamError?(error)
+    }
+
+    /// Bisher liefen Bilder nach einem Writer-Fehler still ins Leere, bis jemand „Stopp“ drückte.
+    private func writerFailed(_ writer: AVAssetWriter) {
+        guard !failed else { return }
+        failed = true
+        onWriterError?(writer.error ?? RecorderError.writer("Schreiben fehlgeschlagen"))
     }
 }

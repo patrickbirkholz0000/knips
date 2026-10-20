@@ -8,7 +8,8 @@ import SwiftUI
 
     static func show() {
         if instance == nil { instance = PermissionWindowController() }
-        DockPresence.windowOpened()
+        // Schon offen: nicht noch einmal zählen, sonst bliebe das Dock-Symbol nach dem Schließen stehen.
+        if instance?.window?.isVisible != true { DockPresence.windowOpened() }
         instance?.showWindow(nil)
         instance?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -76,10 +77,11 @@ private struct PermissionView: View {
     }
 
     private func relaunch() {
-        let path = Bundle.main.bundlePath
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/sh")
-        task.arguments = ["-c", "sleep 0.6; open \"\(path)\""]
+        // Pfad als eigenes Argument ($1), nie in den Befehl eingesetzt — ein Ordner- oder App-Name mit $(…) oder
+        // Anführungszeichen würde sonst als Shell-Befehl ausgeführt.
+        task.arguments = ["-c", "sleep 0.6; open \"$1\"", "sh", Bundle.main.bundlePath]
         try? task.run()
         NSApp.terminate(nil)
     }

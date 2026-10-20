@@ -53,9 +53,12 @@ enum ScreenCapture {
         SCContentFilter(display: display, excludingApplications: ownApp(in: content).map { [$0] } ?? [], exceptingWindows: [])
     }
 
+    /// Standbild je Bildschirm. Ein Bildschirm, der sich nicht aufnehmen lässt (gerade abgesteckt, im
+    /// Ruhezustand), fällt weg statt alle anderen mitzureißen; nur wenn keiner gelingt, gibt es einen Fehler.
     static func freeze(_ screens: [NSScreen], content: SCShareableContent) async throws -> [FrozenScreen] {
         var result: [FrozenScreen] = []
-        try await withThrowingTaskGroup(of: FrozenScreen?.self) { group in
+        var firstError: Error?
+        await withTaskGroup(of: Result<FrozenScreen, Error>.self) { group in
             for screen in screens {
                 guard let display = content.displays.first(where: { $0.displayID == screen.displayID }) else { continue }
                 let filter = filter(for: display, in: content)
@@ -66,13 +69,27 @@ enum ScreenCapture {
                     config.height = Int((CGFloat(display.height) * scale).rounded())
                     config.showsCursor = false
                     config.captureResolution = .best
-                    let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-                    return FrozenScreen(screen: screen, display: display, image: image)
+                    do {
+                        let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+                        return .success(FrozenScreen(screen: screen, display: display, image: image))
+                    } catch {
+                        return .failure(error)
+                    }
                 }
             }
-            for try await frozen in group { if let frozen { result.append(frozen) } }
+            for await outcome in group {
+                switch outcome {
+                case .success(let frozen): result.append(frozen)
+                case .failure(let error):
+                    Log.error("Bildschirm nicht aufgenommen: \(error.localizedDescription)")
+                    firstError = firstError ?? error
+                }
+            }
         }
-        guard !result.isEmpty else { throw CaptureError.noDisplay }
+        guard !result.isEmpty else {
+            if !hasPermission { throw CaptureError.noPermission }
+            throw firstError ?? CaptureError.noDisplay
+        }
         return screens.compactMap { s in result.first { $0.screen == s } }
     }
 

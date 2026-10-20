@@ -1,0 +1,41 @@
+# Wöchentliche Updates für Actions (an Commit-SHAs festgelegt, Dependabot pflegt SHA und Versionskommentar),
+# die Windows-App (Cargo, pnpm) und den Worker (wrangler). Neue Versionen erst nach einer Woche Wartezeit;
+# kleine Updates je Bereich in einem Pull Request.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: cargo
+    directory: /windows
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      cargo-minor:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /windows
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      npm-minor:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /telemetry
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

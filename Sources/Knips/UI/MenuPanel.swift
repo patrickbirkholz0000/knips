@@ -24,7 +24,7 @@ import SwiftUI
         host?.layoutSubtreeIfNeeded()
         let size = host?.fittingSize ?? NSSize(width: 320, height: 400)
         let anchor = button.window.map { $0.convertToScreen(button.convert(button.bounds, to: nil)) } ?? .zero
-        let screen = button.window?.screen ?? NSScreen.main ?? NSScreen.screens[0]
+        let screen = button.window?.screen ?? NSScreen.withMouse
         let vf = screen.visibleFrame
         var origin = NSPoint(x: anchor.minX - 10, y: anchor.minY - 6 - size.height)
         origin.x = max(vf.minX + 8, min(origin.x, vf.maxX - size.width - 8))

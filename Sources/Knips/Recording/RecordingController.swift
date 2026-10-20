@@ -5,7 +5,8 @@ import SwiftUI
 @MainActor final class RecordingController: ObservableObject {
     static let shared = RecordingController()
 
-    enum Phase: Equatable { case idle, countdown(Int), recording, finishing }
+    /// `starting`: Bereich gewählt, Recorder startet (vor und nach dem Countdown) — gilt schon als belegt.
+    enum Phase: Equatable { case idle, starting, countdown(Int), recording, finishing }
 
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var elapsed: TimeInterval = 0
@@ -13,20 +14,25 @@ import SwiftUI
     var isRecording: Bool { phase == .recording }
     var isBusy: Bool { phase != .idle }
 
-    private var recorder: ScreenRecorder?
+    /// Meldung an den Nutzer (Titel, Fehler, Text). Selbsttests sammeln sie, statt einen Dialog zu zeigen.
+    var onError: (String, Error?, String?) -> Void = { title, error, info in Alerts.error(title, error, info: info) }
+
+    private var recorder: RecordingSession?
     private var startDate: Date?
     private var ticker: Timer?
     private var countdownTask: Task<Void, Never>?
+    /// Stoppen und Speichern — Beenden der App wartet darauf.
+    private var finishTask: Task<Void, Never>?
     private var frameWindow: NSWindow?
     private var controlPanel: NSPanel?
     private var countdownPanel: NSPanel?
     private var screen: NSScreen?
     private var scale: CGFloat = 2
+    private var showsWindows = true
 
     /// localRect: Punkte relativ zum Bildschirm, Ursprung unten links.
     func begin(screen: NSScreen, display: SCDisplay, localRect: CGRect, content: SCShareableContent) {
         guard phase == .idle, localRect.width >= 16, localRect.height >= 16 else { return }
-        self.screen = screen
         let settings = AppSettings.shared
         let global = localRect.offsetBy(dx: screen.frame.minX, dy: screen.frame.minY)
         let isFull = localRect.size == screen.frame.size
@@ -41,27 +47,40 @@ import SwiftUI
 
         let url = Paths.temp.appendingPathComponent("aufnahme-\(UUID().uuidString).mp4")
         let recorder = ScreenRecorder(url: url)
-        recorder.onStreamError = { [weak self] error in
-            DispatchQueue.main.async {
-                onMainActor {
-                    Log.error("Aufnahme-Stream beendet: \(error.localizedDescription)")
-                    if self?.phase == .recording { self?.stop(save: true) }
-                }
-            }
-        }
-        self.recorder = recorder
         let options = ScreenRecorder.Options(display: display, sourceRect: sourceRect, pixelSize: pixelSize,
                                              excludedApps: ScreenCapture.ownApp(in: content).map { [$0] } ?? [],
                                              fps: settings.recordingFPS, showsCursor: settings.recordingShowCursor,
                                              microphone: settings.recordingMicrophone, hevc: settings.recordingHEVC,
                                              showsClicks: settings.recordingShowClicks)
-        if !isFull { showFrame(around: global) }
+        let session = ScreenRecordingSession(recorder: recorder, options: options)
+        recorder.onStreamError = { [weak self, weak session] error in
+            DispatchQueue.main.async {
+                onMainActor { self?.streamFailed(error, from: session) }
+            }
+        }
+        recorder.onWriterError = { [weak self, weak session] error in
+            DispatchQueue.main.async {
+                onMainActor { self?.writerFailed(error, from: session) }
+            }
+        }
+        run(session, screen: screen, global: global, isFull: isFull, countdown: settings.recordingCountdown)
+    }
+
+    /// Countdown → Start → Aufnahme. `showsWindows: false` nur im Selbsttest (Attrappe ohne Bildschirm).
+    func run(_ session: RecordingSession, screen: NSScreen?, global: CGRect, isFull: Bool, countdown: Bool, showsWindows: Bool = true) {
+        guard phase == .idle else { return }
+        self.screen = screen
+        self.showsWindows = showsWindows
+        recorder = session
+        // Ab hier belegt: Ein zweites ⌘⇧5 während des Starts legt keinen zweiten Recorder an.
+        phase = .starting
+        if showsWindows, !isFull { showFrame(around: global) }
         StatusBarController.shared?.refreshRecordingState()
 
         countdownTask = Task { [weak self] in
             guard let self else { return }
-            if settings.recordingCountdown {
-                self.showCountdown(in: global)
+            if countdown {
+                if showsWindows { self.showCountdown(in: global) }
                 for n in stride(from: 3, through: 1, by: -1) {
                     self.phase = .countdown(n)
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
@@ -69,26 +88,37 @@ import SwiftUI
                 }
                 self.countdownPanel?.orderOut(nil)
                 self.countdownPanel = nil
+                self.phase = .starting
             }
             if Task.isCancelled { return }
             do {
-                try await recorder.start(options)
-                self.phase = .recording
-                Telemetry.count(.recordingStart)
-                self.startDate = Date()
-                self.elapsed = 0
-                self.ticker = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
-                    onMainActor {
-                        guard let start = RecordingController.shared.startDate else { return }
-                        RecordingController.shared.elapsed = Date().timeIntervalSince(start)
-                    }
-                }
-                self.showControls(for: global, fullScreen: isFull)
-                StatusBarController.shared?.refreshRecordingState()
+                try await session.start()
             } catch {
+                // Halb gestarteten Stream und angelegte Datei aufräumen.
+                await session.cancel()
+                guard !Task.isCancelled, self.recorder === session else { return }
                 self.teardown()
-                Alerts.error("Aufnahme konnte nicht starten", error)
+                self.onError("Aufnahme konnte nicht starten", error, nil)
+                return
             }
+            // Während des Starts abgebrochen (Esc, zweites ⌘⇧5, Beenden): Stream gleich wieder schließen,
+            // sonst liefe eine Aufnahme ohne Rahmen und ohne Stopp-Knopf weiter.
+            guard !Task.isCancelled, self.recorder === session else {
+                await session.cancel()
+                return
+            }
+            self.phase = .recording
+            Telemetry.count(.recordingStart)
+            self.startDate = Date()
+            self.elapsed = 0
+            self.ticker = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
+                onMainActor {
+                    guard let start = RecordingController.shared.startDate else { return }
+                    RecordingController.shared.elapsed = Date().timeIntervalSince(start)
+                }
+            }
+            if showsWindows { self.showControls(for: global, fullScreen: isFull) }
+            StatusBarController.shared?.refreshRecordingState()
         }
     }
 
@@ -96,7 +126,8 @@ import SwiftUI
         switch phase {
         case .idle, .finishing:
             return
-        case .countdown:
+        case .starting, .countdown:
+            // Noch nichts aufgenommen: abbrechen. Ein Start, der noch läuft, räumt seinen Recorder selbst ab.
             countdownTask?.cancel()
             teardown()
             return
@@ -104,15 +135,11 @@ import SwiftUI
             break
         }
         phase = .finishing
-        ticker?.invalidate()
-        ticker = nil
-        frameWindow?.orderOut(nil)
-        controlPanel?.orderOut(nil)
-        StatusBarController.shared?.refreshRecordingState()
+        hideWindows()
         guard let recorder else { teardown(); return }
         let screen = self.screen ?? NSScreen.withMouse
         let scale = self.scale
-        Task {
+        finishTask = Task {
             if !save {
                 await recorder.cancel()
                 teardown()
@@ -127,11 +154,58 @@ import SwiftUI
                 let settings = AppSettings.shared
                 if settings.copyToClipboard { Clipboard.copy(fileURL: item.fileURL) }
                 if settings.showQuickAccess { QuickAccessController.shared.show(item, on: screen) }
-                } catch {
+            } catch {
                 teardown()
-                Alerts.error("Aufnahme konnte nicht gespeichert werden", error)
+                // Unvollständige Datei (kein Bild, Writer-Fehler) ist unbrauchbar und bleibt nicht liegen.
+                if error is ScreenRecorder.RecorderError { try? FileManager.default.removeItem(at: recorder.url) }
+                onError("Aufnahme konnte nicht gespeichert werden", error, nil)
             }
         }
+    }
+
+    /// Beenden der App: laufende Aufnahme speichern (Countdown/Start verwerfen) und warten, bis sie angelegt ist.
+    func finishForQuit() async {
+        switch phase {
+        case .recording: stop(save: true)
+        case .starting, .countdown: stop(save: false)
+        case .idle, .finishing: break
+        }
+        await finishTask?.value
+    }
+
+    /// Stream beendet (Bildschirm abgesteckt, Freigabe entzogen): speichern, was da ist.
+    private func streamFailed(_ error: Error, from session: RecordingSession?) {
+        guard let session, recorder === session else { return }
+        Log.error("Aufnahme-Stream beendet: \(error.localizedDescription)")
+        if phase == .recording { stop(save: true) }
+    }
+
+    /// Writer nimmt nichts mehr an (z. B. Platte voll): sofort beenden, Teildatei löschen, Bescheid geben.
+    private func writerFailed(_ error: Error, from session: RecordingSession?) {
+        guard let session, recorder === session, phase == .recording else { return }
+        Log.error("Aufnahme abgebrochen, Writer-Fehler: \(error.localizedDescription)")
+        phase = .finishing
+        hideWindows()
+        finishTask = Task {
+            await session.cancel()
+            teardown()
+            onError("Aufnahme abgebrochen", error,
+                    "Das Video konnte nicht weiter geschrieben werden (\(error.localizedDescription)). Ist der Speicherplatz voll? "
+                        + "Die unvollständige Datei wurde gelöscht.")
+        }
+    }
+
+    #if KNIPS_DEV
+    /// Nur Selbsttest: Writer-Fehler der laufenden Attrappe auslösen.
+    func debugWriterFailed(_ error: Error) { writerFailed(error, from: recorder) }
+    #endif
+
+    private func hideWindows() {
+        ticker?.invalidate()
+        ticker = nil
+        frameWindow?.orderOut(nil)
+        controlPanel?.orderOut(nil)
+        StatusBarController.shared?.refreshRecordingState()
     }
 
     private func teardown() {
@@ -168,6 +242,7 @@ import SwiftUI
 
     /// Gestrichelter Rahmen knapp außerhalb des Aufnahmebereichs (Knips-Fenster sind ohnehin nicht im Video).
     private func showFrame(around rect: CGRect) {
+        frameWindow?.orderOut(nil)   // nie zwei Rahmen: ein alter bliebe sonst für immer stehen
         let outer = rect.insetBy(dx: -3, dy: -3)
         let panel = makePanel(outer, ignoresMouse: true)
         let view = NSView(frame: NSRect(origin: .zero, size: outer.size))

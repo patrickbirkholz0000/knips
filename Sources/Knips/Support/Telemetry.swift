@@ -53,12 +53,17 @@ struct TelemetryConfig: Equatable, Sendable {
     }
 
     /// Nie in Selbsttests, der Test-Sandbox oder CI. Entwickler-Builds nur mit `KNIPS_TELEMETRY=1` (Kanal „dev“).
-    /// `KNIPS_TELEMETRY_URL` ersetzt den Endpunkt (Basis-URL oder vollständige Ping-URL).
+    /// `KNIPS_TELEMETRY_URL` ersetzt den Endpunkt (Basis-URL oder vollständige Ping-URL) — nur in Entwickler-Builds.
+    /// Im weitergegebenen Programm gilt immer `defaultEndpoint`: Sonst könnte jedes Programm, das die Umgebung beim
+    /// Start von Knips setzt (z. B. `launchctl setenv`), die Pings samt `install_id` auf einen eigenen Server lenken.
     static func resolve(environment env: [String: String], arguments: [String], developerBuild: Bool) -> TelemetryConfig {
         var endpoint = defaultEndpoint
-        if let raw = env["KNIPS_TELEMETRY_URL"], let url = URL(string: raw), ["http", "https"].contains(url.scheme ?? ""), url.host != nil {
+        #if KNIPS_DEV
+        if developerBuild, let raw = env["KNIPS_TELEMETRY_URL"], let url = URL(string: raw), ["http", "https"].contains(url.scheme ?? ""),
+           url.host != nil {
             endpoint = url.path.isEmpty || url.path == "/" ? url.appendingPathComponent("v1/ping") : url
         }
+        #endif
         let ci = ["CI", "GITHUB_ACTIONS", "TF_BUILD", "BUILDKITE", "JENKINS_URL"].contains { key in
             guard let value = env[key]?.lowercased() else { return false }
             return !value.isEmpty && value != "0" && value != "false"
@@ -145,10 +150,9 @@ enum TelemetryPayload {
 /// in einer eigenen Domäne — die echte Zustimmung wird dort nie angefasst.
 @MainActor final class Telemetry: ObservableObject {
     static let infoURL = URL(string: "https://github.com/patrickbirkholz0000/knips#datenschutz")!
-    static let sandboxSuite = "de.birkgroup.knips.sandbox"
+    static let sandboxSuite = UserDefaults.sandboxSuite
 
-    static let shared = Telemetry(defaults: Paths.testRoot == nil ? .standard : UserDefaults(suiteName: sandboxSuite) ?? .standard,
-                                  config: .current)
+    static let shared = Telemetry(defaults: .knips, config: .current)
 
     enum Key {
         static let consent = "telemetryConsent"

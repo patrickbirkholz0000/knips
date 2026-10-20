@@ -22,6 +22,34 @@ crons = ["30 3 * * *"]
 [observability]
 enabled = false
 
+# GET /install.ps1: Das Installationsskript kommt beim Bündeln als Text aus ../windows/install.ps1 —
+# eine Fassung im Repo, keine Kopie hier.
+[[rules]]
+type = "Text"
+globs = ["**/*.ps1"]
+fallthrough = false
+
+# Ratenbegrenzung je IP-Adresse (Rate-Limiting-Binding). Die Adresse ist nur der Schlüssel im flüchtigen Zähler
+# von Cloudflare, je Standort, höchstens eine Minute; der Worker speichert oder loggt sie nicht.
+# namespace_id: frei gewählte, im Cloudflare-Konto eindeutige Zahl.
+# /v1/ping: 10 Pings pro Minute (darüber 429, die Apps senden später erneut).
+[[ratelimits]]
+name = "PING_LIMITER"
+namespace_id = "47011"
+
+  [ratelimits.simple]
+  limit = 10
+  period = 60
+
+# /stats: 10 Anfragen mit Zugangsdaten pro Minute (darüber 429).
+[[ratelimits]]
+name = "STATS_LIMITER"
+namespace_id = "47012"
+
+  [ratelimits.simple]
+  limit = 10
+  period = 60
+
 # Secrets (nicht im Repo): SALT und STATS_PASSWORD
 #   npx wrangler secret put SALT
 #   npx wrangler secret put STATS_PASSWORD

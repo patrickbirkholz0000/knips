@@ -2,10 +2,20 @@
 # Entwickler-Code) und hängt ihn samt SHA-256 an das GitHub-Release dieses Tags. Gibt es noch keins, wird ein
 # Entwurf angelegt; das macOS-DMG kommt über scripts/release.sh dazu. Veröffentlicht wird nie automatisch.
 #
-# Signatur (optional): Sind die Secrets AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID,
-# AZURE_SIGNING_ENDPOINT, AZURE_SIGNING_ACCOUNT und AZURE_SIGNING_PROFILE gesetzt, signiert Tauri App und
-# Installer über Azure Artifact Signing (trusted-signing-cli). Sonst bleibt der Installer unsigniert.
-# Einrichtung: RELEASING.md.
+# Signatur über SignPath (kostenlos für Open Source, Zertifikat der SignPath Foundation), nur wenn das Secret
+# SIGNPATH_API_TOKEN und die Variable SIGNPATH_ORGANIZATION_ID gesetzt sind; sonst bleibt der Installer
+# unsigniert. Ablauf, jeder Schritt in einem eigenen Job:
+#   windows         baut App und Installer, ohne jeden Signatur-Zugang
+#   sign-app        SignPath signiert knips.exe (wartet auf die Freigabe in SignPath)
+#   bundle          baut den Installer neu um die signierte knips.exe (SignPath kann NSIS nicht von innen signieren)
+#   sign-installer  SignPath signiert den Installer (zweite Freigabe)
+#   publish         prüft Signaturen und Prüfsumme, hängt die Dateien an das Release
+# Der API-Token steht nur als Eingabe der SignPath-Action in den beiden Signier-Jobs, die nichts bauen und
+# keinen Code auschecken; GH_TOKEN nur im Schritt, der ans Release hängt. Einrichtung: RELEASING.md.
+#
+# Variablen (Settings → Secrets and variables → Actions → Variables): SIGNPATH_ORGANIZATION_ID,
+# SIGNPATH_PROJECT_SLUG (Standard knips), SIGNPATH_SIGNING_POLICY_SLUG (Standard release-signing; enthält der
+# Name „test“, z. B. test-signing, ist es ein Probelauf: signiert mit dem Testzertifikat, hängt nichts ans Release).
 name: Release
 
 on:
@@ -14,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Vorhandenes Tag, z. B. v1.0.0"
+        description: "Vorhandenes Tag, z. B. v1.0.0 (für signierte Läufe den Lauf auch auf dem Tag starten: --ref v1.0.0)"
         required: true
         type: string
 
@@ -22,28 +32,37 @@ concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
-permissions:
-  contents: write
+# Jeder Job bekommt nur, was er braucht.
+permissions: {}
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   # Gleicher Job-Name wie in windows.yml: der Rust-Cache von main wird wiederverwendet.
   windows:
     runs-on: windows-latest
     timeout-minutes: 75
-    env:
-      TAG: ${{ inputs.tag || github.ref_name }}
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      signing: ${{ steps.signing.outputs.enabled }}
+      test-signing: ${{ steps.signing.outputs.test }}
+      project: ${{ steps.signing.outputs.project }}
+      policy: ${{ steps.signing.outputs.policy }}
+      exe-artifact-id: ${{ steps.upload-exe.outputs.artifact-id }}
     defaults:
       run:
         working-directory: windows
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          ref: refs/tags/${{ env.TAG }}
           # Ganze Historie: die Build-Nummer ist wie auf dem Mac (scripts/build.sh) die Zahl der Commits.
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Version aus dem Tag, Build-Nummer aus der Historie
         id: version
@@ -56,128 +75,276 @@ jobs:
           "build=$build" >> $env:GITHUB_OUTPUT
           Write-Host "Knips $version (Build $build)"
 
-      - uses: pnpm/action-setup@v4
+      # Nur ob die Zugänge gesetzt sind — der Token selbst kommt nie in diesen Job.
+      - name: Signatur über SignPath eingerichtet?
+        id: signing
+        env:
+          HAS_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+          ORGANIZATION: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          PROJECT: ${{ vars.SIGNPATH_PROJECT_SLUG || 'knips' }}
+          POLICY: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          RUN_REF: ${{ github.ref }}
+        run: |
+          if ($env:HAS_TOKEN -eq 'true' -and $env:ORGANIZATION) {
+            # SignPath prüft die Herkunft am Lauf (Repo, Commit, Ref). Der Lauf muss deshalb auf dem Tag laufen,
+            # das gebaut wird — bei workflow_dispatch also mit --ref vX.Y.Z.
+            if ($env:RUN_REF -ne "refs/tags/$env:TAG") {
+              throw "Signierte Läufe müssen auf dem Tag laufen: gh workflow run release.yml --ref $env:TAG -f tag=$env:TAG (läuft auf $env:RUN_REF)."
+            }
+            # Testzertifikat (Richtlinie mit „test“ im Namen): signieren und prüfen, aber nichts ans Release hängen.
+            $test = $env:POLICY -match 'test'
+            "enabled=true" >> $env:GITHUB_OUTPUT
+            "test=$($test.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+            "project=$env:PROJECT" >> $env:GITHUB_OUTPUT
+            "policy=$env:POLICY" >> $env:GITHUB_OUTPUT
+            Write-Host "Signatur über SignPath: Projekt $env:PROJECT, Richtlinie $env:POLICY$(if ($test) { ' (Probelauf, nichts ans Release)' })."
+          } else {
+            "enabled=false" >> $env:GITHUB_OUTPUT
+            "test=false" >> $env:GITHUB_OUTPUT
+            Write-Host "::notice title=Installer unsigniert::SIGNPATH_API_TOKEN oder SIGNPATH_ORGANIZATION_ID fehlt — der Windows-Installer wird nicht signiert (SmartScreen warnt beim Benutzer). Einrichtung: RELEASING.md."
+          }
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: 10
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: windows/pnpm-lock.yaml
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master, 2026-10-09
+        with:
+          toolchain: stable
 
       # Nur lesen: Tags sollen keinen eigenen Cache anlegen (gespeichert wird von windows.yml auf main).
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: windows
           save-if: false
 
       # Nur für diesen Build, wird nicht eingecheckt (im Repo steht die zuletzt eingecheckte Version).
       - name: Version in package.json, tauri.conf.json und Cargo.toml setzen
-        shell: bash
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          node - <<'EOF'
-          const fs = require("fs");
-          const v = process.env.VERSION;
-          for (const f of ["package.json", "src-tauri/tauri.conf.json"]) {
-            const j = JSON.parse(fs.readFileSync(f, "utf8"));
-            j.version = v;
-            fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n");
-          }
-          const cargo = fs.readFileSync("Cargo.toml", "utf8");
-          const re = /(\[workspace\.package\][^[]*?\nversion\s*=\s*")[^"]*(")/;
-          if (!re.test(cargo)) throw new Error("Cargo.toml: version in [workspace.package] nicht gefunden");
-          fs.writeFileSync("Cargo.toml", cargo.replace(re, (_, head, tail) => head + v + tail));
-          EOF
-          grep -H '"version"' package.json src-tauri/tauri.conf.json
-          grep -H -A3 '^\[workspace.package\]' Cargo.toml | grep version
+        run: node scripts/set-version.mjs ${{ steps.version.outputs.version }}
 
       - name: Abhängigkeiten
         run: pnpm install --frozen-lockfile
 
-      - name: Signatur verfügbar?
-        id: signing
-        shell: bash
+      - name: App und Installer bauen (Weitergabe, ohne Entwickler-Code)
         env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
-          AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
-          AZURE_SIGNING_PROFILE: ${{ secrets.AZURE_SIGNING_PROFILE }}
-        run: |
-          if [[ -n "$AZURE_CLIENT_ID" && -n "$AZURE_CLIENT_SECRET" && -n "$AZURE_TENANT_ID" &&
-                -n "$AZURE_SIGNING_ENDPOINT" && -n "$AZURE_SIGNING_ACCOUNT" && -n "$AZURE_SIGNING_PROFILE" ]]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-            echo "Signatur über Azure Artifact Signing ist eingerichtet."
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Installer unsigniert::Keine AZURE_*-Secrets gesetzt — der Windows-Installer wird nicht signiert (SmartScreen warnt beim Benutzer). Einrichtung: RELEASING.md."
-          fi
-
-      - name: Signatur-Werkzeug (trusted-signing-cli)
-        if: steps.signing.outputs.enabled == 'true'
-        run: cargo install trusted-signing-cli --locked
-
-      - name: Signatur-Konfiguration für Tauri
-        if: steps.signing.outputs.enabled == 'true'
-        shell: bash
-        env:
-          AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
-          AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
-          AZURE_SIGNING_PROFILE: ${{ secrets.AZURE_SIGNING_PROFILE }}
-        run: |
-          node - <<'EOF'
-          const fs = require("fs");
-          const e = process.env;
-          const cmd = `trusted-signing-cli -e ${e.AZURE_SIGNING_ENDPOINT} -a ${e.AZURE_SIGNING_ACCOUNT} -c ${e.AZURE_SIGNING_PROFILE} -d Knips %1`;
-          fs.writeFileSync("tauri.signing.json", JSON.stringify({ bundle: { windows: { signCommand: cmd } } }, null, 2));
-          EOF
-
-      - name: Installer bauen (Weitergabe, ohne Entwickler-Code)
-        id: build
-        env:
-          SIGNING: ${{ steps.signing.outputs.enabled }}
           VERSION: ${{ steps.version.outputs.version }}
           # Fest einkompiliert (option_env!), z. B. für die Nutzungsstatistik — sonst meldet Windows Build 0.
           KNIPS_BUILD: ${{ steps.version.outputs.build }}
-          AZURE_CLIENT_ID: ${{ steps.signing.outputs.enabled == 'true' && secrets.AZURE_CLIENT_ID || '' }}
-          AZURE_CLIENT_SECRET: ${{ steps.signing.outputs.enabled == 'true' && secrets.AZURE_CLIENT_SECRET || '' }}
-          AZURE_TENANT_ID: ${{ steps.signing.outputs.enabled == 'true' && secrets.AZURE_TENANT_ID || '' }}
         run: |
-          $extra = @()
-          if ($env:SIGNING -eq 'true') { $extra = @('--config', (Resolve-Path tauri.signing.json).Path) }
-          pnpm tauri build @extra
+          pnpm tauri build
           if ($LASTEXITCODE -ne 0) { throw "tauri build fehlgeschlagen ($LASTEXITCODE)" }
+          $exe = @(Get-ChildItem target/release/bundle/nsis -Filter "Knips_$($env:VERSION)_x64-setup.exe")
+          if ($exe.Count -ne 1) { throw "Erwartet genau einen Installer für $($env:VERSION), gefunden: $($exe.Count)" }
+          $info = (Get-Item target/release/knips.exe).VersionInfo
+          Write-Host "knips.exe: ProductName '$($info.ProductName)', ProductVersion '$($info.ProductVersion)'"
+          if ($info.ProductName -ne 'Knips' -or $info.ProductVersion -ne $env:VERSION) { throw "Metadaten von knips.exe passen nicht (SignPath verlangt sie)." }
 
-          $exe = @(Get-ChildItem target/release/bundle/nsis -Filter "*_$($env:VERSION)_*-setup.exe")
-          if ($exe.Count -ne 1) { throw "Erwartet genau einen Installer für $($env:VERSION), gefunden: $($exe.Name -join ', ')" }
-          $exe = $exe[0]
-          $hash = (Get-FileHash -Algorithm SHA256 $exe.FullName).Hash.ToLowerInvariant()
-          # Format wie `shasum -a 256`, damit `shasum -c` und Get-FileHash beide passen.
-          [IO.File]::WriteAllText("$($exe.FullName).sha256", "$hash  $($exe.Name)`n")
-          $rel = [IO.Path]::GetRelativePath((Get-Location).Path, $exe.FullName) -replace '\\', '/'
-          "exe=$rel" >> $env:GITHUB_OUTPUT
-          Write-Host "$($exe.Name)  $hash"
-
-      - name: Signatur prüfen
+      - name: App-EXE für SignPath hochladen
+        id: upload-exe
         if: steps.signing.outputs.enabled == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: knips-exe-unsigned
+          path: windows/target/release/knips.exe
+          if-no-files-found: error
+          retention-days: 7
+
+      # Ohne Signatur ist das schon das Ergebnis; mit Signatur nur zum Vergleich.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: installer-unsigned
+          path: windows/target/release/bundle/nsis/Knips_${{ steps.version.outputs.version }}_x64-setup.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  sign-app:
+    needs: windows
+    if: needs.windows.outputs.signing == 'true'
+    runs-on: ubuntu-latest
+    # Wartet auf die Freigabe in SignPath (höchstens eine Stunde).
+    timeout-minutes: 70
+    permissions:
+      actions: read     # SignPath liest Lauf-Details und lädt das Artefakt
+      contents: read
+    steps:
+      - name: knips.exe signieren (SignPath, Freigabe in app.signpath.io)
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ needs.windows.outputs.project }}
+          signing-policy-slug: ${{ needs.windows.outputs.policy }}
+          artifact-configuration-slug: knips-exe
+          github-artifact-id: ${{ needs.windows.outputs.exe-artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: ${{ runner.temp }}/signed
+          parameters: |
+            version: "${{ needs.windows.outputs.version }}"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: knips-exe-signed
+          path: ${{ runner.temp }}/signed/knips.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  bundle:
+    needs: [windows, sign-app]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      installer-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    defaults:
+      run:
+        working-directory: windows
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 10
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: windows/pnpm-lock.yaml
+
+      # Kein Kompilieren hier; die Tauri-CLI liest nur die Cargo-Metadaten.
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master, 2026-10-09
+        with:
+          toolchain: stable
+
+      - name: Version setzen
+        run: node scripts/set-version.mjs ${{ needs.windows.outputs.version }}
+
+      - name: Abhängigkeiten
+        run: pnpm install --frozen-lockfile
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: knips-exe-signed
+          path: ${{ runner.temp }}/signed
+
+      - name: Installer um die signierte knips.exe bauen
+        id: bundle
         env:
-          EXE: ${{ steps.build.outputs.exe }}
+          VERSION: ${{ needs.windows.outputs.version }}
+          TEST_SIGNING: ${{ needs.windows.outputs.test-signing }}
+          SIGNED: ${{ runner.temp }}/signed/knips.exe
         run: |
-          $sig = Get-AuthenticodeSignature $env:EXE
-          $sig | Format-List Status, StatusMessage, SignerCertificate | Out-String | Write-Host
-          if ($sig.Status -ne 'Valid') { throw "Installer-Signatur ungültig: $($sig.Status)" }
+          $setup = ./scripts/bundle-signed.ps1 -SignedExe $env:SIGNED -Version $env:VERSION -AllowUntrustedRoot:($env:TEST_SIGNING -eq 'true')
+          $rel = [IO.Path]::GetRelativePath($env:GITHUB_WORKSPACE, $setup) -replace '\\', '/'
+          "path=$rel" >> $env:GITHUB_OUTPUT
+
+      - name: Installer für SignPath hochladen
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: installer-to-sign
+          path: ${{ steps.bundle.outputs.path }}
+          if-no-files-found: error
+          retention-days: 7
+
+  sign-installer:
+    needs: [windows, bundle]
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Installer signieren (SignPath, zweite Freigabe)
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ needs.windows.outputs.project }}
+          signing-policy-slug: ${{ needs.windows.outputs.policy }}
+          artifact-configuration-slug: knips-installer
+          github-artifact-id: ${{ needs.bundle.outputs.installer-artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: ${{ runner.temp }}/signed
+          parameters: |
+            version: "${{ needs.windows.outputs.version }}"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: installer-signed
+          path: ${{ runner.temp }}/signed/Knips_${{ needs.windows.outputs.version }}_x64-setup.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [windows, sign-installer]
+    # Unsigniert: direkt nach dem Bauen. Signiert: erst wenn auch der Installer signiert ist.
+    if: >-
+      !cancelled() && needs.windows.result == 'success' &&
+      (needs.windows.outputs.signing == 'true' && needs.sign-installer.result == 'success' ||
+       needs.windows.outputs.signing != 'true' && needs.sign-installer.result == 'skipped')
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write   # Release-Entwurf anlegen und Dateien anhängen
+    defaults:
+      run:
+        working-directory: windows
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.windows.outputs.signing == 'true' && 'installer-signed' || 'installer-unsigned' }}
+          path: ${{ runner.temp }}/release
+
+      - name: Signatur und Prüfsumme
+        id: files
+        env:
+          VERSION: ${{ needs.windows.outputs.version }}
+          SIGNING: ${{ needs.windows.outputs.signing }}
+          TEST_SIGNING: ${{ needs.windows.outputs.test-signing }}
+        run: |
+          $exe = Join-Path $env:RUNNER_TEMP "release/Knips_$($env:VERSION)_x64-setup.exe"
+          if (-not (Test-Path $exe)) { throw "$exe fehlt." }
+          if ($env:SIGNING -eq 'true') {
+            # Installer und die knips.exe darin: gültig signiert, vom selben Zertifikat, Metadaten wie verlangt.
+            ./scripts/check-signature.ps1 -Path $exe -Version $env:VERSION -Installer -AllowUntrustedRoot:($env:TEST_SIGNING -eq 'true')
+          } else {
+            $status = (Get-AuthenticodeSignature $exe).Status
+            Write-Host "Installer unsigniert ($status)."
+          }
+          $hash = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant()
+          # Format wie `shasum -a 256`, damit `shasum -c` und Get-FileHash beide passen.
+          [IO.File]::WriteAllText("$exe.sha256", "$hash  $([IO.Path]::GetFileName($exe))`n")
+          "exe=$($exe -replace '\\', '/')" >> $env:GITHUB_OUTPUT
+          Write-Host "$([IO.Path]::GetFileName($exe))  $hash"
 
       - name: An das Release hängen
+        if: needs.windows.outputs.test-signing != 'true'
         shell: bash
         env:
-          EXE: ${{ steps.build.outputs.exe }}
-          VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EXE: ${{ steps.files.outputs.exe }}
+          VERSION: ${{ needs.windows.outputs.version }}
         run: |
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             echo "Kein Release für $TAG — lege einen Entwurf an."
@@ -187,9 +354,12 @@ jobs:
           gh release upload "$TAG" "$EXE" "$EXE.sha256" --clobber
           gh release view "$TAG" --json isDraft,assets --jq '"Entwurf: \(.isDraft)", (.assets[].name)'
 
-      - uses: actions/upload-artifact@v4
-        if: always()
+      - name: Probelauf mit Testzertifikat
+        if: needs.windows.outputs.test-signing == 'true'
+        run: Write-Host "::notice title=Probelauf::Mit der Richtlinie '${{ needs.windows.outputs.policy }}' signiert — nicht ans Release gehängt. Ergebnis im Artefakt dieses Laufs."
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: knips-windows-${{ steps.version.outputs.version }}
-          path: windows/target/release/bundle/nsis/*-setup.exe*
-          if-no-files-found: warn
+          name: knips-windows-${{ needs.windows.outputs.version }}
+          path: ${{ runner.temp }}/release/*
+          if-no-files-found: error

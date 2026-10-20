@@ -4,11 +4,16 @@ import SwiftUI
 /// Alle Aufnahmen auf einen Blick — gleiche Gestaltung wie die Einstellungen (helle Fläche, weiße Karten).
 @MainActor final class HistoryWindowController: NSWindowController, NSWindowDelegate {
     private static var instance: HistoryWindowController?
+    /// Bei DockPresence angemeldet (zwischen Öffnen und Schließen) — erneutes Öffnen zählt nicht doppelt.
+    private var inDock = false
 
     static func show() {
         Telemetry.count(.historyOpen)
         if instance == nil { instance = HistoryWindowController() }
-        DockPresence.windowOpened()
+        if let instance, !instance.inDock {
+            instance.inDock = true
+            DockPresence.windowOpened()
+        }
         instance?.showWindow(nil)
         instance?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -26,15 +31,22 @@ import SwiftUI
         window.isReleasedWhenClosed = false
         window.contentMinSize = NSSize(width: 640, height: 420)
         window.contentView = NSHostingView(rootView: HistoryView(store: CaptureStore.shared))
-        window.setFrameAutosaveName("KnipsHistory")
+        // Fensterposition merkt sich AppKit in der echten Domäne — Selbsttests legen das Fenster neben den Bildschirm.
+        let autosave = Paths.testRoot == nil
+        if autosave { window.setFrameAutosaveName("KnipsHistory") }
         super.init(window: window)
         window.delegate = self
-        if !window.setFrameUsingName("KnipsHistory") { window.center() }
+        if !autosave || !window.setFrameUsingName("KnipsHistory") { window.center() }
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { nil }
 
-    func windowWillClose(_ notification: Notification) { DockPresence.windowClosed() }
+    func windowWillClose(_ notification: Notification) {
+        if inDock {
+            inDock = false
+            DockPresence.windowClosed()
+        }
+    }
 }
 
 enum HistoryFilter: String, CaseIterable, Identifiable {
@@ -192,7 +204,7 @@ private struct HistoryCard: View {
         if item.kind == .image { Telemetry.count(.copyImage) }
         Task {
             await CaptureStore.shared.waitUntilWritten(item.id)
-            if item.kind == .image { Clipboard.copy(imageFile: item.fileURL) } else { Clipboard.copy(fileURL: item.fileURL) }
+            if item.kind == .image { Clipboard.copy(imageFile: item.fileURL, item: item.id) } else { Clipboard.copy(fileURL: item.fileURL) }
             HUD.show("Kopiert")
         }
     }

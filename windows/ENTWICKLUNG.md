@@ -68,8 +68,10 @@ installiert still, startet einmal (Umzug, Aufräumen), deinstalliert ohne und mi
 
 ## Nutzungsstatistik und Lizenz
 
-Freie Software unter GPL-3.0-or-later (`LICENSE` = Text von gnu.org, zeigt der NSIS-Installer als
-Lizenzseite; Über Knips nennt © und Quellcode-Link). Anonyme Nutzungsstatistik nach Vertrag v1 (gleich
+Freie Software unter GPL-3.0-or-later (`LICENSE` = Text von gnu.org; Über Knips nennt © und Quellcode-Link).
+Die Lizenzseite des NSIS-Installers zeigt `installer/datenschutz-und-lizenz.txt`: erst den
+Datenschutzhinweis (verlangt die SignPath Foundation während der Installation), dann genau `LICENSE` — die CI
+prüft, dass das Ende der Datei mit `LICENSE` übereinstimmt. Anonyme Nutzungsstatistik nach Vertrag v1 (gleich
 auf dem Mac, Server `https://knips.velno.ai/v1/ping`): Regeln, Erlaubt-Liste (24 Ereignisse), Nutzlast in
 `crates/core/src/telemetry.rs` (Kern-Tests), Senden/Fragen in `src-tauri/src/telemetry.rs` (ureq +
 native-tls = SChannel, eigener Thread, 30 s nach Start und alle 6 h, höchstens 1× in 24 h, 10 s Zeitlimit).
@@ -99,6 +101,23 @@ verfallen solange. Einstellungen → Allgemein → „Aufnahmen per Link ohne R�
 `ms-settings:…` (`knips_core::links::allowed_external_url`). CSP in `tauri.conf.json`: Skripte nur `'self'`,
 Bilder/Videos zusätzlich Asset-Protokoll, `data:`, `blob:`; Verbindungen nur IPC. Testbild und simulierte
 Eingaben (`sample`, `testinput`) gibt es unter Windows nur mit Feature `dev`.
+
+## Verteilung
+
+- **Release** (`.github/workflows/release.yml`, Einrichtung in `../RELEASING.md`): Jobs `windows` (baut,
+  ohne Signatur-Zugang) → `sign-app` (SignPath signiert `knips.exe`) → `bundle` (`scripts/bundle-signed.ps1`:
+  Installer um die signierte EXE, `tauri bundle --no-binary-patching`, sonst patcht Tauri die EXE und die
+  Signatur bricht) → `sign-installer` → `publish` (`scripts/check-signature.ps1 -Installer`, Prüfsumme, Release).
+  Ohne `SIGNPATH_API_TOKEN`/`SIGNPATH_ORGANIZATION_ID` unsigniert wie früher. Version setzt
+  `scripts/set-version.mjs`. Den Ablauf prüft der Job `signatur` in `windows.yml` mit Wegwerf-Zertifikat.
+- **PowerShell** (`install.ps1`, ausgeliefert vom Worker unter `https://knips.velno.ai/install.ps1`): neuestes
+  Release, SHA-256, Signatur (nur SignPath Foundation), `/S`, Start; `-Version`, `-InstallerPath`, `-NoStart`.
+  UTF-8 **mit** BOM (Windows PowerShell 5.1). CI-Test: `scripts/test-install.ps1` (installiert wirklich).
+  Tauri-NSIS pro Benutzer: `%LOCALAPPDATA%\Knips\knips.exe`, Eintrag `HKCU\…\Uninstall\Knips`,
+  Deinstaller `uninstall.exe /S` (kopiert sich nach %TEMP%, läuft dort weiter).
+- **winget** (`winget/` Vorlagen, `../scripts/winget-manifest.sh X.Y.Z`): Paket `PatrickBirkholz.Knips`,
+  erste Einreichung von Hand (RELEASING.md).
+- Installer-Seiten fotografiert die CI (`scripts/installer-shots.ps1` → `shots/installer/`).
 
 ## Kürzel (Windows-Standard)
 

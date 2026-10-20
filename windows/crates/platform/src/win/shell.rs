@@ -93,6 +93,12 @@ fn hkcu_dword(key: &str, value: &str) -> Option<u32> {
     (err.0 == 0).then_some(data)
 }
 
+/// Taskleiste im hellen Modus (Einstellungen → Personalisierung → Farben, „Windows-Modus“)? Fehlt der Wert
+/// (Windows 10 vor 1903), ist sie dunkel.
+pub fn taskbar_light() -> bool {
+    hkcu_dword("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", "SystemUsesLightTheme") == Some(1)
+}
+
 /// Landet `path` beim Löschen im Papierkorb? Nein auf Netzlaufwerken, Wechseldatenträgern (USB-Sticks,
 /// Speicherkarten), CD/RAM-Laufwerken, Laufwerken ohne Papierkorb und wenn für das Laufwerk
 /// „Dateien sofort löschen“ (bzw. die Richtlinie „Keine Dateien in den Papierkorb“) eingestellt ist.

@@ -1,3 +1,5 @@
+<img src="design/app-icon-1024.png" width="88" height="88" alt="Symbol von Knips: vier Auswahl-Ecken um einen Zensurbalken">
+
 # Knips
 
 Screenshots und Bildschirmvideos für macOS und Windows, mit Zensur für Bilder **und** Videos.
@@ -254,6 +256,8 @@ Public License, Version 3 oder (nach deiner Wahl) jeder späteren Version, weite
 Knips wird ohne jede Gewährleistung bereitgestellt. Der vollständige Text steht in [LICENSE](LICENSE).
 
 ---
+
+<img src="design/app-icon-1024.png" width="88" height="88" alt="Knips icon: four selection corners around a censor bar">
 
 ## English
 

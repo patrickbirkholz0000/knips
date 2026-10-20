@@ -23,12 +23,10 @@ import Combine
             .store(in: &cancellables)
     }
 
-    static let icon: NSImage = {
-        let img = NSImage(systemSymbolName: "viewfinder", accessibilityDescription: "Knips") ?? NSImage()
-        let configured = img.withSymbolConfiguration(.init(pointSize: 15, weight: .medium)) ?? img
-        configured.isTemplate = true
-        return configured
-    }()
+    /// Zeichen von Knips (docs/design.md): Ecken + Balken; während eines Videos Ecken + Punkt. Beide als Vorlage,
+    /// macOS färbt sie passend zur Menüleiste ein.
+    static let icon = BrandGeometry.templateImage()
+    static let recordingIcon = BrandGeometry.templateImage(recording: true)
 
     @objc private func statusClicked() {
         let rightClick = NSApp.currentEvent?.type == .rightMouseUp
@@ -49,8 +47,7 @@ import Combine
         let rc = RecordingController.shared
         switch rc.phase {
         case .recording:
-            item.button?.image = NSImage(systemSymbolName: "stop.circle.fill", accessibilityDescription: "Aufnahme stoppen")?
-                .withSymbolConfiguration(.init(paletteColors: [.systemRed]))
+            item.button?.image = Self.recordingIcon
             item.button?.attributedTitle = NSAttributedString(string: " " + Format.duration(rc.elapsed), attributes: [
                 .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
             ])

@@ -1,5 +1,12 @@
 //! Symbol im Infobereich der Taskleiste (`StatusBarController` in StatusBar.swift). Klick öffnet das
 //! Knips-Panel; während einer Aufnahme stoppt ein Linksklick sofort.
+//!
+//! Das Symbol ist das Zeichen von Knips (`tray_glyph.rs`): hell auf dunkler, dunkel auf heller Taskleiste, in der
+//! Größe des Infobereichs (16 px bei 100 %, 32 px bei 200 %); während eines Videos mit rotem Punkt.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use std::time::Duration;
 
 use tauri::image::Image;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
@@ -8,12 +15,46 @@ use tauri::AppHandle;
 use crate::app::knips;
 use crate::recording::RecordingState;
 
+/// Bild des Symbols (reine Rechnung, eigene Datei für die Tests).
+#[path = "tray_glyph.rs"]
+mod tray_glyph;
+
 const ID: &str = "knips";
 
+/// Läuft gerade ein Video? (Punkt statt Balken.)
+static RECORDING: AtomicBool = AtomicBool::new(false);
+/// Zuletzt gesetztes Symbol: (Größe, helle Taskleiste, Aufnahme) — nur bei Änderung neu setzen.
+static SHOWN: Mutex<Option<(u32, bool, bool)>> = Mutex::new(None);
+
+/// Gewünschtes Symbol: Größe nach der Skalierung des Hauptbildschirms (dort liegt der Infobereich),
+/// Farbe nach der Taskleiste.
+fn wanted() -> (u32, bool, bool) {
+    let scale = knips_platform::monitors::primary().scale;
+    let size = ((16.0 * scale).round() as u32).clamp(16, 64);
+    (size, knips_platform::shell::taskbar_light(), RECORDING.load(Ordering::Relaxed))
+}
+
+fn image((size, light, recording): (u32, bool, bool)) -> Image<'static> {
+    Image::new_owned(tray_glyph::render(size, light, recording), size, size)
+}
+
+/// Symbol setzen, wenn sich Größe, Taskleistenfarbe oder Aufnahme-Zustand geändert haben.
+fn update_icon(app: &AppHandle) {
+    let Some(tray) = tray(app) else { return };
+    let key = wanted();
+    let mut shown = SHOWN.lock().unwrap_or_else(|e| e.into_inner());
+    if *shown == Some(key) {
+        return;
+    }
+    if tray.set_icon(Some(image(key))).is_ok() {
+        *shown = Some(key);
+    }
+}
+
 pub fn install(app: &AppHandle) -> anyhow::Result<()> {
-    let icon = app.default_window_icon().cloned().ok_or_else(|| anyhow::anyhow!("kein App-Symbol"))?;
+    let key = wanted();
     TrayIconBuilder::with_id(ID)
-        .icon(icon)
+        .icon(image(key))
         .tooltip("Knips")
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
@@ -28,6 +69,17 @@ pub fn install(app: &AppHandle) -> anyhow::Result<()> {
             }
         })
         .build(app)?;
+    *SHOWN.lock().unwrap_or_else(|e| e.into_inner()) = Some(key);
+    // Hell/Dunkel der Taskleiste und die Skalierung können sich jederzeit ändern; ein Blick alle 3 s genügt
+    // (ein Registry-Wert, eine Monitor-Abfrage).
+    let handle = app.clone();
+    let watcher = std::thread::Builder::new().name("knips-tray".into()).spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(3));
+        update_icon(&handle);
+    });
+    if let Err(err) = watcher {
+        log::warn!("Taskleisten-Symbol folgt Hell/Dunkel nicht: {err}");
+    }
     Ok(())
 }
 
@@ -39,37 +91,17 @@ fn tray(app: &AppHandle) -> Option<TrayIcon> {
 pub fn refresh_recording(state: &RecordingState) {
     let app = &knips().app;
     let Some(tray) = tray(app) else { return };
+    RECORDING.store(state.phase == "recording", Ordering::Relaxed);
+    update_icon(app);
     match state.phase {
         "recording" => {
-            let _ = tray.set_icon(Some(record_icon()));
             let _ = tray.set_tooltip(Some(format!("Knips – Aufnahme {} (Klick: stoppen)", knips_core::format::duration(state.elapsed))));
         }
         "countdown" => {
             let _ = tray.set_tooltip(Some(format!("Knips – Aufnahme in {}", state.countdown)));
         }
         _ => {
-            if let Some(icon) = app.default_window_icon().cloned() {
-                let _ = tray.set_icon(Some(icon));
-            }
             let _ = tray.set_tooltip(Some("Knips"));
         }
     }
-}
-
-/// Stopp-Symbol: roter Kreis mit weißem Quadrat (wie `stop.circle.fill`).
-fn record_icon() -> Image<'static> {
-    let n = 32u32;
-    let mut rgba = vec![0u8; (n * n * 4) as usize];
-    let c = (n as f32 - 1.0) / 2.0;
-    for y in 0..n {
-        for x in 0..n {
-            let d = ((x as f32 - c).powi(2) + (y as f32 - c).powi(2)).sqrt();
-            let alpha = (c + 0.5 - d).clamp(0.0, 1.0);
-            let inside_square = (x as f32 - c).abs() < 5.5 && (y as f32 - c).abs() < 5.5;
-            let i = ((y * n + x) * 4) as usize;
-            let (r, g, b) = if inside_square { (255, 255, 255) } else { (255, 59, 48) };
-            rgba[i..i + 4].copy_from_slice(&[r, g, b, (alpha * 255.0) as u8]);
-        }
-    }
-    Image::new_owned(rgba, n, n)
 }

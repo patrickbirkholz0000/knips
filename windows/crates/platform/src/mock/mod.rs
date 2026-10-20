@@ -397,6 +397,11 @@ pub mod shell {
         Ok(())
     }
 
+    /// Taskleiste im hellen Modus? Die Attrappe nimmt die dunkle (Standard unter Windows 10 und 11).
+    pub fn taskbar_light() -> bool {
+        false
+    }
+
     /// Landet `path` beim Löschen im Papierkorb? Nein auf Netzlaufwerken, Wechseldatenträgern,
     /// Laufwerken ohne Papierkorb und bei „Dateien sofort löschen“ — dann fragt die App vorher.
     pub fn can_trash(path: &Path) -> bool {

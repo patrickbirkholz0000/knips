@@ -103,23 +103,45 @@ struct Wordmark: View {
 
 extension BrandGeometry {
     /// Zeichen als Vorlage für die Menüleiste (einfarbig, macOS färbt ein). `recording`: Punkt statt Balken.
+    /// Das Zeichen füllt 14 von 18 pt; Strich 2 pt, Ecken und Balken mit Kanten auf ganzen Punkten — so bleibt es
+    /// in @1x und @2x scharf (bei 9 % Strich und freier Lage lägen die Kanten mitten in einem Pixel).
     static func templateImage(points: CGFloat = 18, recording: Bool = false) -> NSImage {
-        let image = NSImage(size: NSSize(width: points, height: points), flipped: true) { rect in
+        let image = NSImage(size: NSSize(width: points, height: points), flipped: true) { _ in
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
-            let inset = rect.insetBy(dx: -points * 0.06, dy: -points * 0.06) // Ecken etwas größer als im Icon
+            let extent = frame.upperBound - frame.lowerBound + stroke   // 65 Einheiten von Außenkante zu Außenkante
+            let unit = points * 14 / 18 / extent
+            let w = max(1, (stroke * unit).rounded())
+            let near = (points / 2 - extent / 2 * unit).rounded() + w / 2  // Mitte der linken/oberen Linie
+            let far = points - near
+            let arm = (self.arm * unit + w).rounded() - w            // rundes Ende auf einer Punktgrenze
+            let path = CGMutablePath()
+            for (x, y, dx, dy) in [(near, near, 1.0, 1.0), (far, near, -1.0, 1.0), (far, far, -1.0, -1.0), (near, far, 1.0, -1.0)] {
+                path.move(to: CGPoint(x: x, y: y + dy * arm))
+                path.addLine(to: CGPoint(x: x, y: y))
+                path.addLine(to: CGPoint(x: x + dx * arm, y: y))
+            }
             ctx.setStrokeColor(NSColor.black.cgColor)
             ctx.setFillColor(NSColor.black.cgColor)
-            ctx.setLineWidth(max(1.5, stroke * inset.width / 100))
+            ctx.setLineWidth(w)
             ctx.setLineCap(.round)
             ctx.setLineJoin(.round)
-            ctx.addPath(corners(in: inset).cgPath)
+            ctx.addPath(path)
             ctx.strokePath()
-            ctx.addPath((recording ? dot(in: inset) : bar(in: inset)).cgPath)
-            ctx.fillPath()
+            let mid = points / 2
+            if recording {
+                // Punkt auf ganze Punkte gerundet (r 9 → 2 pt bei 18 pt), mittig wie der Balken.
+                let r = max(1.5, (dotRadius * unit).rounded())
+                ctx.fillEllipse(in: CGRect(x: mid - r, y: mid - r, width: 2 * r, height: 2 * r))
+            } else {
+                let half = mid - (mid - bar.width / 2 * unit).rounded() // Enden auf Punktgrenzen
+                let r = CGRect(x: mid - half, y: mid - w / 2, width: 2 * half, height: w)
+                ctx.addPath(CGPath(roundedRect: r, cornerWidth: w / 2, cornerHeight: w / 2, transform: nil))
+                ctx.fillPath()
+            }
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = recording ? "Knips – Aufnahme läuft" : "Knips"
+        image.accessibilityDescription = recording ? "Knips – Aufnahme läuft, Klick stoppt" : "Knips"
         return image
     }
 }

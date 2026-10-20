@@ -12,8 +12,8 @@ import ScreenCaptureKit
         HotkeyManager.shared.onAction = { action in CaptureCoordinator.shared.perform(action) }
         HotkeyManager.shared.apply(AppSettings.shared.activeHotkeys)
 
-        if UserDefaults.standard.object(forKey: "didFirstLaunch") == nil {
-            UserDefaults.standard.set(true, forKey: "didFirstLaunch")
+        if UserDefaults.knips.object(forKey: "didFirstLaunch") == nil {
+            UserDefaults.knips.set(true, forKey: "didFirstLaunch")
             if Bundle.main.bundlePath.hasPrefix("/Applications") { AppSettings.shared.launchAtLogin = true }
         }
         Telemetry.shared.start()
@@ -149,8 +149,8 @@ import ScreenCaptureKit
         let ids = SystemShortcuts.conflictingIDs(for: combos)
         guard !ids.isEmpty else { return }
         let asked = "askedShortcutTakeover"
-        guard !UserDefaults.standard.bool(forKey: asked) else { return }
-        UserDefaults.standard.set(true, forKey: asked)
+        guard !UserDefaults.knips.bool(forKey: asked) else { return }
+        UserDefaults.knips.set(true, forKey: asked)
 
         let list = combos.filter { SystemShortcuts.conflict(for: $0) != nil }.map(\.display).sorted().joined(separator: ", ")
         var info: [String] = []

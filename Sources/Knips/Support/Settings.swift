@@ -10,6 +10,15 @@ enum Log {
     static func error(_ message: String) { logger.error("\(message, privacy: .public)") }
 }
 
+extension UserDefaults {
+    /// Domäne der Selbsttests und der Test-Sandbox.
+    static let sandboxSuite = "de.birkgroup.knips.sandbox"
+
+    /// Einstellungen und Merker von Knips. Selbsttests und die Test-Sandbox (`KNIPS_TEST_DIR`) schreiben in eine
+    /// eigene Domäne — die echten Einstellungen (`de.birkgroup.knips`) bleiben dabei unberührt.
+    static let knips: UserDefaults = Paths.testRoot == nil ? .standard : UserDefaults(suiteName: sandboxSuite) ?? .standard
+}
+
 enum RedactStyle: String, Codable, CaseIterable, Identifiable {
     case pixelate, blur, solid
     var id: String { rawValue }
@@ -31,7 +40,7 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
 
 @MainActor final class AppSettings: ObservableObject {
     static let shared = AppSettings()
-    private let d = UserDefaults.standard
+    private let d = UserDefaults.knips
 
     @Published var saveFolderPath: String { didSet { d.set(saveFolderPath, forKey: "saveFolder") } }
     @Published var copyToClipboard: Bool { didSet { d.set(copyToClipboard, forKey: "copyToClipboard") } }

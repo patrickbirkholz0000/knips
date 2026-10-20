@@ -40,10 +40,12 @@ import SwiftUI
         window.contentMinSize = NSSize(width: Self.size.width, height: 520)
         window.contentMaxSize = NSSize(width: Self.size.width, height: 1400)
         window.contentView = NSHostingView(rootView: SettingsRoot(settings: AppSettings.shared, nav: SettingsNavigation.shared))
-        window.setFrameAutosaveName("KnipsSettings2")
+        // Fensterposition merkt sich AppKit in der echten Domäne — Selbsttests legen das Fenster neben den Bildschirm.
+        let autosave = Paths.testRoot == nil
+        if autosave { window.setFrameAutosaveName("KnipsSettings2") }
         super.init(window: window)
         window.delegate = self
-        if !window.setFrameUsingName("KnipsSettings2") { window.center() }
+        if !autosave || !window.setFrameUsingName("KnipsSettings2") { window.center() }
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { nil }
@@ -68,8 +70,8 @@ enum Theme {
 
 @MainActor final class SettingsNavigation: ObservableObject {
     static let shared = SettingsNavigation()
-    @Published var pane: SettingsPane = SettingsPane(rawValue: UserDefaults.standard.string(forKey: "settingsPane") ?? "") ?? .general {
-        didSet { UserDefaults.standard.set(pane.rawValue, forKey: "settingsPane") }
+    @Published var pane: SettingsPane = SettingsPane(rawValue: UserDefaults.knips.string(forKey: "settingsPane") ?? "") ?? .general {
+        didSet { UserDefaults.knips.set(pane.rawValue, forKey: "settingsPane") }
     }
 }
 

@@ -26,10 +26,12 @@ import SwiftUI
         window.isReleasedWhenClosed = false
         window.contentMinSize = NSSize(width: 640, height: 420)
         window.contentView = NSHostingView(rootView: HistoryView(store: CaptureStore.shared))
-        window.setFrameAutosaveName("KnipsHistory")
+        // Fensterposition merkt sich AppKit in der echten Domäne — Selbsttests legen das Fenster neben den Bildschirm.
+        let autosave = Paths.testRoot == nil
+        if autosave { window.setFrameAutosaveName("KnipsHistory") }
         super.init(window: window)
         window.delegate = self
-        if !window.setFrameUsingName("KnipsHistory") { window.center() }
+        if !autosave || !window.setFrameUsingName("KnipsHistory") { window.center() }
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { nil }

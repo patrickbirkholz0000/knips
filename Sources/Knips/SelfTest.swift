@@ -16,6 +16,12 @@ import Vision
         let out = URL(fileURLWithPath: args[1], isDirectory: true)
         Paths.ensure(out)
         setenv("KNIPS_TEST_DIR", out.appendingPathComponent("sandbox").path, 1)
+        // Einstellungen nur in der Sandbox-Domäne, jeder Test beginnt mit den Standardwerten.
+        guard UserDefaults.knips != .standard else {
+            print("FEHLER: Einstellungen nicht in der Sandbox-Domäne")
+            return 1
+        }
+        UserDefaults.standard.removePersistentDomain(forName: UserDefaults.sandboxSuite)
         do {
             switch args[0] {
             case "render": try render(out)
@@ -658,9 +664,8 @@ import Vision
                 HotkeyRecorderState.shared.recording = nil
             }
             if pane == .general {
-                // Anzeigedauer eingeschaltet; die Einstellungen danach exakt wiederherstellen.
-                let settings = AppSettings.shared, defaults = UserDefaults.standard
-                let saved = ["quickAccessAutoHide", "quickAccessSeconds"].map { ($0, defaults.object(forKey: $0)) }
+                // Anzeigedauer eingeschaltet (Sandbox-Domäne — die echten Einstellungen bleiben unberührt).
+                let settings = AppSettings.shared
                 let (hide, seconds) = (settings.quickAccessAutoHide, settings.quickAccessSeconds)
                 settings.quickAccessAutoHide = true
                 settings.quickAccessSeconds = 7
@@ -673,7 +678,6 @@ import Vision
                 }
                 settings.quickAccessAutoHide = hide
                 settings.quickAccessSeconds = seconds
-                for (key, value) in saved { defaults.set(value, forKey: key) }
                 if !wrong.isEmpty { throw CheckFailed(message: "Anzeigedauer falsch übernommen: \(wrong.joined(separator: ", "))") }
             }
             if pane == .privacy {
@@ -683,7 +687,6 @@ import Vision
                 telemetry.setConsent(true)
                 try await windowShot(window, out.appendingPathComponent("einstellungen-privacy-statistik-an.png"))
                 telemetry.setConsent(false)
-                UserDefaults.standard.removePersistentDomain(forName: Telemetry.sandboxSuite)
             }
         }
         window.orderOut(nil)
@@ -701,18 +704,14 @@ import Vision
     /// Auswahl-Overlay geöffnet. Die Rückfrage liegt neben dem sichtbaren Bildschirm.
     static func links(_ out: URL) async throws {
         let commands = LinkCommands.shared
-        let settings = AppSettings.shared, defaults = UserDefaults.standard
+        // Sandbox-Domäne: die Einstellung der echten App bleibt unberührt.
+        let settings = AppSettings.shared, defaults = UserDefaults.knips
         let key = "linkCaptureWithoutConfirm"
-        let (savedObject, savedValue) = (defaults.object(forKey: key), settings.linkCaptureWithoutConfirm)
         var calls: [HotkeyAction] = []
         var recording = false
         commands.perform = { calls.append($0) }
         commands.recordingBusy = { recording }
         commands.show = { placeOffscreen($0.window!) }
-        defer {
-            settings.linkCaptureWithoutConfirm = savedValue
-            if let savedObject { defaults.set(savedObject, forKey: key) } else { defaults.removeObject(forKey: key) }
-        }
         let delegate = AppDelegate()
         func link(_ command: String) { delegate.application(NSApp, open: [URL(string: "knips://\(command)")!]) }
         var failed: [String] = []

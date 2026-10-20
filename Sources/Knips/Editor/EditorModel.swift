@@ -86,7 +86,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
             } else if oldValue == .crop {
                 cropDraft = nil
             }
-            if tool != .crop { UserDefaults.standard.set(tool.rawValue, forKey: "editorTool") }
+            if tool != .crop { UserDefaults.knips.set(tool.rawValue, forKey: "editorTool") }
         }
     }
     @Published var color: RGBA
@@ -124,7 +124,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
         self.annotations = document.annotations
         self.crop = document.crop
         self.frame = document.frame
-        let d = UserDefaults.standard
+        let d = UserDefaults.knips
         self.tool = initialTool ?? EditorTool(rawValue: d.string(forKey: "editorTool") ?? "") ?? .redact
         if let data = d.data(forKey: "editorColor"), let c = try? JSONDecoder().decode(RGBA.self, from: data) {
             self.color = c
@@ -191,12 +191,12 @@ enum EditorTool: String, CaseIterable, Identifiable {
         guard style != frame else { return }
         checkpoint()
         frame = style
-        if let style { UserDefaults.standard.set(try? JSONEncoder().encode(style), forKey: "lastFrameStyle") }
+        if let style { UserDefaults.knips.set(try? JSONEncoder().encode(style), forKey: "lastFrameStyle") }
     }
 
     /// Zuletzt benutzter Rahmen als Vorschlag.
     static var lastFrameStyle: FrameStyle {
-        (UserDefaults.standard.data(forKey: "lastFrameStyle")).flatMap { try? JSONDecoder().decode(FrameStyle.self, from: $0) } ?? FrameStyle()
+        (UserDefaults.knips.data(forKey: "lastFrameStyle")).flatMap { try? JSONDecoder().decode(FrameStyle.self, from: $0) } ?? FrameStyle()
     }
     var selected: Annotation? { annotations.first { $0.id == selectedID } }
 
@@ -282,7 +282,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
 
     func setColor(_ c: RGBA) {
         color = c
-        if let data = try? JSONEncoder().encode(c) { UserDefaults.standard.set(data, forKey: "editorColor") }
+        if let data = try? JSONEncoder().encode(c) { UserDefaults.knips.set(data, forKey: "editorColor") }
         guard let sel = selected, sel.kind != .redact else { return }
         checkpoint()
         update(sel.id) { $0.color = c }
@@ -290,7 +290,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
 
     func setSize(_ s: StrokeSize) {
         size = s
-        UserDefaults.standard.set(s.rawValue, forKey: "editorSize")
+        UserDefaults.knips.set(s.rawValue, forKey: "editorSize")
         guard let sel = selected, sel.kind != .redact, sel.kind != .highlight else { return }
         checkpoint()
         update(sel.id) { $0.size = s }

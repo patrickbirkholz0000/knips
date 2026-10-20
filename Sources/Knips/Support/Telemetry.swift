@@ -145,10 +145,9 @@ enum TelemetryPayload {
 /// in einer eigenen Domäne — die echte Zustimmung wird dort nie angefasst.
 @MainActor final class Telemetry: ObservableObject {
     static let infoURL = URL(string: "https://github.com/patrickbirkholz0000/knips#datenschutz")!
-    static let sandboxSuite = "de.birkgroup.knips.sandbox"
+    static let sandboxSuite = UserDefaults.sandboxSuite
 
-    static let shared = Telemetry(defaults: Paths.testRoot == nil ? .standard : UserDefaults(suiteName: sandboxSuite) ?? .standard,
-                                  config: .current)
+    static let shared = Telemetry(defaults: .knips, config: .current)
 
     enum Key {
         static let consent = "telemetryConsent"

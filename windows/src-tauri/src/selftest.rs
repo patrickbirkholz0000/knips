@@ -1397,21 +1397,32 @@ fn files_containing(dir: &Path, needles: &[String], only_cache: bool) -> Vec<(St
 fn webview_cache(app: &AppHandle, shown: &[String]) -> Result<()> {
     let profile = app.path().app_local_data_dir()?.join("EBWebView");
     let k = crate::app::knips();
-    let probe_item = k.store.add_image(sample::sample_image(900, 600, 1.0), 1.0, None, None)?;
-    k.store.wait_until_written(probe_item.id);
-    let mut spec = wm::Spec::window("cache-probe", &format!("editor/{}", probe_item.id), "Knips – Cache-Probe", (900.0, 650.0));
-    spec.incognito = false;
-    let window = wm::ensure(app, &spec)?;
-    let _ = window.show();
-    std::thread::sleep(Duration::from_secs(4));
-    let _ = window.destroy();
-    std::thread::sleep(Duration::from_secs(3));
-    let probe_hits = files_containing(&profile, &[probe_item.id.to_string()], true);
-    println!(
-        "   Diagnose ohne InPrivate: Original {} im WebView2-Cache{}",
-        if probe_hits.is_empty() { "liegt nicht" } else { "liegt" },
-        probe_hits.iter().map(|(_, p)| format!("\n      {}", p.display())).collect::<String>()
-    );
+    // Eigene Aufnahmen für die Fenster ohne InPrivate: ein Bild (Editor) und ein Video (Video-Editor,
+    // lädt mit Range-Anfragen).
+    let image_item = k.store.add_image(sample::sample_image(900, 600, 1.0), 1.0, None, None)?;
+    k.store.wait_until_written(image_item.id);
+    let mut probes = vec![("Original (Bild)", format!("editor/{}", image_item.id), image_item.id.to_string())];
+    let content = pattern(640, 900, 9);
+    let path = crate::paths::temp_dir().join("cache-probe.mp4");
+    match media::write_test_video(&path, 640, 360, 30, 45, false, &mut |i| scrolling_frame(&content, 640, 360, i as u32 * 4)).and_then(|_| k.store.add_video(&path, 1.0)) {
+        Ok(v) => probes.push(("Original (Video)", format!("video/{}", v.id), v.id.to_string())),
+        Err(e) => println!("   Diagnose Video übersprungen: {e:#}"),
+    }
+    for (i, (what, route, id)) in probes.iter().enumerate() {
+        let mut spec = wm::Spec::window(&format!("cache-probe-{i}"), route, "Knips – Cache-Probe", (900.0, 650.0));
+        spec.incognito = false;
+        let window = wm::ensure(app, &spec)?;
+        let _ = window.show();
+        std::thread::sleep(Duration::from_secs(5));
+        let _ = window.destroy();
+        std::thread::sleep(Duration::from_secs(3));
+        let hits = files_containing(&profile, std::slice::from_ref(id), true);
+        println!(
+            "   Diagnose ohne InPrivate: {what} {} im WebView2-Cache{}",
+            if hits.is_empty() { "liegt nicht" } else { "liegt" },
+            hits.iter().map(|(_, p)| format!("\n      {}", p.display())).collect::<String>()
+        );
+    }
     let hits = files_containing(&profile, shown, false);
     if !hits.is_empty() {
         bail!("Aufnahmen im WebView2-Profil: {}", hits.iter().map(|(id, p)| format!("{id} in {}", p.display())).collect::<Vec<_>>().join(", "));

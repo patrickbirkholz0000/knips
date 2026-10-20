@@ -47,7 +47,7 @@ Write-Host "Druck-Taste vorher: $(if ($null -eq $snipBefore) { 'kein Eintrag' } 
 
 # Wie Knips beim Übernehmen der Druck-Taste (hotkeys::set_snipping_key(false), Selbsttest `storage`).
 function Take-PrintScreen {
-  New-Item -Path $knipsKey -Force | Out-Null
+  if (-not (Test-Path $knipsKey)) { New-Item -Path $knipsKey | Out-Null }
   $current = Get-Snip
   if ($null -eq $current) { Remove-ItemProperty -Path $knipsKey -Name "PrintScreenKeyOriginal" -ErrorAction SilentlyContinue }
   else { Set-ItemProperty -Path $knipsKey -Name "PrintScreenKeyOriginal" -Value $current -Type DWord }
@@ -108,7 +108,7 @@ try {
   # So lag es bis 1.0.0: Originale im Installationsordner, Einstellungen in %APPDATA%\Knips.
   $oldId = New-OldItem (Join-Path $instDir "items")
   New-Item -ItemType Directory -Force -Path $oldRoaming | Out-Null
-  Set-Content -Path (Join-Path $oldRoaming "settings.json") -Value '{"telemetryInstallId":"alte-kennung"}' -Encoding utf8NoBOM
+  Set-Content -Path (Join-Path $oldRoaming "settings.json") -Value '{"imageFormat":"jpeg"}' -Encoding utf8NoBOM
   # Reste eines Absturzes: unzensierte Video-Einzelbilder, abgebrochener Export.
   New-Item -ItemType Directory -Force -Path (Join-Path $tempDir "video-thumbs") | Out-Null
   Set-Content -Path (Join-Path $tempDir "video-thumbs\$oldId-1-0.jpg") -Value "unzensiert"
@@ -119,10 +119,11 @@ try {
   $deadline = (Get-Date).AddSeconds(45)
   while (-not ((Test-Path $migrated) -and (Test-Path (Join-Path $localData "EBWebView"))) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
   Start-Sleep -Seconds 3
-  Check "App läuft" (-not $app.HasExited) "Exit $($app.ExitCode)"
+  $exitInfo = if ($app.HasExited) { "Exit $($app.ExitCode)" } else { "" }
+  Check "App läuft" (-not $app.HasExited) $exitInfo
   Check "Umzug: Original aus dem Installationsordner geholt" ((Test-Path $migrated) -and -not (Test-Path (Join-Path $instDir "items")))
   $settingsText = Get-Content (Join-Path $roamingData "settings.json") -Raw -ErrorAction SilentlyContinue
-  Check "Umzug: Einstellungen nach %APPDATA%\$id" (($settingsText -match "alte-kennung") -and -not (Test-Path $oldRoaming))
+  Check "Umzug: Einstellungen nach %APPDATA%\$id" (($settingsText -match '"imageFormat":\s*"jpeg"') -and -not (Test-Path $oldRoaming)) "$settingsText"
   Check "Start räumt %TEMP%\Knips auf" (-not (Test-Path (Join-Path $tempDir "video-thumbs\$oldId-1-0.jpg")) -and -not (Test-Path (Join-Path $tempDir "export-alt.mp4")))
   $autostart = $null -ne (Get-ItemProperty -Path $runKey -Name "Knips" -ErrorAction SilentlyContinue)
   Write-Host "Autostart nach dem ersten Start eingetragen: $autostart"
@@ -147,7 +148,7 @@ try {
   # Nicht gestartet: noch Originale am alten Ort (Installationsordner) und alte Einstellungen.
   $leftId = New-OldItem (Join-Path $instDir "items")
   New-Item -ItemType Directory -Force -Path $oldRoaming | Out-Null
-  Set-Content -Path (Join-Path $oldRoaming "settings.json") -Value '{"telemetryInstallId":"noch-eine"}' -Encoding utf8NoBOM
+  Set-Content -Path (Join-Path $oldRoaming "settings.json") -Value '{"imageFormat":"jpeg"}' -Encoding utf8NoBOM
   New-Item -ItemType Directory -Force -Path (Join-Path $tempDir "video-thumbs") | Out-Null
   Set-Content -Path (Join-Path $tempDir "video-thumbs\$leftId-2-0.jpg") -Value "unzensiert"
   Take-PrintScreen

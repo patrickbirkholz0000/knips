@@ -239,7 +239,7 @@ pub fn setup(app: &AppHandle) -> anyhow::Result<()> {
 }
 
 /// Aufnahmen, die gerade in einem Editor oder Video-Editor offen sind.
-pub fn open_item_ids() -> HashSet<knips_core::model::Id> {
+fn open_item_ids() -> HashSet<knips_core::model::Id> {
     knips()
         .app
         .webview_windows()
@@ -262,8 +262,8 @@ fn start_housekeeping() {
     }
 }
 
-/// Ein Durchgang des regelmäßigen Aufräumens (auch für den Selbsttest).
-pub fn housekeeping() -> (usize, usize) {
+/// Ein Durchgang des regelmäßigen Aufräumens. Liefert (abgelaufene Aufnahmen, Zwischendateien).
+fn housekeeping() -> (usize, usize) {
     let k = knips();
     let open = open_item_ids();
     let expired = k.store.expire(&open);

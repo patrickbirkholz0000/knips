@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SignPath-Artefakt-Konfiguration „knips-installer“: der NSIS-Installer, der schon die signierte knips.exe enthält.
+  Benutzt von .github/workflows/release.yml (Job sign-installer). Nach einer Änderung hier in app.signpath.io
+  unter Projekt knips → Artifact Configurations → knips-installer ersetzen (RELEASING.md).
+
+  SignPath kann NSIS-Installer nicht von innen signieren; die EXE darin ist deshalb vorher einzeln signiert
+  (knips-exe.xml). Die NSIS-Plugins im Installer stammen von NSIS bzw. Tauri und bleiben unsigniert — fremde
+  Dateien darf das Projekt nicht mit dem Zertifikat der SignPath Foundation signieren.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file path="Knips_${version}_x64-setup.exe" product-name="Knips" product-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

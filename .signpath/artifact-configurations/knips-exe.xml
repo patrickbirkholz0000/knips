@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SignPath-Artefakt-Konfiguration „knips-exe“: die App-EXE vor dem Bündeln in den Installer.
+  Benutzt von .github/workflows/release.yml (Job sign-app). SignPath liest die Konfiguration aus dem Projekt,
+  nicht aus dem Repo: Nach einer Änderung hier in app.signpath.io unter Projekt knips → Artifact Configurations
+  → knips-exe ersetzen (RELEASING.md).
+
+  GitHub-Artefakte sind ZIP-Dateien, daher <zip-file> als Wurzel. Die Metadaten-Prüfung (ProductName, Version)
+  verlangt die SignPath Foundation für jede signierte Datei; die Version kommt als Parameter aus dem Workflow.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file path="knips.exe" product-name="Knips" product-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

@@ -115,6 +115,8 @@ Oberfläche im Browser gegen die Mac-Referenzbilder, Ablage-Selbsttest mit Attra
 **Auf echtem Windows (CI, 13.10.2026): alle 13 Selbsttests grün**, Installer baut — inkl. echter Kürzel
 über simulierte Tastendrücke (Druck, Win-Kombination), echter Zwischenablage und des interaktiven
 Auswahl-Overlays mit simulierter Maus. Fenster-Bilder aus der CI gegen die Mac-Referenzen durchgesehen.
+CI 20.10.2026 (Version 1.0.0): alle 15 Selbsttests grün, auch `links` (Rückfrage per Link) und alle Fenster
+unter der neuen CSP (Editor, Video-Editor, Verlauf, Karten laden Bilder/Videos über das Asset-Protokoll).
 Noch am Gerät zu testen: Tastendrücke auf echter Tastatur (Hook neben anderen Tools), Mikrofon,
 Ziehen aus den Karten in andere Apps, Einfügen in fremde Apps, mehrere Monitore mit gemischter Skalierung.
 

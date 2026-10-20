@@ -41,6 +41,8 @@ export default function LinkConfirm({ params }: { params: string[]; query?: URLS
         e.preventDefault();
         decide(false);
       } else if (e.key === "Enter") {
+        // Auf einem Knopf mit Fokus löst ⏎ wie unter Windows üblich diesen Knopf aus (z. B. „Abbrechen“).
+        if (e.target instanceof HTMLButtonElement) return;
         e.preventDefault();
         decide(true);
       }

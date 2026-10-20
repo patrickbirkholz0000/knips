@@ -145,6 +145,8 @@ export interface EditorPrefs {
   lastFrameStyle: FrameStyle | null;
 }
 
+export type Appearance = "system" | "light" | "dark";
+
 export interface Settings {
   saveFolder: string;
   copyToClipboard: boolean;
@@ -173,6 +175,8 @@ export interface Settings {
   launchAtLogin: boolean;
   /** knips://fullscreen, knips://last und knips://record (Start) ohne Rückfrage ausführen (Standard: aus). */
   linkCaptureWithoutConfirm: boolean;
+  /** Hell/Dunkel aller Fenster (docs/design.md); Menü, Pillen und Leisten bleiben immer dunkel. */
+  appearance: Appearance;
   editor: EditorPrefs;
   didFirstLaunch: boolean;
   askedShortcutTakeover: boolean;

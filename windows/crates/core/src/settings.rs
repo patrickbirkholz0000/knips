@@ -193,6 +193,16 @@ pub struct EditorPrefs {
     pub last_frame_style: Option<FrameStyle>,
 }
 
+/// Hell/Dunkel aller Fenster (docs/design.md). Menü, Pillen und Leisten bleiben immer dunkel.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -233,6 +243,7 @@ pub struct Settings {
     /// knips://fullscreen, knips://last und knips://record (Start) ohne Rückfrage ausführen (standardmäßig
     /// aus, weil jede App und jede Webseite solche Links öffnen kann — siehe `links`).
     pub link_capture_without_confirm: bool,
+    pub appearance: Appearance,
     pub editor: EditorPrefs,
     // Interne Merker (Mac: einzelne UserDefaults-Schlüssel).
     pub did_first_launch: bool,
@@ -247,7 +258,7 @@ pub const EDITOR_TOOLS: [&str; 10] = ["select", "arrow", "rectangle", "ellipse",
 
 /// Felder, die das Einstellungsfenster über `set_settings` ändern darf. Alles andere (Kürzel, interne
 /// Merker, Nutzungsstatistik) ändert nur Rust selbst.
-pub const SETTINGS_WINDOW_FIELDS: [&str; 25] = [
+pub const SETTINGS_WINDOW_FIELDS: [&str; 26] = [
     "saveFolder",
     "copyToClipboard",
     "showQuickAccess",
@@ -273,6 +284,7 @@ pub const SETTINGS_WINDOW_FIELDS: [&str; 25] = [
     "disabledHotkeys",
     "launchAtLogin",
     "linkCaptureWithoutConfirm",
+    "appearance",
 ];
 
 /// Felder, die Bild- und Video-Editor ändern dürfen (zuletzt gewählter Zensurstil).
@@ -440,6 +452,7 @@ impl Default for Settings {
             hotkeys: Settings::default_hotkeys(),
             launch_at_login: false,
             link_capture_without_confirm: false,
+            appearance: Appearance::System,
             editor: EditorPrefs::default(),
             did_first_launch: false,
             asked_shortcut_takeover: false,
@@ -588,5 +601,19 @@ mod tests {
         let mut s = Settings { quick_access_seconds: 0, recording_fps: 500, gif_fps: 0, gif_width: 1, retention_days: 99_999, ..Settings::default() };
         s.sanitize();
         assert_eq!((s.quick_access_seconds, s.recording_fps, s.gif_fps, s.gif_width, s.retention_days), (1, 60, 1, 160, 3650));
+    }
+
+    #[test]
+    fn appearance_from_settings_window() {
+        use serde_json::json;
+        let s = Settings::default();
+        assert_eq!(s.appearance, Appearance::System);
+        let next = s.patched(&json!({ "appearance": "dark" }), &SETTINGS_WINDOW_FIELDS).unwrap();
+        assert_eq!(next.appearance, Appearance::Dark);
+        assert!(s.patched(&json!({ "appearance": "grau" }), &SETTINGS_WINDOW_FIELDS).is_err());
+        assert!(s.patched(&json!({ "appearance": "light" }), &EDITOR_WINDOW_FIELDS).is_err());
+        // Ältere settings.json ohne das Feld: Standard „system“.
+        let old: Settings = serde_json::from_value(json!({ "playSound": false })).unwrap();
+        assert_eq!(old.appearance, Appearance::System);
     }
 }

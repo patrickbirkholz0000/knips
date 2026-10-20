@@ -36,6 +36,7 @@ export const mockSettings: Settings = {
   },
   launchAtLogin: true,
   linkCaptureWithoutConfirm: false,
+  appearance: "system",
   editor: { tool: null, color: null, size: null, lastFrameStyle: null },
   didFirstLaunch: true,
   askedShortcutTakeover: true,

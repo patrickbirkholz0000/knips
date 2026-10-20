@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import "./shared/tokens.css";
 import "./shared/theme.css";
 import "./shared/mock";
+import { startAppearance } from "./shared/appearance";
 import { useRoute } from "./shared/route";
 
 // Jedes Fenster lädt dieselbe Seite und wählt seine Ansicht über den Hash.
@@ -35,4 +36,5 @@ function App() {
   );
 }
 
+startAppearance();
 ReactDOM.createRoot(document.getElementById("root")!).render(<App />);

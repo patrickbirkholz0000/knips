@@ -231,17 +231,11 @@ impl Drop for StillConceal {
     }
 }
 
-/// Alle sichtbaren Knips-Fenster (Karten, Menü, Pins, Editor, Einstellungen …) für ein Standbild aus dem Bild
-/// nehmen — Knips' eigene Bilder zeigen nie Knips. Fenster, die ohnehin ausgeschlossen sind, bleiben unberührt.
+/// Alle Knips-Fenster (Karten, Menü, Pins, Editor, Einstellungen …) für ein Standbild aus dem Bild nehmen —
+/// Knips' eigene Bilder zeigen nie Knips. Fenster, die ohnehin ausgeschlossen sind, bleiben unberührt.
 pub fn conceal_for_still() -> StillConceal {
     let Some(k) = crate::app::try_knips() else { return StillConceal(Vec::new()) };
-    let windows: Vec<(String, isize)> = k
-        .app
-        .webview_windows()
-        .into_iter()
-        .filter(|(_, w)| w.is_visible().unwrap_or(false))
-        .filter_map(|(label, w)| hwnd(&w).map(|h| (label, h)))
-        .collect();
+    let windows: Vec<(String, isize)> = k.app.webview_windows().into_iter().filter_map(|(label, w)| hwnd(&w).map(|h| (label, h))).collect();
     let handles: Vec<isize> = windows.iter().map(|(_, h)| *h).collect();
     let concealed = knips_platform::capture::conceal_for_capture(&handles);
     StillConceal(windows.into_iter().filter(|(_, h)| concealed.contains(h)).collect())

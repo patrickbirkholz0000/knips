@@ -1,5 +1,5 @@
 // Screenshot einer Ansicht im Browser (Attrappe statt Tauri) — zum Prüfen der Oberfläche auf dem Mac.
-// Aufruf: pnpm dev (läuft auf :1430), dann
+// Aufruf: pnpm dev (läuft auf :1430; anderer Port: KNIPS_SHOT_PORT), dann
 //   node scripts/shot.mjs "<hash ohne #>" <ausgabe.png> [breite] [höhe] [--transparent] [--hover=<css-selektor>] [--wait=<ms>] [--scale=2]
 // Beispiel: node scripts/shot.mjs "/menu" shots/menu.png 360 520 --transparent
 import { chromium } from "playwright";
@@ -41,7 +41,7 @@ page.on("console", (m) => {
   if (m.type() === "error" || m.type() === "warning") console.log(`[${m.type()}] ${m.text()}`);
 });
 page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
-await page.goto(`http://localhost:1430/#${hash.replace(/^#/, "")}`);
+await page.goto(`http://localhost:${process.env.KNIPS_SHOT_PORT ?? "1430"}/#${hash.replace(/^#/, "")}`);
 await page.waitForTimeout(Number(flag("wait") ?? 600));
 const hover = flag("hover");
 if (hover) await page.hover(hover);

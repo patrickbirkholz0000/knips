@@ -119,8 +119,8 @@ pub mod capture {
     }
 
     /// Eigene Fenster für ein Standbild aus dem Bild nehmen: ab Windows 10 2004 per `WDA_EXCLUDEFROMCAPTURE`
-    /// (auf dem Bildschirm ändert sich nichts), davor per `DWMWA_CLOAK`. Betrifft nur sichtbare, noch nicht
-    /// ausgeschlossene; wartet, bis der Bildschirm ohne sie gezeichnet ist. Liefert sie für `reveal_after_capture`.
+    /// (auf dem Bildschirm ändert sich nichts; alle noch nicht ausgeschlossenen), davor per `DWMWA_CLOAK` (nur
+    /// sichtbare, dann warten, bis der Bildschirm ohne sie gezeichnet ist). Liefert sie für `reveal_after_capture`.
     pub fn conceal_for_capture(handles: &[isize]) -> Vec<isize> {
         let _ = handles;
         Vec::new()

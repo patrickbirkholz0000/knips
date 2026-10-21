@@ -8,7 +8,9 @@
 //! Aufräumen, Ablauf, Papierkorb; in der CI auch der Druck-Tasten-Vermerk in der Registry).
 //! Mit Fenstern (startet die App unsichtbar für den Nutzer, fotografiert nur eigene Fenster): ui, render,
 //! links (Rückfrage vor knips://-Aufnahmen; Aufnahmen sind durch eine Liste ersetzt, nimmt nie auf),
-//! nomedia (Windows N/KN ohne Media Feature Pack) und oldwin (Windows vor 10 2004) — `selftest_media.rs`.
+//! nomedia (Windows N/KN ohne Media Feature Pack) und oldwin (Windows vor 10 2004) — `selftest_media.rs`;
+//! firstshot (erstes Standbild eines frischen Prozesses, Overlay beim Erscheinen; mit Kindprozess `firstshot-roh`)
+//! und sharing (Knips-Fenster in Bildschirmübertragungen) — `selftest_capture.rs`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};

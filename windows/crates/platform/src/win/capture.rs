@@ -53,7 +53,7 @@ fn describe(img: &RgbaImage) -> String {
 }
 
 /// So lange wartet das Standbild höchstens auf ein Desktop-Bild der Desktop Duplication, danach Graphics Capture.
-const DDA_IMAGE_WAIT: Duration = Duration::from_millis(400);
+const DDA_IMAGE_WAIT: Duration = Duration::from_millis(300);
 
 /// Selbsttest `firstshot`: Die erste Meldung jeder Desktop-Duplication-Sitzung kommt ohne Desktop-Bild (nur
 /// Mauszeiger, Textur schwarz) — wie es manche Grafiktreiber direkt nach `DuplicateOutput` liefern.
@@ -529,21 +529,23 @@ pub fn capturable(handle: isize) -> bool {
     on_screen(hwnd(handle)) && !is_excluded(handle)
 }
 
-/// Wartezeit, bis der Bildschirm nach `conceal_for_capture` ohne die Fenster gezeichnet ist — gemessen im
-/// Selbsttest `sharing` (ein Bildwechsel genügt; DwmFlush kann bei ruhendem Desktop warten, bis sich etwas
-/// ändert — deshalb feste Zeit).
-const CONCEAL_SETTLE: Duration = Duration::from_millis(50);
+/// Wartezeit nach dem Verhüllen (`DWMWA_CLOAK`, vor Windows 10 2004), bis der Bildschirm ohne die Fenster gezeichnet
+/// ist (DwmFlush kann bei ruhendem Desktop warten, bis sich etwas ändert — deshalb feste Zeit). Der Ausschluss per
+/// `WDA_EXCLUDEFROMCAPTURE` wirkt dagegen sofort auf das nächste Standbild (Selbsttest `sharing`: auch ohne
+/// Wartezeit nichts mehr vom Fenster im Bild).
+const CLOAK_SETTLE: Duration = Duration::from_millis(50);
 
 /// Eigene Fenster für ein Standbild aus dem Bild nehmen: Ab Windows 10 2004 per `WDA_EXCLUDEFROMCAPTURE` — auf
-/// dem Bildschirm ändert sich nichts, nur Aufnahmen sehen sie kurz nicht. Davor per `DWMWA_CLOAK`: kurz
-/// unsichtbar, aber ohne Ausblenden (kein Fokuswechsel, keine Animation). Betrifft nur sichtbare, noch nicht
-/// ausgeschlossene; wartet, bis der Bildschirm ohne sie gezeichnet ist. Liefert sie für `reveal_after_capture`.
+/// dem Bildschirm ändert sich nichts, nur Aufnahmen sehen sie kurz nicht; das gilt für alle noch nicht
+/// ausgeschlossenen, auch gerade verborgene (ein eben geschlossenes Menü blendet womöglich noch aus). Davor per
+/// `DWMWA_CLOAK` nur die sichtbaren: kurz unsichtbar, aber ohne Ausblenden (kein Fokuswechsel, keine Animation),
+/// dann warten, bis der Bildschirm ohne sie gezeichnet ist. Liefert sie für `reveal_after_capture`.
 pub fn conceal_for_capture(handles: &[isize]) -> Vec<isize> {
     let exclude = exclusion_supported();
     let mut concealed = Vec::new();
     for &handle in handles {
         let h = hwnd(handle);
-        if !on_screen(h) || is_excluded(handle) {
+        if is_excluded(handle) || (!exclude && !on_screen(h)) {
             continue;
         }
         let done = if exclude {
@@ -558,8 +560,8 @@ pub fn conceal_for_capture(handles: &[isize]) -> Vec<isize> {
             log::warn!("Fenster für das Standbild nicht verborgen");
         }
     }
-    if !concealed.is_empty() {
-        std::thread::sleep(CONCEAL_SETTLE);
+    if !exclude && !concealed.is_empty() {
+        std::thread::sleep(CLOAK_SETTLE);
     }
     concealed
 }

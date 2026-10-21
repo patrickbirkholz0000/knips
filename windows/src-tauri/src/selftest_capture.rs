@@ -156,17 +156,30 @@ pub fn sharing(app: &AppHandle, out: &Path) -> Result<()> {
     let cards_visible = || app.get_webview_window(crate::cards::LABEL).is_some_and(|w| w.is_visible().unwrap_or(false));
     check("Karte nach der Aufnahme sichtbar", cards_visible());
 
-    // Bildschirmbild wie bei Discord/OBS: zeigt die Einstellungen. Vergleich: Bild ohne sie (ausgeblendet).
+    // Bildschirmbild wie bei Discord/OBS: zeigt die Einstellungen. Vergleich: Bild ohne sie (ausgeblendet), in der
+    // oberen Hälfte der Einstellungen — der Pin (immer obenauf) kommt dafür in die Ecke unten rechts.
+    if let Some(p) = app.get_webview_window(&pin) {
+        let size = p.outer_size()?;
+        let _ = p.set_position(tauri::PhysicalPosition::new(m.work.right() - size.width as i32 - 8, m.work.bottom() - size.height as i32 - 8));
+    }
     let settings = app.get_webview_window("settings").context("Einstellungen fehlen")?;
     let settings_h = wm::hwnd(&settings).context("Einstellungen ohne HWND")?;
     let rect = window_rect(app, "settings")?;
     let upper = IRect::new(rect.x, rect.y, rect.width, rect.height / 2);
+    std::thread::sleep(Duration::from_millis(500));
     let with_settings = capture::freeze(&monitors::list())?;
     let _ = settings.hide();
     std::thread::sleep(Duration::from_millis(700));
     let truth = capture::freeze(&monitors::list())?;
     let _ = settings.show();
     std::thread::sleep(Duration::from_millis(700));
+    let save = |frozen: &[Frozen], name: &str| {
+        if let Some(f) = frozen.iter().find(|f| f.monitor.id == m.id) {
+            let _ = write(&f.image, &out.join(format!("sharing-{name}.png")));
+        }
+    };
+    save(&with_settings, "mit-einstellungen");
+    save(&truth, "ohne-einstellungen");
     let seen = still_diff(&with_settings, &truth, upper);
     println!("   Bildschirmbild (wie Discord/OBS): Abweichung zum Bild ohne Einstellungen {seen:.1}");
     check("Bildschirmbild (wie Discord/OBS) zeigt die Einstellungen", seen >= 10.0);
@@ -190,6 +203,7 @@ pub fn sharing(app: &AppHandle, out: &Path) -> Result<()> {
     let still = capture::freeze(&monitors::list())?;
     drop(conceal);
     let ms = t.elapsed().as_millis();
+    save(&still, "eigenes-standbild");
     let d = still_diff(&still, &truth, upper);
     println!("   eigenes Standbild: Abweichung {d:.1}, Fenster {ms} ms für Aufnahmen verborgen");
     check("eigenes Standbild ohne Knips-Fenster", d <= 3.0);
@@ -220,6 +234,7 @@ pub fn sharing(app: &AppHandle, out: &Path) -> Result<()> {
     }
     std::thread::sleep(Duration::from_millis(300));
     let hidden = capture::freeze(&monitors::list())?;
+    save(&hidden, "einstellung-an");
     let d = still_diff(&hidden, &truth, upper);
     println!("   Bildschirmbild mit Einstellung an: Abweichung {d:.1}");
     check("Bildschirmbild (wie Discord/OBS) ohne die Einstellungen", d <= 3.0);

@@ -271,6 +271,31 @@ pub fn sharing(app: &AppHandle, out: &Path) -> Result<()> {
     }
     check("Einblendung bleibt ausgeschlossen", excluded(crate::hud::LABEL) == Some(true));
 
+    // Verborgene Fenster: Ein ausdrückliches WDA_NONE auf ein verborgenes Fenster darf es nicht ins Bild holen
+    // (Menü, vorgewärmt und nie gezeigt). Vergleich im Bereich des Menüs mit dem Bild davor.
+    println!("Verborgenes Menü:");
+    let menu_w = app.get_webview_window(crate::menu::LABEL).context("Menü fehlt")?;
+    let menu_h = wm::hwnd(&menu_w).context("Menü ohne HWND")?;
+    let menu_rect = {
+        let (p, s) = (menu_w.outer_position()?, menu_w.outer_size()?);
+        IRect::new(p.x, p.y, s.width as i32, s.height as i32)
+    };
+    let base = capture::freeze(&monitors::list())?;
+    save(&base, "menue-vorher");
+    let conceal = wm::conceal_for_still();
+    drop(conceal);
+    std::thread::sleep(Duration::from_millis(200));
+    let after_still = capture::freeze(&monitors::list())?;
+    save(&after_still, "menue-nach-standbild");
+    capture::exclude_from_capture(menu_h, true);
+    capture::exclude_from_capture(menu_h, false);
+    std::thread::sleep(Duration::from_millis(200));
+    let after_none = capture::freeze(&monitors::list())?;
+    save(&after_none, "menue-nach-wda-none");
+    let (d_still, d_none) = (still_diff(&after_still, &base, menu_rect), still_diff(&after_none, &base, menu_rect));
+    println!("   Abweichung im Bereich des Menüs zum Bild davor: nach einem Standbild {d_still:.1}, nach ausdrücklichem WDA_NONE {d_none:.1}");
+    check("verborgenes Menü bleibt nach einem Standbild unsichtbar", d_still <= 3.0);
+
     // Videoaufnahme (bis zum Countdown, dann abgebrochen): Karten und Menü weg, eigene Fenster aus dem Video.
     println!("Videoaufnahme:");
     k.settings.update(|s| s.recording_countdown = true);

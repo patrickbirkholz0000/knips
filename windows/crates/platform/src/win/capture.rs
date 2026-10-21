@@ -488,6 +488,10 @@ pub(crate) fn set_excluded(h: windows::Win32::Foundation::HWND, what: &str) -> b
 /// Fenster aus allen Aufnahmen ausschließen (`WDA_EXCLUDEFROMCAPTURE`) bzw. wieder zulassen. Vor
 /// Windows 10 2004 ohne Wirkung (siehe `exclusion_supported`).
 pub fn exclude_from_capture(handle: isize, exclude: bool) {
+    // Nur ändern, was sich ändert (neue Fenster stehen auf WDA_NONE).
+    if exclude == is_excluded(handle) {
+        return;
+    }
     if exclude {
         set_excluded(hwnd(handle), "Fenster");
         return;

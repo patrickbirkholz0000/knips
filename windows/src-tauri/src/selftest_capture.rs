@@ -175,6 +175,16 @@ pub fn sharing(app: &AppHandle, out: &Path) -> Result<()> {
         _ => w.label().to_string(),
     };
     println!("   sichtbare Knips-Fenster: {}", shown.iter().map(describe_window).collect::<Vec<_>>().join(", "));
+    for w in app.webview_windows().values() {
+        let h = wm::hwnd(w).unwrap_or(0);
+        println!(
+            "      {}: sichtbar {}, aufnehmbar {}, ausgeschlossen {}",
+            describe_window(w),
+            w.is_visible().unwrap_or(false),
+            capture::capturable(h),
+            capture::is_excluded(h)
+        );
+    }
     for w in &shown {
         let _ = w.hide();
     }

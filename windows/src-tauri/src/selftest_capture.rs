@@ -24,7 +24,7 @@ use knips_platform::capture::RegionCapturer;
 use knips_platform::overlay::{self, Purpose};
 use knips_platform::{capture, monitors, testinput, Frozen, Monitor};
 use parking_lot::Mutex;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, WebviewWindow};
 
 type FreezeHook = Box<dyn Fn(&[Frozen]) + Send + Sync>;
 
@@ -168,10 +168,21 @@ pub fn sharing(app: &AppHandle, out: &Path) -> Result<()> {
     let upper = IRect::new(rect.x, rect.y, rect.width, rect.height / 2);
     std::thread::sleep(Duration::from_millis(500));
     let with_settings = capture::freeze(&monitors::list())?;
-    let _ = settings.hide();
+    // Vergleichsbild: der Bildschirm ohne alle Knips-Fenster (ausgeblendet).
+    let shown: Vec<WebviewWindow> = app.webview_windows().into_values().filter(|w| w.is_visible().unwrap_or(false)).collect();
+    let describe_window = |w: &WebviewWindow| match (w.outer_position(), w.outer_size()) {
+        (Ok(p), Ok(s)) => format!("{} ({}, {}, {}×{})", w.label(), p.x, p.y, s.width, s.height),
+        _ => w.label().to_string(),
+    };
+    println!("   sichtbare Knips-Fenster: {}", shown.iter().map(describe_window).collect::<Vec<_>>().join(", "));
+    for w in &shown {
+        let _ = w.hide();
+    }
     std::thread::sleep(Duration::from_millis(700));
     let truth = capture::freeze(&monitors::list())?;
-    let _ = settings.show();
+    for w in &shown {
+        let _ = w.show();
+    }
     std::thread::sleep(Duration::from_millis(700));
     let save = |frozen: &[Frozen], name: &str| {
         if let Some(f) = frozen.iter().find(|f| f.monitor.id == m.id) {

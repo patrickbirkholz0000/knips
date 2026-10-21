@@ -16,9 +16,26 @@ fn action_of(id: u32) -> Option<HotkeyAction> {
     HotkeyAction::ALL.get(id.checked_sub(1)? as usize).copied()
 }
 
+/// Selbsttest: ausgelöste Kürzel nur mitschreiben statt aufnehmen.
+#[cfg(feature = "dev")]
+type TestFire = std::sync::Arc<dyn Fn(HotkeyAction) + Send + Sync>;
+#[cfg(feature = "dev")]
+static TEST_FIRE: parking_lot::RwLock<Option<TestFire>> = parking_lot::RwLock::new(None);
+
+/// Selbsttest: Ausführen ersetzen (`None` = wieder echt).
+#[cfg(feature = "dev")]
+pub fn set_test_fire(f: Option<TestFire>) {
+    *TEST_FIRE.write() = f;
+}
+
 pub fn start() {
     hotkeys::start(Box::new(|id| {
         if let Some(action) = action_of(id) {
+            #[cfg(feature = "dev")]
+            if let Some(f) = TEST_FIRE.read().clone() {
+                f(action);
+                return;
+            }
             knips().coordinator.perform(action);
         }
     }));
@@ -40,7 +57,8 @@ pub fn apply() {
 #[serde(rename_all = "camelCase")]
 struct Recorded {
     action: HotkeyAction,
-    /// „combo“, „remove“, „cancel“ oder „rejected“ (Kombination tippt ein Zeichen, siehe `message`).
+    /// „combo“, „remove“, „cancel“, „rejected“ (Kombination tippt ein Zeichen, siehe `message`) oder „invalid“
+    /// (Taste ohne Strg/Alt/Win, siehe `message`; die Aufnahme läuft weiter).
     result: &'static str,
     combo: Option<KeyCombo>,
     message: Option<String>,
@@ -63,11 +81,21 @@ pub fn altgr_conflict(combo: &KeyCombo) -> Option<String> {
     ))
 }
 
+/// Rückmeldung zu einer Taste, die ohne Strg/Alt/Win nicht als Kürzel taugt (nur „A“, Umschalt+A).
+pub fn invalid_message(combo: &KeyCombo) -> String {
+    format!("{} geht nicht – braucht Strg, Alt oder Win.", label(combo))
+}
+
 /// Nächste Tastenkombination für `action` aufnehmen (Einstellungen).
 pub fn record(action: HotkeyAction) {
     hotkeys::record(Box::new(move |result| {
         let k = knips();
         let (kind, combo, message) = match result {
+            RecordResult::Invalid(c) => {
+                // Die Aufnahme läuft weiter: nur Rückmeldung, nichts ändern.
+                k.emit("hotkey-recorded", Recorded { action, result: "invalid", combo: Some(c), message: Some(invalid_message(&c)) });
+                return;
+            }
             RecordResult::Combo(c) => match altgr_conflict(&c) {
                 Some(message) => ("rejected", Some(c), Some(message)),
                 None => ("combo", Some(c), None),

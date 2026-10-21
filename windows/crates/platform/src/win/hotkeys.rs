@@ -46,6 +46,8 @@ pub enum RecordResult {
     Remove,
     /// Esc.
     Cancel,
+    /// Taste ohne Strg/Alt/Win, die nicht allein stehen darf (nur „A“, Umschalt+A): die Aufnahme läuft weiter.
+    Invalid(KeyCombo),
 }
 
 // ---------------------------------------------------------------- Zustand für den Hook (nur Atomics)
@@ -67,12 +69,14 @@ static SWALLOWED: [AtomicU64; 4] = [ZERO64; 4];
 static CONSUMED: AtomicU32 = AtomicU32::new(0);
 static RECORDING: AtomicBool = AtomicBool::new(false);
 static HOOK: AtomicIsize = AtomicIsize::new(0);
+/// Aufrufe des Hooks (HC_ACTION) — Selbsttest: Kommt eine Taste überhaupt noch an?
+static HOOK_CALLS: AtomicU32 = AtomicU32::new(0);
 static THREAD_ID: AtomicU32 = AtomicU32::new(0);
 
 const WM_FIRE: u32 = WM_APP + 1;
 const WM_CMD: u32 = WM_APP + 2;
 const WM_RECORDED: u32 = WM_APP + 3;
-const WM_BEEP: u32 = WM_APP + 4;
+const WM_INVALID: u32 = WM_APP + 4;
 
 const MOD_NOREPEAT: u32 = 0x4000;
 const HEAL_INTERVAL_MS: u32 = 2_000;
@@ -213,7 +217,7 @@ fn record_key(vk: u32, down: bool) -> bool {
         RECORDING.store(false, Ordering::SeqCst);
         post(WM_RECORDED, 0, (vk | (mods << 16)) as isize);
     } else {
-        post(WM_BEEP, 0, 0); // ungültig: weiter warten
+        post(WM_INVALID, 0, (vk | (mods << 16)) as isize); // ungültig: melden, weiter warten
     }
     true
 }
@@ -265,6 +269,7 @@ fn on_key(vk: u32, down: bool) -> bool {
 
 unsafe extern "system" fn hook_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
+        HOOK_CALLS.fetch_add(1, Ordering::Relaxed);
         // SAFETY: Bei HC_ACTION zeigt lParam auf eine gültige KBDLLHOOKSTRUCT.
         let kb = unsafe { &*(lp.0 as *const KBDLLHOOKSTRUCT) };
         // Eigene injizierte Ereignisse zählen nicht und werden nie geschluckt.
@@ -284,7 +289,8 @@ unsafe extern "system" fn hook_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESUL
 
 // ---------------------------------------------------------------- Thread-Zustand (nicht im Hook)
 
-type RecordCb = Box<dyn FnOnce(RecordResult) + Send>;
+/// Rückruf der Aufnahme: beliebig oft `Invalid`, danach genau einmal das Ergebnis.
+type RecordCb = Arc<dyn Fn(RecordResult) + Send + Sync>;
 
 enum Cmd {
     Apply(Vec<(u32, KeyCombo)>, Sender<Vec<u32>>),
@@ -401,10 +407,14 @@ fn apply_bindings(st: &mut State, bindings: Vec<(u32, KeyCombo)>) -> Vec<u32> {
     failed
 }
 
+fn combo_of(lp: isize) -> KeyCombo {
+    KeyCombo::new((lp & 0xFFFF) as u32, ((lp >> 16) & 0xF) as u32)
+}
+
 fn finish_record(st: &mut State, kind: usize, lp: isize) {
     let Some(cb) = st.record_cb.take() else { return };
     let result = match kind {
-        0 => RecordResult::Combo(KeyCombo::new((lp & 0xFFFF) as u32, ((lp >> 16) & 0xF) as u32)),
+        0 => RecordResult::Combo(combo_of(lp)),
         1 => RecordResult::Remove,
         _ => RecordResult::Cancel,
     };
@@ -440,6 +450,9 @@ fn run_commands(st: &mut State) {
                 }
                 unregister_all(st);
                 clear_slots();
+                // Frisch einhängen: Einen Hook, den Windows nach einer Zeitüberschreitung still entfernt hat,
+                // hält `HOOK` noch für aktiv — die Aufnahme bekäme dann keine einzige Taste.
+                remove_hook();
                 if install_hook() {
                     st.record_cb = Some(cb);
                     RECORDING.store(true, Ordering::SeqCst);
@@ -476,10 +489,10 @@ fn heal() {
     }
 }
 
-/// Windows entfernt Low-Level-Hooks nach einem Zeitüberschreitung still. Vorsorglich neu einhängen,
+/// Windows entfernt Low-Level-Hooks nach einer Zeitüberschreitung still. Vorsorglich neu einhängen,
 /// aber nur, wenn gerade keine Modifier gehalten werden (kein Ereignis fällt in die Lücke).
 fn rehook() {
-    if HOOK.load(Ordering::SeqCst) == 0 || RECORDING.load(Ordering::SeqCst) {
+    if HOOK.load(Ordering::SeqCst) == 0 && !RECORDING.load(Ordering::SeqCst) {
         return;
     }
     let held = [VK_SHIFT.0, VK_CONTROL.0, VK_MENU.0, VK_LWIN.0, VK_RWIN.0].into_iter().any(key_down_now);
@@ -488,7 +501,7 @@ fn rehook() {
     }
     remove_hook();
     if !install_hook() {
-        log::error!("Tastatur-Hook nach Neu-Installation nicht aktiv — nächster Versuch in 30 s");
+        log::error!("Tastatur-Hook nach Neu-Installation nicht aktiv — nächster Versuch beim nächsten Abgleich");
     }
 }
 
@@ -516,13 +529,30 @@ fn thread_main(ready: Sender<()>) {
                 WM_FIRE => fire(msg.wParam.0 as u32),
                 WM_CMD => run_commands(&mut st),
                 WM_RECORDED => finish_record(&mut st, msg.wParam.0, msg.lParam.0),
-                WM_BEEP => {
-                    let _ = MessageBeep(MB_OK);
+                WM_INVALID => {
+                    // Signalton und Rückmeldung nie in diesem Thread: `MessageBeep` kann hängen (Audio-Gerät wacht
+                    // auf, keins da). Solange der Thread steht, laufen die Hook-Aufrufe in die Zeitüberschreitung,
+                    // und Windows hängt den Hook still aus — danach käme keine Taste mehr an.
+                    let cb = st.record_cb.clone();
+                    let combo = combo_of(msg.lParam.0);
+                    std::thread::spawn(move || {
+                        let t = std::time::Instant::now();
+                        let _ = MessageBeep(MB_OK);
+                        let ms = t.elapsed().as_millis();
+                        if ms > 100 {
+                            log::info!("Signalton brauchte {ms} ms");
+                        }
+                        // Nur während der Aufnahme (eine schon beendete meldet nichts mehr nach).
+                        if let Some(cb) = cb {
+                            cb(RecordResult::Invalid(combo));
+                        }
+                    });
                 }
                 WM_TIMER => {
                     heal();
                     ticks += 1;
-                    if ticks.is_multiple_of(REHOOK_EVERY_TICKS) {
+                    // Während der Aufnahme öfter: Ein still ausgehängter Hook ließe sie sonst keine Taste mehr sehen.
+                    if ticks.is_multiple_of(REHOOK_EVERY_TICKS) || RECORDING.load(Ordering::SeqCst) {
                         rehook();
                     }
                 }
@@ -588,9 +618,10 @@ pub fn apply(bindings: &[(u32, KeyCombo)]) -> Vec<u32> {
 }
 
 /// Nächste Tastenkombination aufnehmen (Einstellungen). Solange ruhen alle Kürzel; die Tasten
-/// werden verschluckt (auch Druck und Win-Kombinationen). Ungültige Kombination → Signalton,
-/// weiter warten.
-pub fn record(on_result: Box<dyn FnOnce(RecordResult) + Send>) {
+/// werden verschluckt (auch Druck und Win-Kombinationen). Ungültige Kombination → Signalton und
+/// `RecordResult::Invalid`, weiter warten. `on_result` kommt aus einem eigenen Thread, nie aus dem Hook.
+pub fn record(on_result: Box<dyn Fn(RecordResult) + Send + Sync>) {
+    let on_result: RecordCb = Arc::from(on_result);
     // Ohne laufenden Thread kann nicht aufgenommen werden — dann sofort „abgebrochen“ melden.
     let tid = THREAD_ID.load(Ordering::SeqCst);
     if tid == 0 {
@@ -607,6 +638,21 @@ pub fn record(on_result: Box<dyn FnOnce(RecordResult) + Send>) {
 /// Bricht die Aufnahme ab (ohne Rückruf) und stellt die Kürzel wieder her.
 pub fn cancel_record() {
     send_cmd(Cmd::CancelRecord);
+}
+
+/// Wartet der Hook gerade auf die nächste Kombination?
+pub fn is_recording() -> bool {
+    RECORDING.load(Ordering::SeqCst)
+}
+
+/// Bisherige Aufrufe des Tastatur-Hooks.
+pub fn hook_calls() -> u32 {
+    HOOK_CALLS.load(Ordering::Relaxed)
+}
+
+/// Ist der Tastatur-Hook eingehängt?
+pub fn hook_installed() -> bool {
+    HOOK.load(Ordering::SeqCst) != 0
 }
 
 const KEYBOARD_KEY: windows::core::PCWSTR = w!("Control Panel\\Keyboard");

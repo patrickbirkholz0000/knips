@@ -10,7 +10,8 @@
 //! links (Rückfrage vor knips://-Aufnahmen; Aufnahmen sind durch eine Liste ersetzt, nimmt nie auf),
 //! nomedia (Windows N/KN ohne Media Feature Pack) und oldwin (Windows vor 10 2004) — `selftest_media.rs`;
 //! firstshot (erstes Standbild eines frischen Prozesses, Overlay beim Erscheinen; mit Kindprozess `firstshot-roh`)
-//! und sharing (Knips-Fenster in Bildschirmübertragungen) — `selftest_capture.rs`.
+//! und sharing (Knips-Fenster in Bildschirmübertragungen) — `selftest_capture.rs`;
+//! hotkeyrecord (Kürzel in den Einstellungen ändern, Tasten wie von der Tastatur) — `selftest_hotkeys.rs`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -35,7 +36,7 @@ use crate::settings::SettingsStore;
 use crate::store::Store;
 use crate::wm;
 
-const WINDOW_TESTS: [&str; 7] = ["ui", "render", "links", "nomedia", "oldwin", "firstshot", "sharing"];
+const WINDOW_TESTS: [&str; 8] = ["ui", "render", "links", "nomedia", "oldwin", "firstshot", "sharing", "hotkeyrecord"];
 
 /// Kindprozess von `links`: Knips mit `knips://pin` als einzigem Argument gestartet. Nach dem Start (und
 /// einer Pause, in der eine verspätete zweite Meldung ankäme) muss genau ein Aufruf angekommen sein.
@@ -1388,6 +1389,7 @@ pub fn after_setup(app: &AppHandle) {
             "oldwin" => crate::selftest_media::oldwin(&app, &out),
             "firstshot" => crate::selftest_capture::firstshot(&app, &out),
             "sharing" => crate::selftest_capture::sharing(&app, &out),
+            "hotkeyrecord" => crate::selftest_hotkeys::hotkey_record(&app, &out),
             "startlink" => start_link_result(),
             _ => Ok(()),
         };

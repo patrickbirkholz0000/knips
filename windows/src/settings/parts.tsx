@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { cx, Keys } from "../shared/ui";
 
@@ -42,11 +42,38 @@ export function SecondsField({ value, min, max, onChange }: { value: number; min
   );
 }
 
-/** Kürzel als Tastenkappen; Klick nimmt eine neue Kombination auf. */
-export function KeyButton({ label, recording, dim, onClick }: { label?: string; recording: boolean; dim?: boolean; onClick: () => void }) {
+/**
+ * Kürzel als Tastenkappen; Klick nimmt eine neue Kombination auf. `nudge` zählt ungültige Tasten während der
+ * Aufnahme: Jede neue lässt den Knopf kurz zucken.
+ */
+export function KeyButton({
+  action,
+  label,
+  recording,
+  nudge = 0,
+  dim,
+  onClick,
+}: {
+  action: string;
+  label?: string;
+  recording: boolean;
+  nudge?: number;
+  dim?: boolean;
+  onClick: () => void;
+}) {
+  const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!nudge || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    ref.current?.animate(
+      [{ transform: "translateX(0)" }, { transform: "translateX(-4px)" }, { transform: "translateX(4px)" }, { transform: "translateX(-2px)" }, { transform: "translateX(0)" }],
+      { duration: 260, easing: "ease-out" },
+    );
+  }, [nudge]);
   return (
     <button
+      ref={ref}
       type="button"
+      data-hotkey={action}
       className={cx("st-keybtn", recording && "is-rec", !recording && !label && "is-empty", dim && "is-dim")}
       title="Klicken und neue Tastenkombination drücken"
       onClick={onClick}

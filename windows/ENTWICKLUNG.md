@@ -68,8 +68,10 @@ im Fenster.
 - Die Fragen „Druck-Taste übernehmen?“, „Endgültig löschen?“ und Fehlermeldungen sind noch native
   Windows-Dialoge (`tauri_plugin_dialog`).
 - Im Browser prüfen: `pnpm dev`, `node scripts/shot.mjs "/settings/start" …`; Attrappen-Schalter in der Adresse:
-  `?fehlt` (Bereit-Check mit offenen Schritten), `?bereit` (alles erledigt), `nomedia`, `nohevc`, im Verlauf `?leer`.
-  Dunkel: Systemmodus des Browsers (die Attrappe steht auf „System“).
+  `?fehlt` (Bereit-Check mit offenen Schritten), `?bereit` (alles erledigt), `nomedia`, `nohevc`, im Verlauf `?leer`,
+  in den Tastaturkürzeln `?aufnahme` (wartet ohne Ende) und `?ungueltig` (meldet Umschalt+A als ungültig), jeweils mit
+  `--click='[data-hotkey=captureFullscreen]'`. Dunkel: Systemmodus des Browsers (die Attrappe steht auf „System“), in
+  `shot.mjs` mit `--dark`.
 
 ## Selbsttests
 
@@ -88,6 +90,7 @@ Alle zusammen: `scripts/selftest.ps1` (macht die CI). Nur einige in der CI, ohne
 | `video` | MP4-Export mit Kürzen + Balken, GIF-Export, Auto-Zensur im Video; Quelle mit variabler Bildrate (wie eine Aufnahme, Ø 9 fps): wirksam ≈ 30 fps, Export ≥ 24 fps, jedes Exportbild zeigt das Quellbild seiner Zeit |
 | `perf` | Zeiten: Standbild, 1×+PNG, Texterkennung |
 | `hotkeys` | Kürzel über RegisterHotKey und Tastatur-Hook mit simulierten Tastendrücken (auch Druck, Win-Kombination); Tastennamen und AltGr-Erkennung auf dem deutschen und US-Layout (`probe_layout` lädt sie kurz) |
+| `hotkeyrecord` | Kürzel ändern wie ein Nutzer: Einstellungen → Tastaturkürzel, Knopf anklicken (im Fenster und einmal mit simulierter Maus), Tasten per `SendInput` als fremde Eingabe (nicht `OWN_INJECT`). Strg+Umschalt+K/L und Umschalt+F7: Ereignis `hotkey-recorded`, Einstellung, Anzeige, das neue Kürzel löst aus, das alte nicht mehr; nur „A“ und Umschalt+A → `invalid` mit Hinweis unter dem Kürzel, die Aufnahme läuft weiter; Esc bricht ab, Rücktaste entfernt, zweiter Klick beendet; Fokus weg oder Fenster zu beendet die Aufnahme; Druck (Hook-Kürzel) löst aus, während die Einstellungen vorn sind. Jede Taste mit Zahl der Hook-Aufrufe im Log. Ausführen ist durch eine Liste ersetzt, nimmt nie auf. Bilder `kuerzel-*.png` (auch dunkel) |
 | `overlay` | das echte Auswahl-Overlay mit simulierter Maus/Tastatur: Ziehen, Umschalt-Quadrat, Esc, Eingabe, Leertaste + Fensterklick — nur auf Rechnern ohne Nutzer (CI) |
 | `clipboard` | echte Zwischenablage: Bild verzögert anbieten (PNG/JPEG) und zurücklesen; privates Kopieren (nach der Aufnahme) vom Verlauf/Cloud ausgeschlossen und trotzdem einfügbar — nur für die CI |
 | `telemetry` | Nutzungsstatistik gegen einen lokalen Server (127.0.0.1): in Sandbox/CI aus, ohne Zustimmung nichts, Zustimmung → Ereignisse → Senden (Nutzlast, Erlaubt-Liste, Deckel 10000) → Zähler zurückgesetzt, Fehler behält Zähler, Widerruf löscht Kennung + Zähler; Nutzlast als `telemetry-payload.json` |
@@ -185,6 +188,25 @@ Eingaben (`sample`, `testinput`) gibt es unter Windows nur mit Feature `dev`.
 - Installer-Seiten fotografiert die CI (`scripts/installer-shots.ps1` → `shots/installer/`).
 
 ## Kürzel (Windows-Standard)
+
+**Raw Input bleibt aus** (`device_event_filter(Always)` in `main.rs`): tao meldet sonst Tastatur und Maus für Raw Input
+an (Geräte-Ereignisse, die Knips nicht braucht). Solange das besteht, ruft Windows die Low-Level-Hooks von Knips nicht
+auf, während ein Knips-Fenster im Vordergrund ist — in der CI 0 Aufrufe, mit WebView2 wie mit einem schlichten
+Win32-Fenster, für Tasten aus Knips wie aus einem anderen Prozess, mit und ohne Modul-Handle, beide Prozesse „Hoch“;
+mit fremdem Fenster vorn oder ohne die Anmeldung 6 von 6. Bis 1.0.0 nahm deshalb „Kürzel festlegen“ keine Taste an
+(die Tasten landeten in der Seite), und Hook-Kürzel (Druck, Win-Kombinationen) blieben über eigenen Fenstern stumm.
+
+**Festlegen** (Einstellungen → Tastaturkürzel): Klick auf ein Kürzel → `hotkey_record` → der Hook-Thread hängt den
+Tastatur-Hook frisch ein (einen still entfernten hielte `HOOK` sonst für aktiv), erneuert ihn während der Aufnahme
+alle 2 s und schluckt bis zum Ergebnis jede Taste, in allen Apps. Im Hook-Thread läuft nichts, was hängen kann
+(Signalton und Rückmeldung in eigenem Thread), sonst hängt Windows den Hook nach einer Zeitüberschreitung still aus.
+Unter dem Kürzel steht solange der Hinweis „Kombination mit Strg, Alt oder Win drücken – oder eine F-Taste/Druck.
+Esc bricht ab, Rücktaste entfernt.“ Gültig: mit Strg/Alt/Win oder Druck, Pause, Rollen, Einfg,
+F1–F24 allein (`KeyCombo::is_valid`), Umschalt darf dazu. Eine ungültige Taste (nur „A“, Umschalt+A) piept, meldet
+`hotkey-recorded` mit `result: "invalid"` („Umschalt+A geht nicht – braucht Strg, Alt oder Win.“, Zeile mit rotem Punkt,
+der Knopf zuckt kurz) und die Aufnahme läuft weiter. Verliert das Einstellungsfenster den Fokus oder wird es
+geschlossen, endet die Aufnahme (`blur` in `panes.tsx`, `app::on_window_destroyed`) — sonst schluckte der Hook weiter
+Tasten in anderen Apps.
 
 Druck = Bereich (Leertaste: Fenster) · Alt+Druck = Fenster · Strg+Druck = Bildschirm · Umschalt+Druck =
 Video starten/stoppen. „Mac-Belegung“ in den Einstellungen: Win+Umschalt+4/2/3/5. Windows 11 gibt Druck

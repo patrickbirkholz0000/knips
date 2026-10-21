@@ -792,9 +792,27 @@ import Vision
                 Readiness.shared.simulated = nil
             }
             if pane == .shortcuts {
-                HotkeyRecorderState.shared.recording = .captureArea
+                // Aufnahme mit Hinweis, dann mit Rückmeldung zu einer ungültigen Taste (nur gezeigt, ohne Tastatur-Monitor).
+                let recorder = HotkeyRecorderState.shared
+                recorder.recording = .captureArea
                 try await windowShot(window, out.appendingPathComponent("einstellungen-shortcuts-eingabe.png"))
-                HotkeyRecorderState.shared.recording = nil
+                func key(_ code: UInt16, _ chars: String, _ flags: NSEvent.ModifierFlags) -> NSEvent? {
+                    NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0,
+                                     context: nil, characters: chars, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)
+                }
+                if let shiftA = key(0, "A", .shift), let cmdShiftA = key(0, "A", [.command, .shift]), let f5 = key(96, "", []) {
+                    check("⇧A taugt nicht als Kürzel, Rückmeldung zeigt ⇧A",
+                          KeyCombo(event: shiftA) == nil && KeyCombo(pressed: shiftA).display == "⇧A")
+                    check("F5 allein taugt nicht als Kürzel", KeyCombo(event: f5) == nil)
+                    check("⇧⌘A taugt", KeyCombo(event: cmdShiftA) == KeyCombo(keyCode: 0, modifiers: 768)) // ⌘ 256 + ⇧ 512
+                    recorder.invalid = KeyCombo(pressed: shiftA)
+                    recorder.invalidCount += 1
+                } else {
+                    check("Tastenereignisse erzeugt", false)
+                }
+                try await windowShots(window, out, "einstellungen-shortcuts-ungueltig")
+                recorder.recording = nil
+                recorder.invalid = nil
             }
             if pane == .general {
                 // Anzeigedauer eingeschaltet (Sandbox-Domäne — die echten Einstellungen bleiben unberührt).

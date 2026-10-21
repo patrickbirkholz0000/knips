@@ -67,6 +67,10 @@ extension SensitiveDetector.Kind {
 @MainActor final class HotkeyRecorderState: ObservableObject {
     static let shared = HotkeyRecorderState()
     @Published var recording: HotkeyAction?
+    /// Letzte Taste der laufenden Aufnahme, die ohne ⌘/⌥/⌃ nicht taugt (nur „A“, ⇧A) — die Aufnahme läuft weiter.
+    @Published var invalid: KeyCombo?
+    /// Zählt ungültige Tasten mit, damit jeder Druck sichtbar antwortet.
+    @Published var invalidCount = 0
     private var monitor: Any?
 
     /// Liefert die neue Kombination, `keyCode == UInt32.max` für „entfernen“, oder nil bei Abbruch.
@@ -83,7 +87,12 @@ extension SensitiveDetector.Kind {
                 onCombo(KeyCombo(keyCode: UInt32.max, modifiers: 0))
                 return nil
             }
-            guard let combo = KeyCombo(event: event) else { NSSound.beep(); return nil }
+            guard let combo = KeyCombo(event: event) else {
+                NSSound.beep()
+                self.invalid = KeyCombo(pressed: event)
+                self.invalidCount += 1
+                return nil
+            }
             self.finish()
             onCombo(combo)
             return nil
@@ -98,6 +107,7 @@ extension SensitiveDetector.Kind {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
         recording = nil
+        invalid = nil
         HotkeyManager.shared.apply(AppSettings.shared.activeHotkeys)
     }
 }

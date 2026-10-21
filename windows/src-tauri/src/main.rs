@@ -21,6 +21,8 @@ mod pe;
 #[cfg(feature = "dev")]
 mod selftest;
 #[cfg(feature = "dev")]
+mod selftest_hotkeys;
+#[cfg(feature = "dev")]
 mod selftest_media;
 mod settings;
 mod store;

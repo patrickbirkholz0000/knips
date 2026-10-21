@@ -11,6 +11,11 @@ on:
     branches: [main]
     paths: ["windows/**", ".github/workflows/windows.yml"]
   workflow_dispatch:
+    inputs:
+      selbsttests:
+        description: "Nur diese Selbsttests (mit Leerzeichen getrennt), dann ohne Installer und Signatur-Probe. Leer = alles."
+        required: false
+        default: ""
 
 concurrency:
   group: windows-${{ github.ref }}
@@ -85,11 +90,18 @@ jobs:
         run: cargo build --profile selftest -p knips --features dev,custom-protocol
 
       - name: Selbsttests
-        run: ./scripts/selftest.ps1 -Exe target/selftest/knips.exe -Out shots
+        env:
+          NUR: ${{ inputs.selbsttests }}
+        run: |
+          if ($env:NUR) {
+            ./scripts/selftest.ps1 -Exe target/selftest/knips.exe -Out shots -Tests @($env:NUR -split '[\s,]+' | Where-Object { $_ })
+          } else {
+            ./scripts/selftest.ps1 -Exe target/selftest/knips.exe -Out shots
+          }
 
       - name: Installer (Weitergabe, ohne Entwickler-Code)
         id: installer
-        if: always()
+        if: always() && !inputs.selbsttests
         run: pnpm tauri build
 
       # Installiert wirklich (PowerShell 7 und Windows PowerShell 5.1) und deinstalliert wieder.
@@ -137,6 +149,7 @@ jobs:
   # selbst ausgestellten Zertifikat, das nur auf diesem Runner gilt.
   signatur:
     needs: windows
+    if: ${{ !inputs.selbsttests }}
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:

@@ -8,7 +8,8 @@
 //! Aufräumen, Ablauf, Papierkorb; in der CI auch der Druck-Tasten-Vermerk in der Registry).
 //! Mit Fenstern (startet die App unsichtbar für den Nutzer, fotografiert nur eigene Fenster): ui, render,
 //! links (Rückfrage vor knips://-Aufnahmen; Aufnahmen sind durch eine Liste ersetzt, nimmt nie auf),
-//! nomedia (Windows N/KN ohne Media Feature Pack) und oldwin (Windows vor 10 2004) — `selftest_media.rs`.
+//! nomedia (Windows N/KN ohne Media Feature Pack) und oldwin (Windows vor 10 2004) — `selftest_media.rs`,
+//! hotkeyrecord (Kürzel in den Einstellungen ändern, Tasten wie von der Tastatur) — `selftest_hotkeys.rs`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -33,7 +34,7 @@ use crate::settings::SettingsStore;
 use crate::store::Store;
 use crate::wm;
 
-const WINDOW_TESTS: [&str; 5] = ["ui", "render", "links", "nomedia", "oldwin"];
+const WINDOW_TESTS: [&str; 6] = ["ui", "render", "links", "nomedia", "oldwin", "hotkeyrecord"];
 
 /// Kindprozess von `links`: Knips mit `knips://pin` als einzigem Argument gestartet. Nach dem Start (und
 /// einer Pause, in der eine verspätete zweite Meldung ankäme) muss genau ein Aufruf angekommen sein.
@@ -1383,6 +1384,7 @@ pub fn after_setup(app: &AppHandle) {
             "links" => links(&app, &out),
             "nomedia" => crate::selftest_media::nomedia(&app, &out),
             "oldwin" => crate::selftest_media::oldwin(&app, &out),
+            "hotkeyrecord" => crate::selftest_hotkeys::hotkey_record(&app, &out),
             "startlink" => start_link_result(),
             _ => Ok(()),
         };

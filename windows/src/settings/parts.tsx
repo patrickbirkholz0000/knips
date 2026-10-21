@@ -43,10 +43,11 @@ export function SecondsField({ value, min, max, onChange }: { value: number; min
 }
 
 /** Kürzel als Tastenkappen; Klick nimmt eine neue Kombination auf. */
-export function KeyButton({ label, recording, dim, onClick }: { label?: string; recording: boolean; dim?: boolean; onClick: () => void }) {
+export function KeyButton({ action, label, recording, dim, onClick }: { action: string; label?: string; recording: boolean; dim?: boolean; onClick: () => void }) {
   return (
     <button
       type="button"
+      data-hotkey={action}
       className={cx("st-keybtn", recording && "is-rec", !recording && !label && "is-empty", dim && "is-dim")}
       title="Klicken und neue Tastenkombination drücken"
       onClick={onClick}

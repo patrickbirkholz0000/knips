@@ -320,6 +320,16 @@ pub mod hotkeys {
 
     pub fn cancel_record() {}
 
+    /// Wartet der Hook gerade auf die nächste Kombination?
+    pub fn is_recording() -> bool {
+        false
+    }
+
+    /// Ist der Tastatur-Hook eingehängt?
+    pub fn hook_installed() -> bool {
+        false
+    }
+
     /// Tastenkombination simulieren wie von der Tastatur (Selbsttest `hotkeys`).
     pub fn simulate(combo: KeyCombo) {
         let _ = combo;

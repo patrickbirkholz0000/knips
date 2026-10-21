@@ -195,7 +195,7 @@ export function Shortcuts({ boot }: { boot: Bootstrap }) {
                   ) : undefined
                 }
               >
-                <KeyButton label={hotkeyLabels[a]} recording={recording === a} dim={!on} onClick={() => startRec(a)} />
+                <KeyButton action={a} label={hotkeyLabels[a]} recording={recording === a} dim={!on} onClick={() => startRec(a)} />
                 <Switch on={on} disabled={!combo} onChange={(v) => toggle(a, v)} label={`${hotkeyTitle[a]} an`} />
               </Row>
             );

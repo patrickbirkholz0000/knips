@@ -609,6 +609,16 @@ pub fn cancel_record() {
     send_cmd(Cmd::CancelRecord);
 }
 
+/// Wartet der Hook gerade auf die nächste Kombination?
+pub fn is_recording() -> bool {
+    RECORDING.load(Ordering::SeqCst)
+}
+
+/// Ist der Tastatur-Hook eingehängt?
+pub fn hook_installed() -> bool {
+    HOOK.load(Ordering::SeqCst) != 0
+}
+
 const KEYBOARD_KEY: windows::core::PCWSTR = w!("Control Panel\\Keyboard");
 const SNIP_VALUE: windows::core::PCWSTR = w!("PrintScreenKeyForSnippingEnabled");
 

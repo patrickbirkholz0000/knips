@@ -3,8 +3,10 @@
 param(
   [string]$Exe = "target/release/knips.exe",
   [string]$Out = "shots",
-  [string[]]$Tests = @("detect", "output", "selection", "capture", "record", "track", "video", "perf", "hotkeys", "clipboard", "overlay", "telemetry", "render", "ui", "links", "nomedia", "oldwin", "storage")
+  [string[]]$Tests = @("detect", "output", "selection", "firstshot", "capture", "record", "track", "video", "perf", "hotkeys", "clipboard", "overlay", "telemetry", "render", "ui", "links", "nomedia", "oldwin", "storage")
 )
+# Auswahl als eine Zeichenkette („selection firstshot ui“ oder mit Kommas), z. B. aus der CI.
+if ($Tests.Count -eq 1 -and $Tests[0] -match "[\s,]") { $Tests = $Tests[0] -split "[\s,]+" | Where-Object { $_ } }
 $ErrorActionPreference = "Continue"
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 $exePath = (Resolve-Path $Exe).Path

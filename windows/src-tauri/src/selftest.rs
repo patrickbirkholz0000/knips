@@ -33,7 +33,7 @@ use crate::settings::SettingsStore;
 use crate::store::Store;
 use crate::wm;
 
-const WINDOW_TESTS: [&str; 5] = ["ui", "render", "links", "nomedia", "oldwin"];
+const WINDOW_TESTS: [&str; 6] = ["ui", "render", "links", "nomedia", "oldwin", "firstshot"];
 
 /// Kindprozess von `links`: Knips mit `knips://pin` als einzigem Argument gestartet. Nach dem Start (und
 /// einer Pause, in der eine verspätete zweite Meldung ankäme) muss genau ein Aufruf angekommen sein.
@@ -119,6 +119,7 @@ pub fn run(args: &[String]) -> Option<i32> {
         "clipboard" => clipboard_test(),
         "telemetry" => telemetry_test(&out),
         "storage" => storage(&out),
+        "firstshot-roh" => crate::selftest_capture::firstshot_raw(&out),
         other => {
             eprintln!("Unbekannter Test: {other}");
             return Some(2);
@@ -1383,6 +1384,7 @@ pub fn after_setup(app: &AppHandle) {
             "links" => links(&app, &out),
             "nomedia" => crate::selftest_media::nomedia(&app, &out),
             "oldwin" => crate::selftest_media::oldwin(&app, &out),
+            "firstshot" => crate::selftest_capture::firstshot(&app, &out),
             "startlink" => start_link_result(),
             _ => Ok(()),
         };

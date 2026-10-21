@@ -52,6 +52,17 @@ pub mod capture {
             .collect())
     }
 
+    /// Notizen zum letzten Standbild (`freeze`): Weg, Meldungen der Desktop Duplication, Helligkeit.
+    pub fn freeze_notes() -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Selbsttest: neue Desktop-Duplication-Sitzung öffnen und die ersten `n` Meldungen beschreiben.
+    pub fn probe_duplication(m: &Monitor, n: usize) -> Result<Vec<(String, RgbaImage)>> {
+        let _ = (m, n);
+        anyhow::bail!("nur unter Windows")
+    }
+
     /// Sichtbare Fenster anderer Programme, von vorn nach hinten.
     pub fn windows() -> Vec<WindowInfo> {
         vec![WindowInfo {
@@ -158,6 +169,11 @@ pub mod overlay {
 
     pub fn is_active() -> bool {
         false
+    }
+
+    /// Selbsttests: Overlay nicht aus Aufnahmen ausschließen.
+    pub fn set_capturable_for_tests(on: bool) {
+        let _ = on;
     }
 
     /// Bricht eine laufende Auswahl ab (`on_done(Cancelled)`).
@@ -654,6 +670,35 @@ pub mod testinput {
     /// Taste (Virtual-Key) mit Modifier-Bits drücken und loslassen.
     pub fn key(vk: u32, mods: u32) {
         let _ = (vk, mods);
+    }
+
+    /// Farben der Balken der Testfläche (`show_pattern`), von links nach rechts.
+    pub const PATTERN_COLORS: [[u8; 3]; 8] = [
+        [235, 235, 235],
+        [235, 235, 16],
+        [16, 235, 235],
+        [16, 235, 16],
+        [235, 16, 235],
+        [235, 16, 16],
+        [16, 16, 235],
+        [128, 128, 128],
+    ];
+
+    /// Schwebende Testfläche mit Farbbalken. Schließt beim Drop.
+    pub struct Pattern {
+        _private: (),
+    }
+
+    impl Pattern {
+        pub fn hwnd(&self) -> isize {
+            0
+        }
+    }
+
+    /// Testfläche über `rect` (global, physische Pixel) zeigen, ohne den Fokus zu nehmen.
+    pub fn show_pattern(rect: crate::types::IRect) -> anyhow::Result<Pattern> {
+        let _ = rect;
+        Ok(Pattern { _private: () })
     }
 }
 

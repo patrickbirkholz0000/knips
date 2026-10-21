@@ -62,6 +62,8 @@ impl Coordinator {
             // Vor Windows 10 2004: eigene Fenster ausblenden, bis die Auswahl vorbei ist (siehe `wm::cloak_for_capture`).
             let cloak = wm::cloak_for_capture();
             let frozen = capture::freeze(&monitors::list())?;
+            #[cfg(feature = "dev")]
+            crate::selftest_capture::after_freeze(&frozen);
             let windows = capture::windows();
             let kept = frozen.clone();
             overlay::present(

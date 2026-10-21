@@ -218,6 +218,45 @@ pub fn from_bgra(width: u32, height: u32, stride: usize, bgra: &[u8], opaque: bo
     RgbaImage::from_raw(width, height, out).expect("Größe stimmt")
 }
 
+/// Helligkeit eines Bildes (oder Ausschnitts) aus einem Raster von Stichproben.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Brightness {
+    /// Mittlere Helligkeit 0…255 (Rec. 601).
+    pub mean: f64,
+    /// Anteil fast schwarzer Pixel (alle Kanäle ≤ 8), 0…1.
+    pub black: f64,
+}
+
+impl Brightness {
+    /// Kein Inhalt: so gut wie jedes Pixel schwarz. Ein echter Bildschirm hat fast immer etwas Helles
+    /// (Taskleiste, Text, Symbole); ganz schwarz ist er nur bei einem leeren Bild der Aufnahme.
+    pub fn is_blank(&self) -> bool {
+        self.black > 0.995
+    }
+}
+
+/// Helligkeit im Ausschnitt `rect` (ganzes Bild bei `None`), jedes `step`-te Pixel in beiden Richtungen.
+pub fn brightness(img: &RgbaImage, rect: Option<IRect>, step: u32) -> Brightness {
+    let full = IRect::new(0, 0, img.width() as i32, img.height() as i32);
+    let Some(r) = rect.map_or(Some(full), |r| r.intersection(&full)) else { return Brightness { mean: 0.0, black: 1.0 } };
+    let step = step.max(1) as usize;
+    let (mut sum, mut black, mut n) = (0f64, 0u64, 0u64);
+    for y in (r.y as u32..r.bottom() as u32).step_by(step) {
+        for x in (r.x as u32..r.right() as u32).step_by(step) {
+            let p = img.get_pixel(x, y).0;
+            sum += 0.299 * p[0] as f64 + 0.587 * p[1] as f64 + 0.114 * p[2] as f64;
+            if p[0] <= 8 && p[1] <= 8 && p[2] <= 8 {
+                black += 1;
+            }
+            n += 1;
+        }
+    }
+    if n == 0 {
+        return Brightness { mean: 0.0, black: 1.0 };
+    }
+    Brightness { mean: sum / n as f64, black: black as f64 / n as f64 }
+}
+
 /// RGBA → BGRA (dicht gepackt), z. B. für Zwischenablage-DIBs und Media Foundation.
 pub fn to_bgra(img: &RgbaImage) -> Vec<u8> {
     let mut out = img.as_raw().clone();
@@ -292,6 +331,31 @@ mod tests {
         let img = RgbaImage::from_pixel(32, 32, Rgba([0, 0, 0, 0]));
         let back = decode(&encode(&img, ImageFormat::Jpeg).unwrap()).unwrap();
         assert!(back.pixels().all(|p| p[0] > 245 && p[1] > 245 && p[2] > 245));
+    }
+
+    #[test]
+    fn brightness_and_blank() {
+        let black = RgbaImage::from_pixel(64, 48, Rgba([0, 0, 0, 255]));
+        let b = brightness(&black, None, 4);
+        assert_eq!(b.mean, 0.0);
+        assert!(b.is_blank());
+        let white = RgbaImage::from_pixel(64, 48, Rgba([255, 255, 255, 255]));
+        let b = brightness(&white, None, 1);
+        assert!((b.mean - 255.0).abs() < 0.01 && b.black == 0.0 && !b.is_blank());
+        // Dunkle Fläche mit heller Leiste (wie ein dunkler Desktop mit Taskleiste) ist nicht leer.
+        let mut desk = RgbaImage::from_pixel(100, 100, Rgba([3, 3, 3, 255]));
+        for x in 0..100 {
+            for y in 90..100 {
+                desk.put_pixel(x, y, Rgba([40, 40, 48, 255]));
+            }
+        }
+        let b = brightness(&desk, None, 1);
+        assert!((b.black - 0.9).abs() < 1e-9 && !b.is_blank());
+        // Ausschnitt: nur die Leiste
+        let b = brightness(&desk, Some(IRect::new(0, 90, 100, 10)), 1);
+        assert_eq!(b.black, 0.0);
+        // Ausschnitt außerhalb → leer
+        assert!(brightness(&desk, Some(IRect::new(200, 200, 10, 10)), 1).is_blank());
     }
 
     #[test]

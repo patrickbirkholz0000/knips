@@ -23,26 +23,59 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
 };
 
-use super::d3d::{item_for_monitor, item_for_window, Dda, Wgc};
+use parking_lot::Mutex;
+
+use super::d3d::{item_for_monitor, item_for_window, Dda, DdaGrab, Wgc};
 use super::util::{from_wide, hwnd, init_com};
 use crate::types::{Frozen, IRect, Monitor, WindowInfo};
 
 // ---------------------------------------------------------------- Standbilder
 
+/// Was beim letzten `freeze` geschah (je Monitor: Weg, Meldungen der Desktop Duplication, Helligkeit) —
+/// für Log und Selbsttests.
+static FREEZE_NOTES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+fn note(text: String) {
+    log::debug!("Standbild: {text}");
+    FREEZE_NOTES.lock().push(text);
+}
+
+/// Notizen zum letzten Standbild (`freeze`).
+pub fn freeze_notes() -> Vec<String> {
+    FREEZE_NOTES.lock().clone()
+}
+
+fn describe(img: &RgbaImage) -> String {
+    let b = knips_core::imageops::brightness(img, None, 8);
+    format!("Helligkeit {:.1}, schwarz {:.1} %", b.mean, b.black * 100.0)
+}
+
 /// Ein Monitor: Desktop Duplication, bei Fehlern Graphics Capture.
 fn freeze_one(m: &Monitor) -> Result<RgbaImage> {
     init_com();
+    let start = Instant::now();
+    let ms = || start.elapsed().as_millis();
     let dda_err = match Dda::open(m) {
         Ok(mut dda) => {
+            note(format!("{}: Desktop Duplication offen nach {} ms", m.name, ms()));
             // Der erste Aufruf liefert den aktuellen Desktop; ein, zwei Wiederholungen für Randfälle.
             let mut res = Err(anyhow!("kein Bild"));
             for _ in 0..3 {
-                match dda.grab(None, 250) {
-                    Ok(Some(img)) => {
+                match dda.acquire(None, 250) {
+                    Ok(DdaGrab::Frame(f, img)) => {
+                        note(format!(
+                            "{}: Meldung nach {} ms, LastPresentTime {}, AccumulatedFrames {}, Zeiger {}, {}",
+                            m.name,
+                            ms(),
+                            f.last_present,
+                            f.accumulated,
+                            f.pointer,
+                            describe(&img)
+                        ));
                         res = Ok(img);
                         break;
                     }
-                    Ok(None) => {}
+                    Ok(DdaGrab::Timeout) => note(format!("{}: nichts Neues nach {} ms", m.name, ms())),
                     Err(e) => {
                         res = Err(e);
                         break;
@@ -56,17 +89,49 @@ fn freeze_one(m: &Monitor) -> Result<RgbaImage> {
         }
         Err(e) => e,
     };
-    log::debug!("Desktop Duplication für {} nicht möglich ({dda_err:#}), nehme Graphics Capture", m.name);
+    note(format!("{}: Desktop Duplication nicht möglich ({dda_err:#}), nehme Graphics Capture", m.name));
     let item = item_for_monitor(m.id)?;
     let mut wgc = Wgc::start(&item)?;
     match wgc.grab(None, 1500, true)? {
-        Some((img, _)) => Ok(img),
+        Some((img, _)) => {
+            note(format!("{}: Graphics Capture nach {} ms, {}", m.name, ms(), describe(&img)));
+            Ok(img)
+        }
         None => bail!("Graphics Capture lieferte kein Bild für {}", m.name),
     }
 }
 
+/// Selbsttest: neue Desktop-Duplication-Sitzung öffnen und die ersten `n` Meldungen beschreiben (Zeit,
+/// LastPresentTime, AccumulatedFrames, Zeiger, Helligkeit) — mit dem Bild, das jede Meldung liefert.
+#[cfg(feature = "dev")]
+pub fn probe_duplication(m: &Monitor, n: usize) -> Result<Vec<(String, RgbaImage)>> {
+    init_com();
+    let start = Instant::now();
+    let mut dda = Dda::open(m)?;
+    let mut out = Vec::new();
+    for i in 0..n {
+        match dda.acquire(None, 100)? {
+            DdaGrab::Frame(f, img) => {
+                let text = format!(
+                    "Meldung {} nach {} ms: LastPresentTime {}, AccumulatedFrames {}, Zeiger {}, {}",
+                    i + 1,
+                    start.elapsed().as_millis(),
+                    f.last_present,
+                    f.accumulated,
+                    f.pointer,
+                    describe(&img)
+                );
+                out.push((text, img));
+            }
+            DdaGrab::Timeout => out.push((format!("Meldung {}: nichts Neues nach {} ms", i + 1, start.elapsed().as_millis()), RgbaImage::new(1, 1))),
+        }
+    }
+    Ok(out)
+}
+
 /// Standbild aller angegebenen Monitore; eigene Fenster (mit `exclude_from_capture`) fehlen darin.
 pub fn freeze(monitors: &[Monitor]) -> Result<Vec<Frozen>> {
+    FREEZE_NOTES.lock().clear();
     let results: Vec<Result<RgbaImage>> = if monitors.len() <= 1 {
         monitors.iter().map(freeze_one).collect()
     } else {

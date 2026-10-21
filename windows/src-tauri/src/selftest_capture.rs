@@ -295,6 +295,22 @@ pub fn sharing(app: &AppHandle, out: &Path) -> Result<()> {
     let (d_still, d_none) = (still_diff(&after_still, &base, menu_rect), still_diff(&after_none, &base, menu_rect));
     println!("   Abweichung im Bereich des Menüs zum Bild davor: nach einem Standbild {d_still:.1}, nach ausdrücklichem WDA_NONE {d_none:.1}");
     check("verborgenes Menü bleibt nach einem Standbild unsichtbar", d_still <= 3.0);
+    // Leisten (beim Anlegen ausgeschlossen, verborgen): Ausschluss kurz aufheben — liegt dort etwas im Bild?
+    for label in [crate::recording::CONTROLS, crate::recording::COUNTDOWN, crate::scroll::PANEL] {
+        let Some(w) = app.get_webview_window(label) else { continue };
+        let Some(h) = wm::hwnd(&w) else { continue };
+        let r = match (w.outer_position(), w.outer_size()) {
+            (Ok(p), Ok(s)) => IRect::new(p.x, p.y, s.width as i32, s.height as i32),
+            _ => continue,
+        };
+        capture::exclude_from_capture(h, false);
+        std::thread::sleep(Duration::from_millis(200));
+        let still = capture::freeze(&monitors::list())?;
+        capture::exclude_from_capture(h, true);
+        let d = still_diff(&still, &base, r);
+        println!("   {label} verborgen, Ausschluss aufgehoben: Abweichung {d:.1}");
+        check(&format!("{label}: verborgen nichts im Bild"), d <= 3.0);
+    }
 
     // Videoaufnahme (bis zum Countdown, dann abgebrochen): Karten und Menü weg, eigene Fenster aus dem Video.
     println!("Videoaufnahme:");

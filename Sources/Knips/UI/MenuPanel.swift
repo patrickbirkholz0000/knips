@@ -57,6 +57,7 @@ import SwiftUI
 
     private func makePanel() -> MenuPanel {
         let p = MenuPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        ScreenSharing.apply(to: p)
         p.isOpaque = false
         p.backgroundColor = .clear
         p.hasShadow = true

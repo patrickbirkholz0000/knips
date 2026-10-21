@@ -8,7 +8,9 @@
 //! Aufräumen, Ablauf, Papierkorb; in der CI auch der Druck-Tasten-Vermerk in der Registry).
 //! Mit Fenstern (startet die App unsichtbar für den Nutzer, fotografiert nur eigene Fenster): ui, render,
 //! links (Rückfrage vor knips://-Aufnahmen; Aufnahmen sind durch eine Liste ersetzt, nimmt nie auf),
-//! nomedia (Windows N/KN ohne Media Feature Pack) und oldwin (Windows vor 10 2004) — `selftest_media.rs`.
+//! nomedia (Windows N/KN ohne Media Feature Pack) und oldwin (Windows vor 10 2004) — `selftest_media.rs`;
+//! firstshot (erstes Standbild eines frischen Prozesses, Overlay beim Erscheinen; mit Kindprozess `firstshot-roh`)
+//! und sharing (Knips-Fenster in Bildschirmübertragungen) — `selftest_capture.rs`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -33,7 +35,7 @@ use crate::settings::SettingsStore;
 use crate::store::Store;
 use crate::wm;
 
-const WINDOW_TESTS: [&str; 5] = ["ui", "render", "links", "nomedia", "oldwin"];
+const WINDOW_TESTS: [&str; 7] = ["ui", "render", "links", "nomedia", "oldwin", "firstshot", "sharing"];
 
 /// Kindprozess von `links`: Knips mit `knips://pin` als einzigem Argument gestartet. Nach dem Start (und
 /// einer Pause, in der eine verspätete zweite Meldung ankäme) muss genau ein Aufruf angekommen sein.
@@ -119,6 +121,7 @@ pub fn run(args: &[String]) -> Option<i32> {
         "clipboard" => clipboard_test(),
         "telemetry" => telemetry_test(&out),
         "storage" => storage(&out),
+        "firstshot-roh" => crate::selftest_capture::firstshot_raw(&out),
         other => {
             eprintln!("Unbekannter Test: {other}");
             return Some(2);
@@ -1383,6 +1386,8 @@ pub fn after_setup(app: &AppHandle) {
             "links" => links(&app, &out),
             "nomedia" => crate::selftest_media::nomedia(&app, &out),
             "oldwin" => crate::selftest_media::oldwin(&app, &out),
+            "firstshot" => crate::selftest_capture::firstshot(&app, &out),
+            "sharing" => crate::selftest_capture::sharing(&app, &out),
             "startlink" => start_link_result(),
             _ => Ok(()),
         };

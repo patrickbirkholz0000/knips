@@ -117,6 +117,27 @@ pub fn is_active() -> bool {
     ACTIVE.load(Ordering::Acquire)
 }
 
+#[cfg(feature = "dev")]
+static TEST_CAPTURABLE: AtomicBool = AtomicBool::new(false);
+
+/// Selbsttests: Overlay nicht aus Aufnahmen ausschließen, damit ein Test fotografieren kann, was auf dem
+/// Bildschirm erscheint.
+#[cfg(feature = "dev")]
+pub fn set_capturable_for_tests(on: bool) {
+    TEST_CAPTURABLE.store(on, Ordering::Release);
+}
+
+fn capturable_for_tests() -> bool {
+    #[cfg(feature = "dev")]
+    {
+        TEST_CAPTURABLE.load(Ordering::Acquire)
+    }
+    #[cfg(not(feature = "dev"))]
+    {
+        false
+    }
+}
+
 /// Bricht eine laufende Auswahl ab (`on_done(Cancelled)`). Thread-sicher.
 pub fn cancel() {
     if !is_active() {
@@ -559,7 +580,9 @@ unsafe fn create_overlay(frozen: Vec<Frozen>, windows: Vec<WindowInfo>, purpose:
             // Ab hier gehört das Fenster der MonWin (Drop zerstört es, auch im Fehlerfall).
             // Vor Windows 10 2004 nicht gesetzt (wäre schwarz statt unsichtbar); das Standbild
             // ist dann ohnehin schon aufgenommen.
-            crate::win::capture::set_excluded(hwnd, "Overlay");
+            if !capturable_for_tests() {
+                crate::win::capture::set_excluded(hwnd, "Overlay");
+            }
             let size = (f.image.width() as i32, f.image.height() as i32);
             let dpi = (f.monitor.scale * 96.0) as f32;
             let mut mon = MonWin { hwnd, frozen: f, target: None, scene: None, size, dpi, drag_start: None, selection: None };
@@ -569,15 +592,27 @@ unsafe fn create_overlay(frozen: Vec<Frozen>, windows: Vec<WindowInfo>, purpose:
             ov.mons.push(mon);
         }
 
-        // erstes Bild vor dem Anzeigen, damit nie ein leeres Fenster aufblitzt
+        // Nie ein Fenster ohne Inhalt zeigen (es wäre schwarz, bis das erste Bild ankommt): verhüllt anzeigen
+        // (`DWMWA_CLOAK`), erstes Bild zeichnen, dann enthüllen. Was in ein noch nie gezeigtes Fenster gezeichnet
+        // wird, kann verloren gehen — deshalb erst anzeigen (verhüllt), dann zeichnen.
+        let cloaked: Vec<bool> = ov.mons.iter().map(|m| crate::win::capture::set_cloak(m.hwnd, true)).collect();
+        for m in &ov.mons {
+            let r = m.frozen.monitor.rect;
+            let _ = SetWindowPos(m.hwnd, Some(HWND_TOPMOST), r.x, r.y, r.width, r.height, SWP_SHOWWINDOW | SWP_NOACTIVATE);
+        }
         for i in 0..ov.mons.len() {
             let sc = ov.scene_for(i);
             ov.mons[i].scene = Some(sc);
             ov.paint(i);
         }
-        for m in &ov.mons {
-            let r = m.frozen.monitor.rect;
-            let _ = SetWindowPos(m.hwnd, Some(HWND_TOPMOST), r.x, r.y, r.width, r.height, SWP_SHOWWINDOW | SWP_NOACTIVATE);
+        if cloaked.contains(&true) {
+            // Einen Bildwechsel Zeit, damit DWM das Bild hat (DwmFlush könnte bei ruhendem Desktop lange warten).
+            std::thread::sleep(std::time::Duration::from_millis(16));
+            for (m, c) in ov.mons.iter().zip(&cloaked) {
+                if *c {
+                    crate::win::capture::set_cloak(m.hwnd, false);
+                }
+            }
         }
         Ok(ov)
     }

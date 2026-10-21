@@ -175,6 +175,8 @@ export interface Settings {
   launchAtLogin: boolean;
   /** knips://fullscreen, knips://last und knips://record (Start) ohne Rückfrage ausführen (Standard: aus). */
   linkCaptureWithoutConfirm: boolean;
+  /** Alle Knips-Fenster aus Bildschirmübertragungen und fremden Aufnahmen heraushalten (Standard: aus). */
+  hideFromScreenSharing: boolean;
   /** Hell/Dunkel aller Fenster (docs/design.md); Menü, Pillen und Leisten bleiben immer dunkel. */
   appearance: Appearance;
   editor: EditorPrefs;
@@ -220,6 +222,8 @@ export interface Bootstrap {
   mediaAvailable: boolean;
   /** Anonyme Nutzungsstatistik: null = noch nicht beantwortet (beim nächsten Start wird wieder gefragt). */
   telemetryConsent: boolean | null;
+  /** Windows kann Fenster aus Aufnahmen ausschließen (ab Windows 10 2004) — sonst wirkt „In Bildschirmübertragungen verbergen“ nicht. */
+  captureExclusionSupported: boolean;
 }
 
 export type RecordingPhase = "idle" | "countdown" | "recording" | "finishing";

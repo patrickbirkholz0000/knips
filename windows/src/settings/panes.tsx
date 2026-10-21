@@ -559,6 +559,7 @@ export function Storage({ boot }: { boot: Bootstrap }) {
 // ---------------------------------------------------------------- Datenschutz
 
 export function Privacy({ boot }: { boot: Bootstrap }) {
+  const exclusion = boot.captureExclusionSupported;
   return (
     <>
       <Section title="Nutzungsstatistik">
@@ -584,6 +585,24 @@ export function Privacy({ boot }: { boot: Bootstrap }) {
           description="Nur für Aufnahmen mit Kommentar – dort auch „Desktop-Apps den Zugriff erlauben“."
         >
           <Button onClick={() => api.openUrl("ms-settings:privacy-microphone")}>Windows-Einstellungen …</Button>
+        </Row>
+      </Section>
+      <Section title="Bildschirm teilen" footer="Knips' eigene Bildschirmfotos zeigen nie Knips-Fenster.">
+        <Row
+          title="In Bildschirmübertragungen verbergen"
+          description={
+            exclusion
+              ? "Teams, Discord, OBS und andere Apps, die deinen Bildschirm teilen oder aufnehmen, sehen Knips dann nicht – auch keine Originale im Editor."
+              : "Geht erst ab Windows 10 Version 2004."
+          }
+          off={!exclusion}
+        >
+          <Switch
+            on={boot.settings.hideFromScreenSharing}
+            disabled={!exclusion}
+            onChange={(v) => set({ hideFromScreenSharing: v })}
+            label="In Bildschirmübertragungen verbergen"
+          />
         </Row>
       </Section>
       <Section title="So arbeitet Knips" plain>

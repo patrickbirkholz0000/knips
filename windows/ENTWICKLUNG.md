@@ -74,7 +74,8 @@ im Fenster.
 ## Selbsttests
 
 `knips.exe --selftest <test> <ordner>` (Feature `dev`, läuft in `<ordner>\sandbox`, Zwischenablage tabu).
-Alle zusammen: `scripts/selftest.ps1` (macht die CI).
+Alle zusammen: `scripts/selftest.ps1` (macht die CI). Nur einige in der CI, ohne Installer:
+`gh workflow run windows.yml --ref <zweig> -f selbsttests="firstshot sharing ui"`.
 
 | Test | prüft |
 |---|---|
@@ -94,7 +95,9 @@ Alle zusammen: `scripts/selftest.ps1` (macht die CI).
 | `ui` | alle Fenster mit Beispieldaten, je ein Bild, auch `einwilligung.png`, `link-rueckfrage.png` und Allgemein/Datenschutz/Über Knips nach unten gescrollt (`…-unten.png`); Einstellungen (alle 9 Bereiche, Start mit Bereit-Check), Einwilligung, Link-Rückfrage und Verlauf zusätzlich dunkel (`…-dunkel.png`), je Fenster `data-theme` passend zur Einstellung; danach keine der gezeigten Aufnahmen im WebView2-Profil (`EBWebView`), Diagnose mit einem Fenster ohne InPrivate. Maßstab ist `../docs/design.md`; Mac-Vergleichsbilder liefern die Selbsttests der Mac-App |
 | `links` | Rückfrage vor knips://fullscreen/last/record (wie `links` auf dem Mac): ohne Einstellung erst Rückfrage, weiterer Link verfällt, Esc/Schließen/Abbrechen = nichts, Aufnehmen erst nach der Schutzzeit (Rust und Oberfläche), gehaltene ⏎ / Wiederholungen / ⏎ ohne Loslassen / ⏎ direkt nach Tippen bestätigen nichts, „Nicht mehr fragen“ vor der Schutzzeit gesperrt und nur mit Aufnehmen, Stoppen und eigener Weg direkt; zweiter Start (`app::second_instance` → Deep-Link-Plugin) und Erststart mit `knips://pin` (Kindprozess) je genau ein Aufruf; mit Einstellung direkt; Schalter in Allgemein. Ausführen ist durch eine Liste ersetzt, nimmt nie auf. Bilder: `link-rueckfrage-*.png`, `link-einstellung-allgemein.png` |
 | `nomedia` | Windows N/KN ohne Media Feature Pack (simuliert, `KNIPS_TEST_NO_MEDIA`): Importtabelle der knips.exe (mfplat/mfreadwrite/mf nur verzögert), alle Videofunktionen melden den Hinweis statt abzustürzen, Video-Kürzel zeigt Hinweis statt Auswahl, Screenshot geht; Bilder `einstellungen-aufnahme-ohne-media.png`, `menu-ohne-media.png` |
-| `oldwin` | Windows vor 10 2004 (simuliert, `KNIPS_TEST_OLD_WINDOWS`): kein `WDA_EXCLUDEFROMCAPTURE`, eigene Fenster für das Standbild ausgeblendet und danach wieder sichtbar, Aufnahmerahmen ohne Ausschluss |
+| `oldwin` | Windows vor 10 2004 (simuliert, `KNIPS_TEST_OLD_WINDOWS`): kein `WDA_EXCLUDEFROMCAPTURE`, eigene Fenster für das Standbild verhüllt (`DWMWA_CLOAK`, nicht ausgeblendet), Standbild zeigt dort, was dahinter liegt (Vergleich mit einem Bild ohne die Einstellungen), danach wieder sichtbar; Aufnahmerahmen ohne Ausschluss |
+| `firstshot` | das allererste Standbild eines frischen Prozesses über einer Testfläche mit Farbbalken (nur GDI): Kindprozess ohne App (`firstshot-roh`: erstes `freeze`, rohe Meldungen frischer Desktop-Duplication-Sitzungen, auch bei bewegtem Zeiger), derselbe mit simulierter leerer erster Meldung (`KNIPS_TEST_DDA_EMPTY_FIRST`: wird verworfen, Bild stimmt trotzdem), dann zweimal der Weg der Druck-Taste in der App (`Coordinator::perform` → Standbild → Overlay): Standbild zeigt 8/8 Balken, und eine zweite Sitzung fotografiert den Bildschirm, während das Overlay erscheint (im Test nicht ausgeschlossen) — nur abgedunkelt, nie schwarz; dazu das Overlay offscreen aus dem ersten Standbild. Nur ohne Nutzer (CI) |
+| `sharing` | Knips-Fenster in Bildschirmübertragungen (Ausschluss wie in der echten App): Einstellungen, Karte, Menü, Pin für andere Apps sichtbar, Einblendung und Leisten ausgeschlossen; ein Bildschirmbild (wie Discord/OBS) zeigt die Einstellungen; Wartezeit des Ausschlusses gemessen; eigenes Standbild ohne Knips-Fenster, dabei auf dem Bildschirm unverändert; Schalter „In Bildschirmübertragungen verbergen“ über die Oberfläche (an: alle Fenster sofort aus, auch neue; aus: wieder sichtbar); verborgenes Menü und verborgene Leisten liegen nach einem Standbild bzw. ohne Ausschluss nicht im Bild; Videoaufnahme bis zum Countdown: Karten weg, Menü zu, Fenster aus dem Video, danach zurück. Bilder `einstellungen-datenschutz-uebertragung.png`, `sharing-*.png` (Bildschirmbilder) |
 | `storage` | Umzug aus dem Installationsordner (bis 1.0.0) an den Ort der App-Kennung, Zwischendateien (Start: alles, regelmäßig: nur Altes, Pins bleiben), Video-Vorschaubilder gehen mit Löschen/„Originale löschen“, Ablauf nach der Frist (geöffnete bleiben), Papierkorb-Erkennung (lokal ja, `\\localhost\C$` nein); in der CI der Druck-Tasten-Vermerk in `HKCU\Software\Knips` |
 
 Deinstallation: `scripts/uninstall-test.ps1 -Setup <…-setup.exe>` (nur CI, verändert das Benutzerprofil) —
@@ -222,6 +225,18 @@ Bis 1.0.0 lagen die Originale im Installationsordner und die Einstellungen in `%
   (`clipboard::set_image_private`: `ExcludeClipboardContentFromMonitorProcessing`,
   `CanIncludeInClipboardHistory = 0`, `CanUploadToCloudClipboard = 0`) — nicht in Win+V, nicht in der
   Cloud. Kopieren aus Karte, Editor und Pin bleibt normal.
+- **Bildschirmübertragungen (Teams, Discord, OBS):** Knips-Fenster sind für andere Apps sichtbar wie jedes
+  andere Fenster (bis 1.0.0 waren alle per `WDA_EXCLUDEFROMCAPTURE` aus jeder Aufnahme ausgeschlossen — Discord
+  zeigte Knips nicht). Aus Knips' eigenen Bildern bleiben sie trotzdem heraus (Regeln in `wm.rs`):
+  Standbild → `wm::conceal_for_still` schließt alle Knips-Fenster für die Dauer des Standbilds aus (nur für
+  Aufnahmen, auf dem Bildschirm ändert sich nichts; wirkt sofort, CI: ~40 ms samt Standbild); Video und
+  Scroll-Screenshot → `wm::set_capture_session`: Karten (`Cards::suspend`/`resume`) und Menü weg, alle Fenster ausgeschlossen, bis die
+  Aufnahme endet. Immer ausgeschlossen ist, was zur Aufnahme gehört: Overlay, Rahmen (Plattform-Teil) und
+  `wm::CAPTURE_CHROME` (Einblendung, Aufnahme-Leiste, Countdown, Scroll-Leiste). Einstellungen → Datenschutz →
+  „In Bildschirmübertragungen verbergen“ (`hideFromScreenSharing`, Standard aus) schließt alle Knips-Fenster aus,
+  sofort auch offene (`wm::apply_capture_policy_all`), etwa damit unzensierte Originale im Editor nicht im Stream
+  landen. In der Test-Sandbox bleibt alles sichtbar (Selbsttests fotografieren die Fenster), außer im Test
+  `sharing` (`wm::set_sandbox_exclusion`).
 - **WebView2:** Alle Fenster laufen InPrivate (`wm::Spec::incognito`) — Originale, Vorschaubilder und
   Videos, die über das Asset-Protokoll geladen werden (Tauri schickt kein `Cache-Control`), landen nicht
   im Festplatten-Cache von `EBWebView`. Folge: `localStorage` gilt nur bis zum Beenden.
@@ -259,6 +274,14 @@ nicht im Cache — InPrivate bleibt als Absicherung. `scripts/uninstall-test.ps1
 Workflow es aufruft; den stillen Deinstaller mit Hook (`/S`) prüft bereits `scripts/test-install.ps1`.
 Noch am Gerät zu testen: Tastendrücke auf echter Tastatur (Hook neben anderen Tools), Mikrofon,
 Ziehen aus den Karten in andere Apps, Einfügen in fremde Apps, mehrere Monitore mit gemischter Skalierung.
+CI 21.10.2026 (Bildschirmübertragung, erstes Standbild): neu `firstshot` und `sharing`. Auf dem Runner (ohne
+Grafikkarte) war das erste Standbild eines frischen Prozesses nie schwarz (8/8 Farbbalken, `LastPresentTime` ≠ 0,
+auch 0 von 12 frischen Sitzungen bei bewegtem Zeiger), das Overlay erschien ohne schwarzes Bild — gemeldetes
+„beim ersten Mal schwarz“ ließ sich dort nicht nachstellen; abgesichert sind die beiden Stellen, an denen ein
+erstes Bild leer sein kann (Desktop Duplication, Overlay, siehe „Windows-Eigenheiten“), die leere erste Meldung
+simuliert. Bildschirmbild wie Discord/OBS zeigt jetzt die Knips-Fenster, eigene Standbilder nicht.
+Noch am Gerät zu testen: Discord/Teams/OBS mit und ohne „In Bildschirmübertragungen verbergen“, erstes Standbild
+nach dem Start auf echter Grafikkarte (HDR, mehrere Monitore).
 
 ## Windows-Ausgaben und ältere Versionen
 
@@ -275,9 +298,11 @@ Ziehen aus den Karten in andere Apps, Einfügen in fremde Apps, mehrere Monitore
   (CI: 30 fps eingestellt → 2,4 fps). `probe` liefert deshalb die wirksame Rate aus den Bildabständen
   (`pure::effective_fps`), der Export nimmt sie (unter 24 → 30) und wiederholt stehende Bilder zeitgenau.
 - **Vor Windows 10 2004 (Build 19041):** `WDA_EXCLUDEFROMCAPTURE` wirkt wie `WDA_MONITOR` (Fenster schwarz,
-  beim Aufnahmerahmen das ganze Video) → wird nicht gesetzt (`capture::exclusion_supported`); stattdessen blendet
-  `wm::cloak_for_capture` sichtbare Knips-Fenster für Standbilder kurz aus. In Videos und Scroll-Aufnahmen
-  können dort eigene Leisten erscheinen, wenn sie im Bereich liegen (Stopp-Leiste bei Vollbild).
+  beim Aufnahmerahmen das ganze Video) → wird nie gesetzt (`capture::exclusion_supported`); stattdessen verhüllt
+  `wm::conceal_for_still` sichtbare Knips-Fenster für Standbilder kurz (`DWMWA_CLOAK`, bis die Auswahl vorbei ist).
+  In Videos und Scroll-Aufnahmen können dort eigene Fenster und Leisten erscheinen, wenn sie im Bereich liegen
+  (Stopp-Leiste bei Vollbild; Karten und Menü verschwinden beim Start). „In Bildschirmübertragungen verbergen“ ist
+  dort gesperrt (`captureExclusionSupported`).
   `SetIsCursorCaptureEnabled` (ab 2004) und `SetIsBorderRequired` (ab Windows 11) sind optional.
 - **Mikrofon:** Desktop-Apps fragt Windows 10 nicht; verweigert/fehlt es, läuft die Aufnahme ohne Ton weiter,
   die Einblendung sagt es sofort, nach dem Speichern erklärt ein Dialog die Datenschutz-Schalter
@@ -296,6 +321,18 @@ Ziehen aus den Karten in andere Apps, Einfügen in fremde Apps, mehrere Monitore
 
 - Media-Foundation-H.264 schreibt sonst B-Bilder ohne Edit-Liste → alle Zeitstempel ein Bild zu spät.
   Encoder deshalb mit `CODECAPI_AVEncMPVDefaultBPictureCount = 0`; der Leser zählt das erste Bild als 0.
+- Erstes Bild: Desktop Duplication kann als Meldung nur den Mauszeiger liefern (`LastPresentTime` = 0) — die
+  Textur ist dann direkt nach `DuplicateOutput` noch leer, also schwarz. `capture::dda_still` nimmt nur Meldungen
+  mit Desktop-Bild (`DdaFrame::has_image`, auch `Dda::grab` für Scroll-Screenshots), wartet höchstens 300 ms und
+  nimmt sonst Graphics Capture; ein ganz schwarzes Bild (`Brightness::is_blank`) gilt nur, wenn auch Graphics
+  Capture nichts anderes zeigt. `capture::freeze_notes` hält fest, was geschah (Selbsttest `firstshot`).
+- `SetWindowDisplayAffinity(WDA_NONE)` gleich nach dem Anlegen auf ein noch verborgenes Web-Fenster (vorgewärmtes
+  Menü) ließ es als weiße Fläche oben links im Bildschirmbild erscheinen (CI, Selbsttest `sharing`).
+  `capture::exclude_from_capture` setzt den Wert deshalb nur, wenn er sich ändert; neue Fenster stehen schon auf
+  `WDA_NONE`. Wechsel später (Ausschluss an/aus, auch bei verborgenen Fenstern) sind unauffällig.
+- Auswahl-Overlay: Was in ein noch nie gezeigtes Fenster gezeichnet wird, kann verloren gehen, und bis zum ersten
+  `WM_PAINT` wäre es schwarz. `create_overlay` zeigt die Fenster deshalb verhüllt (`DWMWA_CLOAK`), zeichnet das
+  erste Bild und enthüllt sie dann.
 - Graphics Capture lehnt die rahmenlosen, nicht aktivierbaren Leisten (`WS_EX_NOACTIVATE`) mit
   E_INVALIDARG ab — `capture::own_window_image` schneidet sie dann aus dem Bildschirmbild.
 - Windows-Texterkennung verliert bei „sk_live_…“-Schlüsseln gern den Anfang (erst 3× vergrößert vollständig);

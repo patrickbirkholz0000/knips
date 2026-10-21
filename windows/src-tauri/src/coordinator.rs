@@ -59,9 +59,19 @@ impl Coordinator {
         let _preparing = OnDrop(|| self.preparing.store(false, Ordering::SeqCst));
         crate::menu::close(&knips().app);
         let result = (|| -> Result<()> {
-            // Vor Windows 10 2004: eigene Fenster ausblenden, bis die Auswahl vorbei ist (siehe `wm::cloak_for_capture`).
-            let cloak = wm::cloak_for_capture();
-            let frozen = capture::freeze(&monitors::list())?;
+            // Eigene Fenster gehören nicht ins Standbild (siehe `wm::conceal_for_still`). Ab Windows 10 2004 sind sie
+            // nur für Aufnahmen verborgen und gleich wieder frei; davor bleiben sie unsichtbar, bis die Auswahl vorbei ist.
+            let conceal = wm::conceal_for_still();
+            let frozen = capture::freeze(&monitors::list());
+            let conceal = if conceal.on_screen() {
+                drop(conceal);
+                None
+            } else {
+                Some(conceal)
+            };
+            let frozen = frozen?;
+            #[cfg(feature = "dev")]
+            crate::selftest_capture::after_freeze(&frozen);
             let windows = capture::windows();
             let kept = frozen.clone();
             overlay::present(
@@ -70,7 +80,7 @@ impl Coordinator {
                 purpose,
                 window_mode,
                 Box::new(move |selection| {
-                    drop(cloak);
+                    drop(conceal);
                     on_result(selection, kept)
                 }),
             )
@@ -93,9 +103,9 @@ impl Coordinator {
             return;
         }
         let monitor = monitors::at_cursor();
-        let cloak = wm::cloak_for_capture();
+        let conceal = wm::conceal_for_still();
         let frozen = capture::freeze(std::slice::from_ref(&monitor));
-        drop(cloak);
+        drop(conceal);
         match frozen {
             Ok(mut frozen) if !frozen.is_empty() => {
                 knips().shutter();
@@ -167,9 +177,9 @@ impl Coordinator {
             self.capture_interactive(false);
             return;
         };
-        let cloak = wm::cloak_for_capture();
+        let conceal = wm::conceal_for_still();
         let frozen = capture::freeze(std::slice::from_ref(&monitor));
-        drop(cloak);
+        drop(conceal);
         match frozen {
             Ok(frozen) => {
                 if let Some(image) = frozen.first().and_then(|f| imageops::crop(&f.image, rect)) {

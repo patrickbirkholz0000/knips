@@ -80,6 +80,9 @@ pub fn set_settings(window: WebviewWindow, patch: Value) -> Res<Settings> {
     if before.launch_at_login != after.launch_at_login {
         sync_autostart(&k.app);
     }
+    if before.hide_from_screen_sharing != after.hide_from_screen_sharing {
+        crate::wm::apply_capture_policy_all(&k.app);
+    }
     k.broadcast_bootstrap();
     Ok(after)
 }

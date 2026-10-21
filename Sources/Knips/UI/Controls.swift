@@ -485,6 +485,7 @@ final class BrandDialogWindow: NSWindow {
     static func make(width: CGFloat, title: String) -> BrandDialogWindow {
         let window = BrandDialogWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 300), styleMask: [.borderless],
                                        backing: .buffered, defer: false)
+        ScreenSharing.apply(to: window)
         window.title = title
         window.isOpaque = false
         window.backgroundColor = .clear

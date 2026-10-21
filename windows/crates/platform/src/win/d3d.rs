@@ -144,6 +144,33 @@ fn find_output(monitor: &Monitor) -> Result<(IDXGIAdapter, IDXGIOutput)> {
     bail!("keine DXGI-Ausgabe für {}", monitor.name)
 }
 
+/// Was `AcquireNextFrame` zu einem Bild meldet.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DdaFrame {
+    /// Zeitstempel des letzten Desktop-Bilds. 0 = die Meldung bringt kein neues Desktop-Bild (nur der
+    /// Mauszeiger hat sich geändert) — direkt nach `DuplicateOutput` ist die Textur dann noch leer.
+    pub last_present: i64,
+    /// Bildwechsel seit dem letzten abgeholten Bild.
+    pub accumulated: u32,
+    /// Mauszeiger bewegt bzw. Form geändert.
+    pub pointer: bool,
+}
+
+impl DdaFrame {
+    /// Bringt die Meldung ein Desktop-Bild?
+    pub fn has_image(&self) -> bool {
+        self.last_present != 0
+    }
+}
+
+/// Ergebnis von `Dda::acquire`.
+pub enum DdaGrab {
+    /// Bis zum Zeitlimit nichts Neues.
+    Timeout,
+    /// Meldung mit Textur (auch ohne neues Desktop-Bild, siehe `DdaFrame::has_image`).
+    Frame(DdaFrame, RgbaImage),
+}
+
 /// Eine Desktop-Duplication-Sitzung für einen Monitor.
 pub struct Dda {
     output: IDXGIOutput,
@@ -192,15 +219,20 @@ impl Dda {
         })
     }
 
-    /// Wartet bis `timeout_ms` auf ein Bild. `None` = nichts Neues. Der erste Aufruf nach dem
-    /// Öffnen liefert sofort den aktuellen Desktop.
-    pub fn grab(&mut self, rect: Option<IRect>, timeout_ms: u32) -> Result<Option<RgbaImage>> {
+    /// Wartet bis `timeout_ms` auf eine Meldung und liest die Textur (auch wenn die Meldung kein neues
+    /// Desktop-Bild bringt — dann zeigt die Textur den alten Stand, direkt nach dem Öffnen nichts).
+    pub fn acquire(&mut self, rect: Option<IRect>, timeout_ms: u32) -> Result<DdaGrab> {
         let mut info = DXGI_OUTDUPL_FRAME_INFO::default();
         let mut res = None;
         // SAFETY: info/res sind lokal; ReleaseFrame folgt auf jedes erfolgreiche Acquire.
         let acquired = unsafe { self.dup.AcquireNextFrame(timeout_ms, &mut info, &mut res) };
         match acquired {
             Ok(()) => {
+                let frame = DdaFrame {
+                    last_present: info.LastPresentTime,
+                    accumulated: info.AccumulatedFrames,
+                    pointer: info.LastMouseUpdateTime != 0,
+                };
                 let out = (|| -> Result<RgbaImage> {
                     let res = res.ok_or_else(|| anyhow!("kein Bild"))?;
                     let tex: ID3D11Texture2D = res.cast()?;
@@ -210,15 +242,24 @@ impl Dda {
                 unsafe {
                     let _ = self.dup.ReleaseFrame();
                 }
-                out.map(Some)
+                out.map(|img| DdaGrab::Frame(frame, img))
             }
-            Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => Ok(None),
+            Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => Ok(DdaGrab::Timeout),
             Err(e) if e.code() == DXGI_ERROR_ACCESS_LOST => {
                 // Auflösungswechsel, UAC, Sperrbildschirm: neu aufsetzen, nächster Versuch liefert wieder.
                 self.dup = duplicate(&self.output, &self.dev)?;
-                Ok(None)
+                Ok(DdaGrab::Timeout)
             }
             Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Wartet bis `timeout_ms` auf ein neues Desktop-Bild. `None` = nichts Neues (auch bei Meldungen, die nur den
+    /// Mauszeiger betreffen — ihre Textur zeigt kein neues Bild, direkt nach dem Öffnen gar keins).
+    pub fn grab(&mut self, rect: Option<IRect>, timeout_ms: u32) -> Result<Option<RgbaImage>> {
+        match self.acquire(rect, timeout_ms)? {
+            DdaGrab::Frame(f, img) if f.has_image() => Ok(Some(img)),
+            _ => Ok(None),
         }
     }
 }

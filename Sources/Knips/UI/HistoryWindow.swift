@@ -26,6 +26,7 @@ import SwiftUI
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: Self.size),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
+        ScreenSharing.apply(to: window)
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.title = "Knips – Verlauf"

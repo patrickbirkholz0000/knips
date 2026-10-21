@@ -41,6 +41,7 @@ import SwiftUI
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: Self.size),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
+        ScreenSharing.apply(to: window)
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.title = "Knips – Einstellungen"
@@ -1123,6 +1124,7 @@ private struct StoragePane: View {
 
 private struct PrivacyPane: View {
     @ObservedObject private var telemetry = Telemetry.shared
+    @ObservedObject private var settings = AppSettings.shared
     @ObservedObject var readiness: Readiness
 
     var body: some View {
@@ -1148,6 +1150,12 @@ private struct PrivacyPane: View {
                                 label: "Anonyme Nutzungsstatistik")
                 }
                 .padding(.vertical, 15)
+            }
+            BrandSection(title: "Bildschirm teilen", footer: "Knips' eigene Bildschirmfotos und Videos zeigen nie Knips-Fenster.") {
+                BrandRow(title: "In Bildschirmübertragungen verbergen",
+                         detail: "Teams, Zoom, Discord und andere Apps, die deinen Bildschirm teilen oder aufnehmen, sehen Knips dann nicht – auch keine Originale im Editor.") {
+                    BrandToggle(isOn: $settings.hideFromScreenSharing, label: "In Bildschirmübertragungen verbergen")
+                }
             }
             BrandSection(title: "So arbeitet Knips") {
                 InfoLine(symbol: "cpu", text: "Texterkennung läuft auf diesem Mac")

@@ -166,6 +166,10 @@ Gerät.
 | Originale und Bearbeitungsstand (Standard: 30 Tage) | `~/Library/Application Support/Knips/items/` | `%LOCALAPPDATA%\de.birkgroup.knips\items\` |
 | Einstellungen | Benutzereinstellungen `de.birkgroup.knips` | `%APPDATA%\de.birkgroup.knips\settings.json` |
 
+Teilst du deinen Bildschirm (Teams, Zoom, Discord, OBS), sehen die anderen die Knips-Fenster wie jedes andere
+Fenster. Soll der Editor mit unzensierten Originalen nicht im Stream auftauchen, schalte in den Einstellungen unter
+Datenschutz „In Bildschirmübertragungen verbergen“ ein. Knips' eigene Bildschirmfotos zeigen nie Knips-Fenster.
+
 ### Anonyme Nutzungsstatistik (freiwillig)
 
 Das ist die einzige Verbindung ins Internet, die Knips selbst aufbaut, und sie ist aus, bis du zustimmst.
@@ -324,6 +328,10 @@ always ask first and name the app that opened the link; this cannot be turned of
 never copied to the clipboard automatically, recognized text only after you confirm.
 
 ### Privacy
+
+When you share your screen (Teams, Zoom, Discord, OBS), Knips windows are visible like any other window. To keep
+the editor with unredacted originals out of a stream, turn on „In Bildschirmübertragungen verbergen“ under
+Datenschutz in the settings. Knips' own screenshots never show Knips windows.
 
 Everything runs locally. The only network traffic Knips creates is the optional anonymous usage
 statistics. Knips asks once on first launch; nothing is sent unless you agree, and you can change it

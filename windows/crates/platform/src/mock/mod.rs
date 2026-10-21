@@ -52,6 +52,17 @@ pub mod capture {
             .collect())
     }
 
+    /// Notizen zum letzten Standbild (`freeze`): Weg, Meldungen der Desktop Duplication, Helligkeit.
+    pub fn freeze_notes() -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Selbsttest: neue Desktop-Duplication-Sitzung öffnen und die ersten `n` Meldungen beschreiben.
+    pub fn probe_duplication(m: &Monitor, n: usize) -> Result<Vec<(String, RgbaImage)>> {
+        let _ = (m, n);
+        anyhow::bail!("nur unter Windows")
+    }
+
     /// Sichtbare Fenster anderer Programme, von vorn nach hinten.
     pub fn windows() -> Vec<WindowInfo> {
         vec![WindowInfo {
@@ -95,15 +106,28 @@ pub mod capture {
         true
     }
 
-    /// Sichtbare unter `handles` ausblenden (für ein Standbild, wenn `exclusion_supported` nicht gilt)
-    /// und warten, bis der Bildschirm ohne sie gezeichnet ist. Liefert die ausgeblendeten Fenster.
-    pub fn hide_for_capture(handles: &[isize]) -> Vec<isize> {
+    /// Ist das Fenster gerade aus Aufnahmen ausgeschlossen (`WDA_EXCLUDEFROMCAPTURE`)?
+    pub fn is_excluded(hwnd: isize) -> bool {
+        let _ = hwnd;
+        false
+    }
+
+    /// Würde eine Aufnahme (eigene, Teams, Discord, OBS …) das Fenster gerade zeigen? (Selbsttests)
+    pub fn capturable(hwnd: isize) -> bool {
+        let _ = hwnd;
+        true
+    }
+
+    /// Eigene Fenster für ein Standbild aus dem Bild nehmen: ab Windows 10 2004 per `WDA_EXCLUDEFROMCAPTURE`
+    /// (auf dem Bildschirm ändert sich nichts; alle noch nicht ausgeschlossenen), davor per `DWMWA_CLOAK` (nur
+    /// sichtbare, dann warten, bis der Bildschirm ohne sie gezeichnet ist). Liefert sie für `reveal_after_capture`.
+    pub fn conceal_for_capture(handles: &[isize]) -> Vec<isize> {
         let _ = handles;
         Vec::new()
     }
 
-    /// Mit `hide_for_capture` ausgeblendete Fenster wieder zeigen, ohne sie zu aktivieren.
-    pub fn show_after_capture(handles: &[isize]) {
+    /// Mit `conceal_for_capture` verborgene Fenster wieder zulassen bzw. zeigen (ohne sie zu aktivieren).
+    pub fn reveal_after_capture(handles: &[isize]) {
         let _ = handles;
     }
 
@@ -158,6 +182,11 @@ pub mod overlay {
 
     pub fn is_active() -> bool {
         false
+    }
+
+    /// Selbsttests: Overlay nicht aus Aufnahmen ausschließen.
+    pub fn set_capturable_for_tests(on: bool) {
+        let _ = on;
     }
 
     /// Bricht eine laufende Auswahl ab (`on_done(Cancelled)`).
@@ -654,6 +683,35 @@ pub mod testinput {
     /// Taste (Virtual-Key) mit Modifier-Bits drücken und loslassen.
     pub fn key(vk: u32, mods: u32) {
         let _ = (vk, mods);
+    }
+
+    /// Farben der Balken der Testfläche (`show_pattern`), von links nach rechts.
+    pub const PATTERN_COLORS: [[u8; 3]; 8] = [
+        [235, 235, 235],
+        [235, 235, 16],
+        [16, 235, 235],
+        [16, 235, 16],
+        [235, 16, 235],
+        [235, 16, 16],
+        [16, 16, 235],
+        [128, 128, 128],
+    ];
+
+    /// Schwebende Testfläche mit Farbbalken. Schließt beim Drop.
+    pub struct Pattern {
+        _private: (),
+    }
+
+    impl Pattern {
+        pub fn hwnd(&self) -> isize {
+            0
+        }
+    }
+
+    /// Testfläche über `rect` (global, physische Pixel) zeigen, ohne den Fokus zu nehmen.
+    pub fn show_pattern(rect: crate::types::IRect) -> anyhow::Result<Pattern> {
+        let _ = rect;
+        Ok(Pattern { _private: () })
     }
 }
 

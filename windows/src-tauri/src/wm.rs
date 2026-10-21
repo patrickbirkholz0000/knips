@@ -1,6 +1,10 @@
 //! Fenster anlegen, platzieren, zeigen. Alle Knips-Fenster sind Web-Fenster derselben Seite
 //! (`index.html#/<ansicht>`), nur das Auswahl-Overlay und die Aufnahmerahmen sind nativ.
 
+#[cfg(feature = "dev")]
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicU8, Ordering};
+
 use anyhow::Result;
 use knips_platform::{monitors, IRect, Monitor};
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
@@ -106,42 +110,135 @@ pub fn ensure(app: &AppHandle, spec: &Spec) -> Result<WebviewWindow> {
         b = b.center();
     }
     let window = b.build()?;
-    exclude_from_capture(&window);
+    apply_capture_policy(&window);
     Ok(window)
 }
 
-/// Eigene Fenster gehören nie ins Bild (wie der Content-Filter auf dem Mac). In der Test-Sandbox
-/// bleiben sie sichtbar, damit die Selbsttests sie fotografieren können.
-pub fn exclude_from_capture(window: &WebviewWindow) {
-    if paths::test_root().is_some() {
-        return;
+// ---------------------------------------------------------------- Aufnahmen und Bildschirmübertragungen
+//
+// Knips-Fenster sind für andere Apps (Teams, Discord, OBS …) sichtbar wie jedes andere Fenster. Aus Knips'
+// eigenen Bildern und Videos bleiben sie trotzdem heraus (wie der Content-Filter auf dem Mac):
+// - Standbild: `conceal_for_still` nimmt sie kurz heraus (ab Windows 10 2004 nur für Aufnahmen, auf dem
+//   Bildschirm ändert sich nichts).
+// - Video und Scroll-Screenshot: `set_capture_session` schließt sie aus, solange die Aufnahme läuft; Karten und
+//   Menü verschwinden dafür ganz.
+// - Was zur Aufnahme selbst gehört (`CAPTURE_CHROME`, dazu Overlay und Rahmen im Plattform-Teil), ist immer
+//   ausgeschlossen.
+// - Einstellung „In Bildschirmübertragungen verbergen“ (`hide_from_screen_sharing`): alle Fenster immer aus.
+// Vor Windows 10 2004 wirkt der Ausschluss nicht (`capture::exclusion_supported`); dann werden Fenster für ein
+// Standbild verhüllt, und in Videos können eigene Fenster erscheinen.
+
+/// Fenster, die zur Aufnahme selbst gehören und nie in einem Bild oder Video landen dürfen: Einblendung,
+/// Aufnahme-Leiste, Countdown, Scroll-Leiste.
+pub const CAPTURE_CHROME: [&str; 4] = [crate::hud::LABEL, crate::recording::CONTROLS, crate::recording::COUNTDOWN, crate::scroll::PANEL];
+
+/// Laufende Video- bzw. Scroll-Aufnahme (Bits von `Session`): eigene Fenster sind so lange ausgeschlossen.
+static CAPTURE_SESSION: AtomicU8 = AtomicU8::new(0);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Session {
+    Recording = 1,
+    Scroll = 2,
+}
+
+/// Selbsttest `sharing`: in der Sandbox ausschließen wie in der echten App (sonst bleiben dort alle Fenster
+/// sichtbar, damit die Selbsttests sie fotografieren können).
+#[cfg(feature = "dev")]
+static SANDBOX_EXCLUSION: AtomicBool = AtomicBool::new(false);
+
+#[cfg(feature = "dev")]
+pub fn set_sandbox_exclusion(on: bool) {
+    SANDBOX_EXCLUSION.store(on, Ordering::SeqCst);
+}
+
+fn sandbox() -> bool {
+    #[cfg(feature = "dev")]
+    if SANDBOX_EXCLUSION.load(Ordering::SeqCst) {
+        return false;
     }
-    if let Some(hwnd) = hwnd(window) {
-        knips_platform::capture::exclude_from_capture(hwnd, true);
+    paths::test_root().is_some()
+}
+
+/// Soll das Fenster `label` gerade aus allen Aufnahmen ausgeschlossen sein?
+pub fn excluded_from_capture(label: &str) -> bool {
+    if sandbox() {
+        return false;
+    }
+    let hide_all = crate::app::try_knips().is_some_and(|k| k.settings.get().hide_from_screen_sharing);
+    hide_all || CAPTURE_CHROME.contains(&label) || CAPTURE_SESSION.load(Ordering::SeqCst) != 0
+}
+
+/// Ausschluss eines Fensters nach den Regeln oben setzen.
+pub fn apply_capture_policy(window: &WebviewWindow) {
+    if let Some(h) = hwnd(window) {
+        knips_platform::capture::exclude_from_capture(h, excluded_from_capture(window.label()));
     }
 }
 
-/// Eigene Fenster, die für ein Standbild ausgeblendet wurden; zeigt sie beim Drop wieder (ohne Fokus).
-pub struct CaptureCloak(Vec<isize>);
+/// Nach einer Änderung (Einstellung, Beginn/Ende einer Aufnahme): alle offenen Fenster neu einstellen.
+pub fn apply_capture_policy_all(app: &AppHandle) {
+    for window in app.webview_windows().values() {
+        apply_capture_policy(window);
+    }
+}
 
-impl Drop for CaptureCloak {
+/// Beginn/Ende einer Video- oder Scroll-Aufnahme: eigene Fenster so lange ausschließen; Karten und Menü
+/// verschwinden beim Beginn (auch vor Windows 10 2004, wo der Ausschluss nicht wirkt) und Karten kommen danach
+/// wieder. Laufen beide, gilt das bis zum Ende der letzten.
+pub fn set_capture_session(who: Session, active: bool) {
+    let Some(k) = crate::app::try_knips() else { return };
+    let bit = who as u8;
+    let before = if active { CAPTURE_SESSION.fetch_or(bit, Ordering::SeqCst) } else { CAPTURE_SESSION.fetch_and(!bit, Ordering::SeqCst) };
+    let after = if active { before | bit } else { before & !bit };
+    if (before != 0) == (after != 0) {
+        return;
+    }
+    if active {
+        crate::menu::close(&k.app);
+        k.cards.suspend();
+    }
+    apply_capture_policy_all(&k.app);
+    if !active {
+        k.cards.resume();
+    }
+}
+
+/// Eigene Fenster, die für ein Standbild verborgen wurden; lässt sie beim Drop wieder zu.
+pub struct StillConceal(Vec<(String, isize)>);
+
+impl StillConceal {
+    /// Ab Windows 10 2004 sind die Fenster nur für Aufnahmen verborgen, auf dem Bildschirm unverändert — dann
+    /// gleich nach dem Standbild freigeben. Davor sind sie unsichtbar und bleiben es, bis die Auswahl vorbei
+    /// ist (das Overlay zeigt ohnehin das Standbild).
+    pub fn on_screen(&self) -> bool {
+        knips_platform::capture::exclusion_supported()
+    }
+}
+
+impl Drop for StillConceal {
     fn drop(&mut self) {
-        if !self.0.is_empty() {
-            knips_platform::capture::show_after_capture(&self.0);
+        if self.0.is_empty() {
+            return;
+        }
+        let handles: Vec<isize> = self.0.iter().map(|(_, h)| *h).collect();
+        knips_platform::capture::reveal_after_capture(&handles);
+        // Regeln erneut anwenden: Hat sich inzwischen etwas geändert (Einstellung, Aufnahme), gilt das.
+        for (label, h) in &self.0 {
+            if excluded_from_capture(label) {
+                knips_platform::capture::exclude_from_capture(*h, true);
+            }
         }
     }
 }
 
-/// Vor Windows 10 2004 kann Windows eigene Fenster nicht aus Aufnahmen herausnehmen
-/// (`capture::exclusion_supported`): Dann werden alle sichtbaren Knips-Fenster (Karten, Einblendung,
-/// Pins, Editor …) für das Standbild kurz ausgeblendet. Sonst nichts zu tun.
-pub fn cloak_for_capture() -> CaptureCloak {
-    if knips_platform::capture::exclusion_supported() {
-        return CaptureCloak(Vec::new());
-    }
-    let Some(k) = crate::app::try_knips() else { return CaptureCloak(Vec::new()) };
-    let handles: Vec<isize> = k.app.webview_windows().values().filter(|w| w.is_visible().unwrap_or(false)).filter_map(hwnd).collect();
-    CaptureCloak(knips_platform::capture::hide_for_capture(&handles))
+/// Alle Knips-Fenster (Karten, Menü, Pins, Editor, Einstellungen …) für ein Standbild aus dem Bild nehmen —
+/// Knips' eigene Bilder zeigen nie Knips. Fenster, die ohnehin ausgeschlossen sind, bleiben unberührt.
+pub fn conceal_for_still() -> StillConceal {
+    let Some(k) = crate::app::try_knips() else { return StillConceal(Vec::new()) };
+    let windows: Vec<(String, isize)> = k.app.webview_windows().into_iter().filter_map(|(label, w)| hwnd(&w).map(|h| (label, h))).collect();
+    let handles: Vec<isize> = windows.iter().map(|(_, h)| *h).collect();
+    let concealed = knips_platform::capture::conceal_for_capture(&handles);
+    StillConceal(windows.into_iter().filter(|(_, h)| concealed.contains(h)).collect())
 }
 
 pub fn hwnd(window: &WebviewWindow) -> Option<isize> {

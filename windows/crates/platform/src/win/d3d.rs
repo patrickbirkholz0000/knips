@@ -254,12 +254,12 @@ impl Dda {
         }
     }
 
-    /// Wartet bis `timeout_ms` auf ein Bild. `None` = nichts Neues. Der erste Aufruf nach dem
-    /// Öffnen liefert sofort den aktuellen Desktop.
+    /// Wartet bis `timeout_ms` auf ein neues Desktop-Bild. `None` = nichts Neues (auch bei Meldungen, die nur den
+    /// Mauszeiger betreffen — ihre Textur zeigt kein neues Bild, direkt nach dem Öffnen gar keins).
     pub fn grab(&mut self, rect: Option<IRect>, timeout_ms: u32) -> Result<Option<RgbaImage>> {
         match self.acquire(rect, timeout_ms)? {
-            DdaGrab::Frame(_, img) => Ok(Some(img)),
-            DdaGrab::Timeout => Ok(None),
+            DdaGrab::Frame(f, img) if f.has_image() => Ok(Some(img)),
+            _ => Ok(None),
         }
     }
 }

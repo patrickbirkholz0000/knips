@@ -24,7 +24,7 @@ use knips_platform::capture::RegionCapturer;
 use knips_platform::overlay::{self, Purpose};
 use knips_platform::{capture, monitors, testinput, Frozen, Monitor};
 use parking_lot::Mutex;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 type FreezeHook = Box<dyn Fn(&[Frozen]) + Send + Sync>;
 
@@ -67,12 +67,196 @@ fn pattern_hits(img: &RgbaImage, area: IRect) -> usize {
         .count()
 }
 
+/// Innenfläche eines eigenen Fensters (global, physische Pixel).
+pub(crate) fn window_rect(app: &AppHandle, label: &str) -> Result<IRect> {
+    let w = app.get_webview_window(label).with_context(|| format!("Fenster {label} fehlt"))?;
+    let (p, s) = (w.inner_position()?, w.inner_size()?);
+    Ok(IRect::new(p.x, p.y, s.width as i32, s.height as i32))
+}
+
+/// Mittlere Abweichung der Helligkeit (0…255) zweier Bilder im Ausschnitt `r`.
+fn region_diff(a: &RgbaImage, b: &RgbaImage, r: IRect) -> f64 {
+    let luma = |p: [u8; 4]| 0.299 * p[0] as f64 + 0.587 * p[1] as f64 + 0.114 * p[2] as f64;
+    let (mut sum, mut n) = (0.0, 0u64);
+    for y in (r.y.max(0) as u32..(r.bottom() as u32).min(a.height()).min(b.height())).step_by(2) {
+        for x in (r.x.max(0) as u32..(r.right() as u32).min(a.width()).min(b.width())).step_by(2) {
+            sum += (luma(a.get_pixel(x, y).0) - luma(b.get_pixel(x, y).0)).abs();
+            n += 1;
+        }
+    }
+    if n == 0 {
+        f64::NAN
+    } else {
+        sum / n as f64
+    }
+}
+
+/// Mittlere Abweichung zweier Standbilder im Bereich `rect` (global), auf dem Bildschirm, der ihn enthält.
+pub(crate) fn still_diff(a: &[Frozen], b: &[Frozen], rect: IRect) -> f64 {
+    for fa in a {
+        let Some(fb) = b.iter().find(|f| f.monitor.id == fa.monitor.id) else { continue };
+        let bounds = IRect::new(0, 0, fa.monitor.rect.width, fa.monitor.rect.height);
+        if let Some(local) = rect.offset(-fa.monitor.rect.x, -fa.monitor.rect.y).intersection(&bounds) {
+            return region_diff(&fa.image, &fb.image, local);
+        }
+    }
+    f64::NAN
+}
+
 fn bright(img: &RgbaImage, area: Option<IRect>) -> Brightness {
     imageops::brightness(img, area, 4)
 }
 
 fn show(b: Brightness) -> String {
     format!("Helligkeit {:.0}, schwarz {:.0} %", b.mean, b.black * 100.0)
+}
+
+// ------------------------------------------------------------------ Bildschirmübertragungen
+
+/// Fenstertest `sharing`: Knips-Fenster in Bildschirmübertragungen (Teams, Discord, OBS) und in Knips' eigenen
+/// Aufnahmen. Ausschluss wie in der echten App (`wm::set_sandbox_exclusion`). Eine Desktop Duplication sieht,
+/// was jede andere Aufnahme-App sieht.
+pub fn sharing(app: &AppHandle, out: &Path) -> Result<()> {
+    use crate::selftest::probe;
+    use crate::wm;
+    let k = crate::app::knips();
+    if !capture::exclusion_supported() {
+        bail!("Windows kann hier keine Fenster aus Aufnahmen ausschließen");
+    }
+    let mut failures: Vec<String> = vec![];
+    let mut check = |name: &str, ok: bool| {
+        println!("   {}  {name}", if ok { "ok    " } else { "FALSCH" });
+        if !ok {
+            failures.push(name.to_string());
+        }
+    };
+    wm::set_sandbox_exclusion(true);
+    wm::apply_capture_policy_all(app);
+    let m = monitors::primary();
+    let excluded = |label: &str| app.get_webview_window(label).and_then(|w| wm::hwnd(&w)).map(capture::is_excluded);
+
+    // Fenster aller Arten: Einstellungen, Karte (nach einer Aufnahme), Pin, Menü (vorgewärmt), Einblendung, Leisten.
+    crate::commands::show_settings(app, Some("privacy".into()));
+    k.coordinator.finish(knips_platform::sample::sample_image(640, 400, 1.0), 1.0, &m);
+    k.pins.pin(Arc::new(knips_platform::sample::sample_image(320, 200, 1.0)), 1.0)?;
+    k.hud.show("Test", "check");
+    for (label, route, size) in [(crate::recording::CONTROLS, "rec-controls", (246.0, 44.0)), (crate::recording::COUNTDOWN, "rec-countdown", (150.0, 176.0)), (crate::scroll::PANEL, "scroll-controls", (380.0, 48.0))] {
+        wm::ensure(app, &wm::Spec::floating(label, route, size))?;
+    }
+    std::thread::sleep(Duration::from_millis(1500));
+    let pin = app.webview_windows().into_keys().find(|l| l.starts_with("pin-")).context("Pin fehlt")?;
+    let normal = ["settings", crate::cards::LABEL, crate::menu::LABEL, pin.as_str()];
+    println!("Standard (Einstellung aus):");
+    for label in normal {
+        check(&format!("{label}: für andere Apps sichtbar"), excluded(label) == Some(false));
+    }
+    for label in wm::CAPTURE_CHROME {
+        check(&format!("{label}: gehört zur Aufnahme, ausgeschlossen"), excluded(label) == Some(true));
+    }
+    let cards_visible = || app.get_webview_window(crate::cards::LABEL).is_some_and(|w| w.is_visible().unwrap_or(false));
+    check("Karte nach der Aufnahme sichtbar", cards_visible());
+
+    // Bildschirmbild wie bei Discord/OBS: zeigt die Einstellungen. Vergleich: Bild ohne sie (ausgeblendet).
+    let settings = app.get_webview_window("settings").context("Einstellungen fehlen")?;
+    let settings_h = wm::hwnd(&settings).context("Einstellungen ohne HWND")?;
+    let rect = window_rect(app, "settings")?;
+    let upper = IRect::new(rect.x, rect.y, rect.width, rect.height / 2);
+    let with_settings = capture::freeze(&monitors::list())?;
+    let _ = settings.hide();
+    std::thread::sleep(Duration::from_millis(700));
+    let truth = capture::freeze(&monitors::list())?;
+    let _ = settings.show();
+    std::thread::sleep(Duration::from_millis(700));
+    let seen = still_diff(&with_settings, &truth, upper);
+    println!("   Bildschirmbild (wie Discord/OBS): Abweichung zum Bild ohne Einstellungen {seen:.1}");
+    check("Bildschirmbild (wie Discord/OBS) zeigt die Einstellungen", seen >= 10.0);
+
+    // Wie lange braucht der Ausschluss, bis ein frisches Standbild ihn zeigt? (für `CONCEAL_SETTLE`)
+    for delay in [0u64, 16, 33, 50, 100] {
+        capture::exclude_from_capture(settings_h, true);
+        std::thread::sleep(Duration::from_millis(delay));
+        let still = capture::freeze(&monitors::list())?;
+        capture::exclude_from_capture(settings_h, false);
+        let d = still_diff(&still, &truth, upper);
+        println!("   Ausschluss + {delay} ms: Abweichung {d:.1} ({})", if d <= 3.0 { "ohne Einstellungen" } else { "noch mit" });
+        std::thread::sleep(Duration::from_millis(150));
+    }
+
+    // Knips' eigenes Standbild: ohne Knips-Fenster, auf dem Bildschirm bleiben sie unverändert.
+    let t = Instant::now();
+    let conceal = wm::conceal_for_still();
+    let during_capturable = capture::capturable(settings_h);
+    let during_visible = settings.is_visible().unwrap_or(false) && cards_visible();
+    let still = capture::freeze(&monitors::list())?;
+    drop(conceal);
+    let ms = t.elapsed().as_millis();
+    let d = still_diff(&still, &truth, upper);
+    println!("   eigenes Standbild: Abweichung {d:.1}, Fenster {ms} ms für Aufnahmen verborgen");
+    check("eigenes Standbild ohne Knips-Fenster", d <= 3.0);
+    check("dabei auf dem Bildschirm unverändert (sichtbar, nur für Aufnahmen verborgen)", !during_capturable && during_visible);
+    check("danach wieder für andere Apps sichtbar", excluded("settings") == Some(false) && capture::capturable(settings_h));
+
+    // Schalter „In Bildschirmübertragungen verbergen“ (Datenschutz) — über die Oberfläche.
+    let switch = "[...document.querySelectorAll('.k-row')].find(r => r.textContent.includes('In Bildschirmübertragungen verbergen'))?.querySelector('[role=switch]')";
+    let found = probe(&settings, &format!("(() => {{ const s = {switch}; if (!s) return 'fehlt'; s.scrollIntoView({{ block: 'center' }}); return s.getAttribute('aria-checked'); }})()"), Duration::from_secs(3))?;
+    std::thread::sleep(Duration::from_millis(500));
+    crate::selftest::shoot(app, "settings", out, "einstellungen-datenschutz-uebertragung.png")?;
+    check("Schalter in Datenschutz, standardmäßig aus", found == "false");
+    probe(&settings, &format!("({switch}.click(), 'ok')"), Duration::from_secs(3))?;
+    let on = (0..40).any(|_| {
+        std::thread::sleep(Duration::from_millis(50));
+        k.settings.get().hide_from_screen_sharing
+    });
+    check("Schalter schaltet die Einstellung ein", on);
+    println!("Einstellung an:");
+    for label in normal.iter().copied().chain(wm::CAPTURE_CHROME) {
+        check(&format!("{label}: sofort ausgeschlossen"), excluded(label) == Some(true));
+    }
+    crate::commands::show_history(app);
+    std::thread::sleep(Duration::from_millis(1200));
+    check("neues Fenster (Verlauf) ausgeschlossen", excluded("history") == Some(true));
+    if let Some(h) = app.get_webview_window("history") {
+        let _ = h.hide();
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    let hidden = capture::freeze(&monitors::list())?;
+    let d = still_diff(&hidden, &truth, upper);
+    println!("   Bildschirmbild mit Einstellung an: Abweichung {d:.1}");
+    check("Bildschirmbild (wie Discord/OBS) ohne die Einstellungen", d <= 3.0);
+    probe(&settings, &format!("({switch}.click(), 'ok')"), Duration::from_secs(3))?;
+    let off = (0..40).any(|_| {
+        std::thread::sleep(Duration::from_millis(50));
+        !k.settings.get().hide_from_screen_sharing
+    });
+    check("Schalter schaltet die Einstellung aus", off);
+    println!("Einstellung wieder aus:");
+    for label in normal {
+        check(&format!("{label}: wieder sichtbar"), excluded(label) == Some(false));
+    }
+    check("Einblendung bleibt ausgeschlossen", excluded(crate::hud::LABEL) == Some(true));
+
+    // Videoaufnahme (bis zum Countdown, dann abgebrochen): Karten und Menü weg, eigene Fenster aus dem Video.
+    println!("Videoaufnahme:");
+    k.settings.update(|s| s.recording_countdown = true);
+    crate::menu::show(app, Some((m.work.right() - 200, m.work.bottom() + 10)));
+    std::thread::sleep(Duration::from_millis(800));
+    k.recording.begin(m.clone(), IRect::new(m.rect.width / 4, m.rect.height / 4, m.rect.width / 2, m.rect.height / 2));
+    std::thread::sleep(Duration::from_millis(800));
+    check("Countdown läuft", k.recording.is_busy());
+    check("Karten ausgeblendet", !cards_visible() && k.cards.is_suspended());
+    check("Menü geschlossen", !crate::menu::is_open(app));
+    check("Einstellungen und Pin aus dem Video", excluded("settings") == Some(true) && excluded(&pin) == Some(true));
+    k.recording.stop(false);
+    std::thread::sleep(Duration::from_millis(1200));
+    check("nach der Aufnahme: Einstellungen und Pin wieder sichtbar", excluded("settings") == Some(false) && excluded(&pin) == Some(false));
+    check("nach der Aufnahme: Karten wieder da", cards_visible() && !k.cards.is_suspended());
+
+    wm::set_sandbox_exclusion(false);
+    wm::apply_capture_policy_all(app);
+    if !failures.is_empty() {
+        bail!("Bildschirmübertragung: {}", failures.join(", "));
+    }
+    Ok(())
 }
 
 // ------------------------------------------------------------------ Kindprozess ohne App
@@ -108,6 +292,22 @@ pub fn firstshot_raw(out: &Path) -> Result<()> {
         }
         Err(err) => println!("   nicht möglich: {err:#}"),
     }
+    // Erste Meldung frischer Sitzungen, während sich der Mauszeiger bewegt (Auskunft: kommt sie ohne Desktop-Bild?).
+    let (mut without_image, mut total) = (0, 0);
+    for i in 0..12 {
+        testinput::move_to(m.rect.right() - 40 - i * 20, m.rect.y + 30 + i * 10);
+        if let Ok(list) = capture::probe_duplication(&m, 1) {
+            total += 1;
+            if let Some((text, img)) = list.first() {
+                if text.contains("LastPresentTime 0,") || img.width() <= 1 || pattern_hits(img, local) < 7 {
+                    without_image += 1;
+                    println!("   frische Sitzung {}: {text}", i + 1);
+                }
+            }
+        }
+    }
+    println!("Frische Sitzungen bei bewegtem Zeiger: {without_image} von {total} ohne Testfläche in der ersten Meldung");
+    testinput::move_to(m.rect.right() - 4, m.rect.y + 4);
 
     let t = Instant::now();
     let second = capture::freeze(std::slice::from_ref(&m))?.remove(0);
@@ -115,6 +315,13 @@ pub fn firstshot_raw(out: &Path) -> Result<()> {
     println!("Zweites Standbild: {} ms, Testfläche {second_hits}/8 Farbbalken, {}", t.elapsed().as_millis(), show(bright(&second.image, Some(local))));
     for n in capture::freeze_notes() {
         println!("   {n}");
+    }
+    if std::env::var_os("KNIPS_TEST_DDA_EMPTY_FIRST").is_some() {
+        // Die leere erste Meldung muss verworfen worden sein (und das Bild trotzdem stimmen).
+        let notes = capture::freeze_notes();
+        if !notes.iter().any(|n| n.contains("ohne Desktop-Bild, verworfen")) {
+            bail!("leere erste Meldung nicht verworfen");
+        }
     }
     if first_hits < 7 {
         bail!("erstes Standbild im Prozess zeigt die Testfläche nicht ({first_hits}/8 Farbbalken, zweites {second_hits}/8)");
@@ -125,16 +332,20 @@ pub fn firstshot_raw(out: &Path) -> Result<()> {
     Ok(())
 }
 
-fn run_raw_child(out: &Path) -> Result<bool> {
-    let dir = out.join("roh");
+/// `firstshot-roh` als frischen Prozess starten. `empty_first`: erste Meldung jeder Desktop-Duplication-Sitzung
+/// ohne Desktop-Bild (schwarze Textur) simulieren, wie manche Grafiktreiber sie liefern.
+fn run_raw_child(out: &Path, empty_first: bool) -> Result<bool> {
+    let dir = out.join(if empty_first { "roh-leer" } else { "roh" });
     std::fs::create_dir_all(&dir)?;
-    let output = std::process::Command::new(std::env::current_exe()?)
-        .args(["--selftest", "firstshot-roh"])
-        .arg(&dir)
-        .stderr(std::process::Stdio::null())
-        .output()?;
+    let mut cmd = std::process::Command::new(std::env::current_exe()?);
+    cmd.args(["--selftest", "firstshot-roh"]).arg(&dir).stderr(std::process::Stdio::null());
+    if empty_first {
+        cmd.env("KNIPS_TEST_DDA_EMPTY_FIRST", "1");
+    }
+    let output = cmd.output()?;
+    let tag = if empty_first { "ohne App, erste Meldung leer" } else { "ohne App" };
     for line in String::from_utf8_lossy(&output.stdout).lines() {
-        println!("   [ohne App] {line}");
+        println!("   [{tag}] {line}");
     }
     Ok(output.status.success())
 }
@@ -317,11 +528,14 @@ fn shot_round(round: u32, m: &Monitor, area: IRect, out: &Path) -> Result<Round>
 /// Fenstertest `firstshot` (siehe Modulkommentar).
 pub fn firstshot(_app: &AppHandle, out: &Path) -> Result<()> {
     let mut failures: Vec<String> = vec![];
-    // 1. Ohne App, im frischen Kindprozess
-    match run_raw_child(out) {
-        Ok(true) => println!("   ok     erstes Standbild ohne App zeigt die Testfläche"),
-        Ok(false) => failures.push("erstes Standbild ohne App (Kindprozess)".into()),
-        Err(err) => failures.push(format!("Kindprozess: {err:#}")),
+    // 1. Ohne App, im frischen Kindprozess — einmal normal, einmal mit leerer erster Meldung (simuliert).
+    for empty_first in [false, true] {
+        let what = if empty_first { "mit leerer erster Meldung" } else { "ohne App" };
+        match run_raw_child(out, empty_first) {
+            Ok(true) => println!("   ok     erstes Standbild ({what}) zeigt die Testfläche"),
+            Ok(false) => failures.push(format!("erstes Standbild ({what}, Kindprozess)")),
+            Err(err) => failures.push(format!("Kindprozess ({what}): {err:#}")),
+        }
     }
 
     // 2. In der App, über den Weg der Druck-Taste

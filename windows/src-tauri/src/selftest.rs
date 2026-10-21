@@ -33,7 +33,7 @@ use crate::settings::SettingsStore;
 use crate::store::Store;
 use crate::wm;
 
-const WINDOW_TESTS: [&str; 6] = ["ui", "render", "links", "nomedia", "oldwin", "firstshot"];
+const WINDOW_TESTS: [&str; 7] = ["ui", "render", "links", "nomedia", "oldwin", "firstshot", "sharing"];
 
 /// Kindprozess von `links`: Knips mit `knips://pin` als einzigem Argument gestartet. Nach dem Start (und
 /// einer Pause, in der eine verspätete zweite Meldung ankäme) muss genau ein Aufruf angekommen sein.
@@ -1385,6 +1385,7 @@ pub fn after_setup(app: &AppHandle) {
             "nomedia" => crate::selftest_media::nomedia(&app, &out),
             "oldwin" => crate::selftest_media::oldwin(&app, &out),
             "firstshot" => crate::selftest_capture::firstshot(&app, &out),
+            "sharing" => crate::selftest_capture::sharing(&app, &out),
             "startlink" => start_link_result(),
             _ => Ok(()),
         };

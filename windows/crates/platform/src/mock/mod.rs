@@ -106,15 +106,28 @@ pub mod capture {
         true
     }
 
-    /// Sichtbare unter `handles` ausblenden (für ein Standbild, wenn `exclusion_supported` nicht gilt)
-    /// und warten, bis der Bildschirm ohne sie gezeichnet ist. Liefert die ausgeblendeten Fenster.
-    pub fn hide_for_capture(handles: &[isize]) -> Vec<isize> {
+    /// Ist das Fenster gerade aus Aufnahmen ausgeschlossen (`WDA_EXCLUDEFROMCAPTURE`)?
+    pub fn is_excluded(hwnd: isize) -> bool {
+        let _ = hwnd;
+        false
+    }
+
+    /// Würde eine Aufnahme (eigene, Teams, Discord, OBS …) das Fenster gerade zeigen? (Selbsttests)
+    pub fn capturable(hwnd: isize) -> bool {
+        let _ = hwnd;
+        true
+    }
+
+    /// Eigene Fenster für ein Standbild aus dem Bild nehmen: ab Windows 10 2004 per `WDA_EXCLUDEFROMCAPTURE`
+    /// (auf dem Bildschirm ändert sich nichts), davor per `DWMWA_CLOAK`. Betrifft nur sichtbare, noch nicht
+    /// ausgeschlossene; wartet, bis der Bildschirm ohne sie gezeichnet ist. Liefert sie für `reveal_after_capture`.
+    pub fn conceal_for_capture(handles: &[isize]) -> Vec<isize> {
         let _ = handles;
         Vec::new()
     }
 
-    /// Mit `hide_for_capture` ausgeblendete Fenster wieder zeigen, ohne sie zu aktivieren.
-    pub fn show_after_capture(handles: &[isize]) {
+    /// Mit `conceal_for_capture` verborgene Fenster wieder zulassen bzw. zeigen (ohne sie zu aktivieren).
+    pub fn reveal_after_capture(handles: &[isize]) {
         let _ = handles;
     }
 

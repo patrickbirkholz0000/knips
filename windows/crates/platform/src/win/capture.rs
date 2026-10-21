@@ -11,16 +11,18 @@ use knips_core::RgbaImage;
 use windows::core::PWSTR;
 use windows::core::BOOL;
 use windows::Win32::Foundation::{CloseHandle, LPARAM, RECT};
-use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
+use windows::Win32::Graphics::Dwm::{
+    DwmGetWindowAttribute, DwmSetWindowAttribute, DWMWA_CLOAK, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
+};
 use windows::Win32::System::Threading::{
     GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
     PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetLayeredWindowAttributes, GetWindowLongPtrW, GetWindowRect, GetWindowTextW,
-    GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetWindowDisplayAffinity, ShowWindow, GWL_EXSTYLE,
-    LWA_ALPHA, SW_HIDE, SW_SHOWNA, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WS_EX_APPWINDOW, WS_EX_LAYERED,
-    WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+    EnumWindows, GetClassNameW, GetLayeredWindowAttributes, GetWindowDisplayAffinity, GetWindowLongPtrW,
+    GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetWindowDisplayAffinity,
+    GWL_EXSTYLE, LWA_ALPHA, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
+    WS_EX_TRANSPARENT,
 };
 
 use parking_lot::Mutex;
@@ -50,54 +52,99 @@ fn describe(img: &RgbaImage) -> String {
     format!("Helligkeit {:.1}, schwarz {:.1} %", b.mean, b.black * 100.0)
 }
 
-/// Ein Monitor: Desktop Duplication, bei Fehlern Graphics Capture.
+/// So lange wartet das Standbild höchstens auf ein Desktop-Bild der Desktop Duplication, danach Graphics Capture.
+const DDA_IMAGE_WAIT: Duration = Duration::from_millis(400);
+
+/// Selbsttest `firstshot`: Die erste Meldung jeder Desktop-Duplication-Sitzung kommt ohne Desktop-Bild (nur
+/// Mauszeiger, Textur schwarz) — wie es manche Grafiktreiber direkt nach `DuplicateOutput` liefern.
+fn simulate_empty_first() -> bool {
+    #[cfg(feature = "dev")]
+    {
+        static R: OnceLock<bool> = OnceLock::new();
+        *R.get_or_init(|| std::env::var_os("KNIPS_TEST_DDA_EMPTY_FIRST").is_some())
+    }
+    #[cfg(not(feature = "dev"))]
+    {
+        false
+    }
+}
+
+/// Standbild über Desktop Duplication. Nur Meldungen mit Desktop-Bild zählen (`LastPresentTime` ≠ 0): Eine Meldung,
+/// die nur den Mauszeiger betrifft, bringt eine Textur ohne neues Bild mit — direkt nach dem Öffnen ist die noch
+/// leer, also schwarz. Ein ganz schwarzes Bild gilt als Verdacht: noch eine Meldung abwarten, sonst `Ok(Err(bild))`
+/// (der Aufrufer versucht Graphics Capture und nimmt das schwarze Bild nur, wenn auch das nichts anderes zeigt).
+fn dda_still(m: &Monitor, start: Instant) -> Result<std::result::Result<RgbaImage, Option<RgbaImage>>> {
+    let ms = || start.elapsed().as_millis();
+    let mut dda = Dda::open(m)?;
+    note(format!("{}: Desktop Duplication offen nach {} ms", m.name, ms()));
+    let deadline = Instant::now() + DDA_IMAGE_WAIT;
+    let mut blank = None;
+    let mut first = simulate_empty_first();
+    loop {
+        let wait = deadline.saturating_duration_since(Instant::now()).as_millis().clamp(1, 100) as u32;
+        match dda.acquire(None, wait)? {
+            DdaGrab::Frame(mut f, mut img) => {
+                if std::mem::take(&mut first) {
+                    f.last_present = 0;
+                    f.pointer = true;
+                    img = RgbaImage::from_pixel(img.width(), img.height(), image::Rgba([0, 0, 0, 255]));
+                }
+                let b = knips_core::imageops::brightness(&img, None, 8);
+                note(format!(
+                    "{}: Meldung nach {} ms, LastPresentTime {}, AccumulatedFrames {}, Zeiger {}, Helligkeit {:.1}, schwarz {:.1} %{}",
+                    m.name,
+                    ms(),
+                    f.last_present,
+                    f.accumulated,
+                    f.pointer,
+                    b.mean,
+                    b.black * 100.0,
+                    if !f.has_image() { " — ohne Desktop-Bild, verworfen" } else if b.is_blank() { " — ganz schwarz" } else { "" }
+                ));
+                if f.has_image() {
+                    if !b.is_blank() {
+                        return Ok(Ok(img));
+                    }
+                    blank = Some(img);
+                }
+            }
+            DdaGrab::Timeout => {}
+        }
+        if Instant::now() >= deadline {
+            note(format!("{}: kein brauchbares Desktop-Bild nach {} ms", m.name, ms()));
+            return Ok(Err(blank));
+        }
+    }
+}
+
+/// Ein Monitor: Desktop Duplication (`dda_still`), sonst Graphics Capture.
 fn freeze_one(m: &Monitor) -> Result<RgbaImage> {
     init_com();
     let start = Instant::now();
     let ms = || start.elapsed().as_millis();
-    let dda_err = match Dda::open(m) {
-        Ok(mut dda) => {
-            note(format!("{}: Desktop Duplication offen nach {} ms", m.name, ms()));
-            // Der erste Aufruf liefert den aktuellen Desktop; ein, zwei Wiederholungen für Randfälle.
-            let mut res = Err(anyhow!("kein Bild"));
-            for _ in 0..3 {
-                match dda.acquire(None, 250) {
-                    Ok(DdaGrab::Frame(f, img)) => {
-                        note(format!(
-                            "{}: Meldung nach {} ms, LastPresentTime {}, AccumulatedFrames {}, Zeiger {}, {}",
-                            m.name,
-                            ms(),
-                            f.last_present,
-                            f.accumulated,
-                            f.pointer,
-                            describe(&img)
-                        ));
-                        res = Ok(img);
-                        break;
-                    }
-                    Ok(DdaGrab::Timeout) => note(format!("{}: nichts Neues nach {} ms", m.name, ms())),
-                    Err(e) => {
-                        res = Err(e);
-                        break;
-                    }
-                }
-            }
-            match res {
-                Ok(img) => return Ok(img),
-                Err(e) => e,
-            }
+    let blank = match dda_still(m, start) {
+        Ok(Ok(img)) => return Ok(img),
+        Ok(Err(blank)) => blank,
+        Err(e) => {
+            note(format!("{}: Desktop Duplication nicht möglich ({e:#})", m.name));
+            None
         }
-        Err(e) => e,
     };
-    note(format!("{}: Desktop Duplication nicht möglich ({dda_err:#}), nehme Graphics Capture", m.name));
-    let item = item_for_monitor(m.id)?;
-    let mut wgc = Wgc::start(&item)?;
-    match wgc.grab(None, 1500, true)? {
-        Some((img, _)) => {
+    note(format!("{}: nehme Graphics Capture", m.name));
+    let wgc = (|| -> Result<Option<RgbaImage>> {
+        let item = item_for_monitor(m.id)?;
+        let mut wgc = Wgc::start(&item)?;
+        Ok(wgc.grab(None, 1500, true)?.map(|(img, _)| img))
+    })();
+    match (wgc, blank) {
+        (Ok(Some(img)), _) => {
             note(format!("{}: Graphics Capture nach {} ms, {}", m.name, ms(), describe(&img)));
             Ok(img)
         }
-        None => bail!("Graphics Capture lieferte kein Bild für {}", m.name),
+        // Der Bildschirm ist wirklich schwarz (z. B. ein Video im Vollbild) — oder Graphics Capture geht nicht.
+        (_, Some(blank)) => Ok(blank),
+        (Ok(None), None) => bail!("Graphics Capture lieferte kein Bild für {}", m.name),
+        (Err(e), None) => Err(e),
     }
 }
 
@@ -346,8 +393,18 @@ impl RegionCapturer {
             }
         };
         let mut me = Self { rect, backend, last: None };
-        // Erstes Bild gleich holen, damit `grab` nie leer zurückkommt.
-        me.fetch(1500)?;
+        // Erstes Bild gleich holen, damit `grab` nie leer zurückkommt. Bringt die Desktop Duplication kein
+        // Desktop-Bild (nur Mauszeiger, ruhiger Bildschirm), liefert Graphics Capture eins.
+        if matches!(me.backend, Backend::Dda(_)) {
+            me.fetch(DDA_IMAGE_WAIT.as_millis() as u64)?;
+            if me.last.is_none() {
+                log::debug!("Bereichsaufnahme: kein Desktop-Bild der Desktop Duplication, nehme Graphics Capture");
+                me.backend = Backend::Wgc(Wgc::start(&item_for_monitor(monitor.id)?)?);
+            }
+        }
+        if me.last.is_none() {
+            me.fetch(1500)?;
+        }
         if me.last.is_none() {
             bail!("Bereichsaufnahme lieferte kein erstes Bild");
         }
@@ -394,7 +451,7 @@ const EXCLUDE_MIN_BUILD: u32 = 19041;
 /// Kann Windows eigene Fenster aus Aufnahmen herausnehmen? Vor Windows 10 2004 wirkt
 /// `WDA_EXCLUDEFROMCAPTURE` wie `WDA_MONITOR`: Das Fenster erscheint in jeder Aufnahme als schwarze
 /// Fläche (beim Aufnahmerahmen wäre das ganze Video schwarz). Dann wird nichts gesetzt; die App blendet
-/// eigene Fenster vor einem Standbild kurz aus (`hide_for_capture`).
+/// eigene Fenster vor einem Standbild kurz (`conceal_for_capture` verhüllt sie dann per `DWMWA_CLOAK`).
 pub fn exclusion_supported() -> bool {
     static R: OnceLock<bool> = OnceLock::new();
     *R.get_or_init(|| {
@@ -441,33 +498,83 @@ pub fn exclude_from_capture(handle: isize, exclude: bool) {
     }
 }
 
-/// Sichtbare unter `handles` ausblenden (für ein Standbild, wenn `exclusion_supported` nicht gilt)
-/// und warten, bis der Bildschirm ohne sie gezeichnet ist. Liefert die ausgeblendeten Fenster.
-pub fn hide_for_capture(handles: &[isize]) -> Vec<isize> {
-    let mut hidden = Vec::new();
-    for &h in handles {
-        // SAFETY: ungültige Handles ergeben nur `false`.
-        unsafe {
-            if IsWindowVisible(hwnd(h)).as_bool() {
-                let _ = ShowWindow(hwnd(h), SW_HIDE);
-                hidden.push(h);
-            }
-        }
-    }
-    if !hidden.is_empty() {
-        // Einige Bildwechsel abwarten, bis der Bildschirm ohne sie gezeichnet ist (DwmFlush kann bei
-        // ruhendem Desktop warten, bis sich etwas ändert — deshalb feste Zeit).
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    hidden
+/// Ist das Fenster gerade aus Aufnahmen ausgeschlossen (`WDA_EXCLUDEFROMCAPTURE`)?
+pub fn is_excluded(handle: isize) -> bool {
+    let mut affinity = 0u32;
+    // SAFETY: affinity ist ein gültiger Puffer; ungültige Handles ergeben einen Fehler.
+    unsafe { GetWindowDisplayAffinity(hwnd(handle), &mut affinity).is_ok() && affinity == WDA_EXCLUDEFROMCAPTURE.0 }
 }
 
-/// Mit `hide_for_capture` ausgeblendete Fenster wieder zeigen, ohne sie zu aktivieren.
-pub fn show_after_capture(handles: &[isize]) {
-    for &h in handles {
-        // SAFETY: ungültige Handles ergeben nur einen Fehler.
-        unsafe {
-            let _ = ShowWindow(hwnd(h), SW_SHOWNA);
+fn is_cloaked(h: windows::Win32::Foundation::HWND) -> bool {
+    let mut cloaked = 0u32;
+    // SAFETY: cloaked ist ein gültiger Puffer der angegebenen Größe.
+    unsafe { DwmGetWindowAttribute(h, DWMWA_CLOAKED, &mut cloaked as *mut u32 as *mut c_void, 4).is_ok() && cloaked != 0 }
+}
+
+/// Fenster verhüllen bzw. enthüllen (`DWMWA_CLOAK`): unsichtbar, ohne Ausblenden (kein Fokuswechsel, keine Animation).
+pub(crate) fn set_cloak(h: windows::Win32::Foundation::HWND, on: bool) -> bool {
+    let value = BOOL::from(on);
+    // SAFETY: value ist ein gültiger BOOL-Puffer der angegebenen Größe.
+    unsafe { DwmSetWindowAttribute(h, DWMWA_CLOAK, &value as *const BOOL as *const c_void, std::mem::size_of::<BOOL>() as u32).is_ok() }
+}
+
+/// Auf dem Bildschirm sichtbar (nicht verborgen, nicht minimiert, nicht verhüllt)?
+fn on_screen(h: windows::Win32::Foundation::HWND) -> bool {
+    // SAFETY: ungültige Handles ergeben nur `false`.
+    unsafe { IsWindowVisible(h).as_bool() && !IsIconic(h).as_bool() && !is_cloaked(h) }
+}
+
+/// Würde eine Aufnahme (eigene, Teams, Discord, OBS …) das Fenster gerade zeigen? (Selbsttests)
+pub fn capturable(handle: isize) -> bool {
+    on_screen(hwnd(handle)) && !is_excluded(handle)
+}
+
+/// Wartezeit, bis der Bildschirm nach `conceal_for_capture` ohne die Fenster gezeichnet ist — gemessen im
+/// Selbsttest `sharing` (ein Bildwechsel genügt; DwmFlush kann bei ruhendem Desktop warten, bis sich etwas
+/// ändert — deshalb feste Zeit).
+const CONCEAL_SETTLE: Duration = Duration::from_millis(50);
+
+/// Eigene Fenster für ein Standbild aus dem Bild nehmen: Ab Windows 10 2004 per `WDA_EXCLUDEFROMCAPTURE` — auf
+/// dem Bildschirm ändert sich nichts, nur Aufnahmen sehen sie kurz nicht. Davor per `DWMWA_CLOAK`: kurz
+/// unsichtbar, aber ohne Ausblenden (kein Fokuswechsel, keine Animation). Betrifft nur sichtbare, noch nicht
+/// ausgeschlossene; wartet, bis der Bildschirm ohne sie gezeichnet ist. Liefert sie für `reveal_after_capture`.
+pub fn conceal_for_capture(handles: &[isize]) -> Vec<isize> {
+    let exclude = exclusion_supported();
+    let mut concealed = Vec::new();
+    for &handle in handles {
+        let h = hwnd(handle);
+        if !on_screen(h) || is_excluded(handle) {
+            continue;
+        }
+        let done = if exclude {
+            // SAFETY: ungültige Handles ergeben nur einen Fehler.
+            unsafe { SetWindowDisplayAffinity(h, WDA_EXCLUDEFROMCAPTURE).is_ok() }
+        } else {
+            set_cloak(h, true)
+        };
+        if done {
+            concealed.push(handle);
+        } else {
+            log::warn!("Fenster für das Standbild nicht verborgen");
+        }
+    }
+    if !concealed.is_empty() {
+        std::thread::sleep(CONCEAL_SETTLE);
+    }
+    concealed
+}
+
+/// Mit `conceal_for_capture` verborgene Fenster wieder zulassen bzw. zeigen (ohne sie zu aktivieren).
+pub fn reveal_after_capture(handles: &[isize]) {
+    let exclude = exclusion_supported();
+    for &handle in handles {
+        if exclude {
+            // SAFETY: ungültige Handles ergeben nur einen Fehler.
+            unsafe {
+                let _ = SetWindowDisplayAffinity(hwnd(handle), WDA_NONE);
+            }
+        } else {
+            set_cloak(hwnd(handle), false);
         }
     }
 }

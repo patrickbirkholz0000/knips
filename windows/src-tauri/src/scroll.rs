@@ -17,7 +17,7 @@ use serde::Serialize;
 use crate::app::knips;
 use crate::wm;
 
-const PANEL: &str = "scroll-controls";
+pub const PANEL: &str = "scroll-controls";
 const PANEL_SIZE: (f64, f64) = (380.0, 48.0);
 
 #[derive(Serialize, Clone)]
@@ -75,6 +75,8 @@ impl Scroll {
             inner.stop = Some(stop.clone());
             inner.frame = FrameWindow::show(global, FrameColor::Scroll).ok();
         }
+        // Karten und Menü weg, eigene Fenster aus den Ausschnitten (bis `finish`).
+        wm::set_capture_session(wm::Session::Scroll, true);
         self.show_controls(&monitor, global);
         self.publish();
         let shared = self.inner.clone();
@@ -132,6 +134,7 @@ impl Scroll {
         if let Some(w) = wm::get(&knips().app, PANEL) {
             let _ = w.hide();
         }
+        wm::set_capture_session(wm::Session::Scroll, false);
         self.publish();
         let (Some(stitcher), Some(monitor), true) = (stitcher, monitor, save) else { return };
         crate::telemetry::count("capture_scroll");

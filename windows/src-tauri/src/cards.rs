@@ -44,6 +44,8 @@ struct Inner {
     size: (f64, f64),
     hit: Vec<Rect>,
     visible: bool,
+    /// Video- oder Scroll-Aufnahme läuft: Karten bleiben in der Liste, das Fenster bleibt verborgen.
+    suspended: bool,
 }
 
 #[derive(Default)]
@@ -114,6 +116,30 @@ impl Cards {
         if let Some(w) = wm::get(&knips().app, LABEL) {
             let _ = w.hide();
         }
+    }
+
+    /// Während einer Video- oder Scroll-Aufnahme (`wm::set_capture_session`): Karten verschwinden, bleiben aber
+    /// in der Liste; neue erscheinen erst danach.
+    pub fn suspend(&self) {
+        self.inner.lock().suspended = true;
+        self.hide();
+    }
+
+    /// Nach der Aufnahme: vorhandene Karten wieder zeigen.
+    pub fn resume(&self) {
+        let (size, hit, any) = {
+            let mut inner = self.inner.lock();
+            inner.suspended = false;
+            (inner.size, inner.hit.clone(), !inner.cards.is_empty())
+        };
+        if any {
+            self.layout(size.0, size.1, hit);
+        }
+    }
+
+    #[cfg(feature = "dev")]
+    pub fn is_suspended(&self) -> bool {
+        self.inner.lock().suspended
     }
 
     /// Unter der Maus läuft kein Ausblende-Zeitgeber ab.
@@ -196,12 +222,15 @@ impl Cards {
 
     /// Die Oberfläche meldet Panelgröße und klickbare Flächen → Fenster unten links verankern.
     pub fn layout(&self, width: f64, height: f64, hit: Vec<Rect>) {
-        let (monitor, any) = {
+        let (monitor, any, suspended) = {
             let mut inner = self.inner.lock();
             inner.size = (width, height);
             inner.hit = hit;
-            (inner.monitor.clone().unwrap_or_else(monitors::at_cursor), !inner.cards.is_empty())
+            (inner.monitor.clone().unwrap_or_else(monitors::at_cursor), !inner.cards.is_empty(), inner.suspended)
         };
+        if suspended {
+            return;
+        }
         let Some(window) = wm::get(&knips().app, LABEL) else { return };
         if !any || width < 1.0 || height < 1.0 {
             self.hide();

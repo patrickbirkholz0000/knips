@@ -36,6 +36,7 @@ export const mockSettings: Settings = {
   },
   launchAtLogin: true,
   linkCaptureWithoutConfirm: false,
+  hideFromScreenSharing: false,
   appearance: "system",
   editor: { tool: null, color: null, size: null, lastFrameStyle: null },
   didFirstLaunch: true,
@@ -66,6 +67,8 @@ export const mockBootstrap: Bootstrap = {
   hevcAvailable: !/nohevc/.test(globalThis.location?.href ?? ""),
   mediaAvailable: !/nomedia/.test(globalThis.location?.href ?? ""),
   telemetryConsent: null,
+  // Zum Ansehen wie vor Windows 10 2004: „oldwin“ in der Adresse.
+  captureExclusionSupported: !/oldwin/.test(globalThis.location?.href ?? ""),
 };
 
 const now = Date.UTC(2026, 9, 12, 14, 3, 27);

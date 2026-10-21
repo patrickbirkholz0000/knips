@@ -592,15 +592,27 @@ unsafe fn create_overlay(frozen: Vec<Frozen>, windows: Vec<WindowInfo>, purpose:
             ov.mons.push(mon);
         }
 
-        // erstes Bild vor dem Anzeigen, damit nie ein leeres Fenster aufblitzt
+        // Nie ein Fenster ohne Inhalt zeigen (es wäre schwarz, bis das erste Bild ankommt): verhüllt anzeigen
+        // (`DWMWA_CLOAK`), erstes Bild zeichnen, dann enthüllen. Was in ein noch nie gezeigtes Fenster gezeichnet
+        // wird, kann verloren gehen — deshalb erst anzeigen (verhüllt), dann zeichnen.
+        let cloaked: Vec<bool> = ov.mons.iter().map(|m| crate::win::capture::set_cloak(m.hwnd, true)).collect();
+        for m in &ov.mons {
+            let r = m.frozen.monitor.rect;
+            let _ = SetWindowPos(m.hwnd, Some(HWND_TOPMOST), r.x, r.y, r.width, r.height, SWP_SHOWWINDOW | SWP_NOACTIVATE);
+        }
         for i in 0..ov.mons.len() {
             let sc = ov.scene_for(i);
             ov.mons[i].scene = Some(sc);
             ov.paint(i);
         }
-        for m in &ov.mons {
-            let r = m.frozen.monitor.rect;
-            let _ = SetWindowPos(m.hwnd, Some(HWND_TOPMOST), r.x, r.y, r.width, r.height, SWP_SHOWWINDOW | SWP_NOACTIVATE);
+        if cloaked.contains(&true) {
+            // Einen Bildwechsel Zeit, damit DWM das Bild hat (DwmFlush könnte bei ruhendem Desktop lange warten).
+            std::thread::sleep(std::time::Duration::from_millis(16));
+            for (m, c) in ov.mons.iter().zip(&cloaked) {
+                if *c {
+                    crate::win::capture::set_cloak(m.hwnd, false);
+                }
+            }
         }
         Ok(ov)
     }

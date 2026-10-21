@@ -310,20 +310,51 @@ pub fn oldwin(app: &AppHandle, _out: &Path) -> Result<()> {
     if !shown.iter().any(|l| l == "settings") {
         bail!("Einstellungen nicht sichtbar");
     }
-    let cloak = crate::wm::cloak_for_capture();
-    let during = visible();
+    // Fenster sind dann verhüllt (DWMWA_CLOAK): für Aufnahmen und Bildschirm weg, aber nicht ausgeblendet
+    // (kein Fokuswechsel, keine Animation).
+    let capturable = || -> Vec<String> {
+        app.webview_windows()
+            .into_iter()
+            .filter(|(_, w)| crate::wm::hwnd(w).is_some_and(capture::capturable))
+            .map(|(l, _)| l)
+            .collect()
+    };
+    let settings_rect = crate::selftest_capture::window_rect(app, "settings")?;
+    let with_windows = capture::freeze(&monitors::list())?;
+    let t = Instant::now();
+    let conceal = crate::wm::conceal_for_still();
+    let during = capturable();
+    let still_visible = visible();
     let frozen = capture::freeze(&monitors::list());
-    drop(cloak);
+    drop(conceal);
+    let concealed_ms = t.elapsed().as_millis();
     std::thread::sleep(Duration::from_millis(300));
-    let after = visible();
-    println!("während: [{}] · danach: [{}]", during.join(", "), after.join(", "));
-    frozen?;
+    let after = capturable();
+    println!("während: aufnehmbar [{}], nicht ausgeblendet [{}] · danach aufnehmbar: [{}] · verhüllt für {concealed_ms} ms", during.join(", "), still_visible.join(", "), after.join(", "));
+    let frozen = frozen?;
     if !during.is_empty() {
-        bail!("eigene Fenster während des Standbilds sichtbar: {}", during.join(", "));
+        bail!("eigene Fenster während des Standbilds aufnehmbar: {}", during.join(", "));
+    }
+    if !still_visible.iter().any(|l| l == "settings") {
+        bail!("Einstellungen für das Standbild ausgeblendet statt verhüllt");
     }
     let missing: Vec<&String> = shown.iter().filter(|l| *l != crate::hud::LABEL && !after.contains(l)).collect();
     if !missing.is_empty() {
         bail!("nach dem Standbild nicht wieder sichtbar: {missing:?}");
+    }
+    // Inhalt: Das Standbild zeigt dort, wo die Einstellungen liegen, was dahinter ist (Vergleich mit einem
+    // Standbild bei ausgeblendeten Einstellungen) — die obere Hälfte, weg von der Einblendung.
+    let settings = app.get_webview_window("settings").context("Einstellungen fehlen")?;
+    let _ = settings.hide();
+    std::thread::sleep(Duration::from_millis(600));
+    let truth = capture::freeze(&monitors::list())?;
+    let _ = settings.show();
+    std::thread::sleep(Duration::from_millis(600));
+    let upper = IRect::new(settings_rect.x, settings_rect.y, settings_rect.width, settings_rect.height / 2);
+    let (concealed_diff, visible_diff) = (crate::selftest_capture::still_diff(&frozen, &truth, upper), crate::selftest_capture::still_diff(&with_windows, &truth, upper));
+    println!("Abweichung im Bereich der Einstellungen: verhüllt {concealed_diff:.1}, sichtbar {visible_diff:.1}");
+    if !(concealed_diff <= 3.0 && visible_diff >= 10.0) {
+        bail!("Standbild zeigt die verhüllten Einstellungen (Abweichung {concealed_diff:.1}, sichtbar {visible_diff:.1})");
     }
     // Ganzer Ablauf über den Koordinator und der Aufnahmerahmen (ohne Ausschluss) laufen fehlerfrei.
     let before = k.store.items().len();

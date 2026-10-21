@@ -124,8 +124,8 @@ pub struct Recording {
     inner: Mutex<Inner>,
 }
 
-const CONTROLS: &str = "rec-controls";
-const COUNTDOWN: &str = "rec-countdown";
+pub const CONTROLS: &str = "rec-controls";
+pub const COUNTDOWN: &str = "rec-countdown";
 const CONTROLS_SIZE: (f64, f64) = (246.0, 44.0);
 const COUNTDOWN_SIZE: (f64, f64) = (150.0, 176.0);
 
@@ -183,6 +183,8 @@ impl Recording {
         let global = wm::global(&monitor, rect);
         let full = rect.width == monitor.rect.width && rect.height == monitor.rect.height;
         let cancel = Arc::new(AtomicBool::new(false));
+        // Karten und Menü weg, eigene Fenster aus dem Video (bis `teardown`).
+        wm::set_capture_session(wm::Session::Recording, true);
         {
             let mut inner = self.inner.lock();
             inner.monitor = Some(monitor.clone());
@@ -349,6 +351,7 @@ impl Recording {
         }
         self.hide_window(CONTROLS);
         self.hide_window(COUNTDOWN);
+        wm::set_capture_session(wm::Session::Recording, false);
         self.publish();
     }
 

@@ -75,6 +75,9 @@ pub struct Bootstrap {
     pub media_available: bool,
     /// Nutzungsstatistik: `null` = noch nicht beantwortet.
     pub telemetry_consent: Option<bool>,
+    /// Windows kann Fenster aus Aufnahmen ausschließen (ab Windows 10 2004) — sonst wirkt
+    /// „In Bildschirmübertragungen verbergen“ nicht.
+    pub capture_exclusion_supported: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -105,6 +108,7 @@ impl Knips {
             // Bis zur Prüfung (Hintergrund, Millisekunden) nichts sperren.
             media_available: self.media_available.get().copied().unwrap_or(true),
             telemetry_consent: self.telemetry.consent(),
+            capture_exclusion_supported: knips_platform::capture::exclusion_supported(),
             settings,
         }
     }

@@ -243,6 +243,10 @@ pub struct Settings {
     /// knips://fullscreen, knips://last und knips://record (Start) ohne Rückfrage ausführen (standardmäßig
     /// aus, weil jede App und jede Webseite solche Links öffnen kann — siehe `links`).
     pub link_capture_without_confirm: bool,
+    /// Alle Knips-Fenster aus Bildschirmübertragungen und fremden Aufnahmen heraushalten (Teams, Discord, OBS …),
+    /// z. B. damit unzensierte Originale im Editor nicht im Stream landen. Standardmäßig aus: Dann sehen andere
+    /// Apps Knips wie jedes andere Fenster; nur Knips' eigene Bilder und Videos lassen Knips-Fenster weg.
+    pub hide_from_screen_sharing: bool,
     pub appearance: Appearance,
     pub editor: EditorPrefs,
     // Interne Merker (Mac: einzelne UserDefaults-Schlüssel).
@@ -258,7 +262,7 @@ pub const EDITOR_TOOLS: [&str; 10] = ["select", "arrow", "rectangle", "ellipse",
 
 /// Felder, die das Einstellungsfenster über `set_settings` ändern darf. Alles andere (Kürzel, interne
 /// Merker, Nutzungsstatistik) ändert nur Rust selbst.
-pub const SETTINGS_WINDOW_FIELDS: [&str; 26] = [
+pub const SETTINGS_WINDOW_FIELDS: [&str; 27] = [
     "saveFolder",
     "copyToClipboard",
     "showQuickAccess",
@@ -284,6 +288,7 @@ pub const SETTINGS_WINDOW_FIELDS: [&str; 26] = [
     "disabledHotkeys",
     "launchAtLogin",
     "linkCaptureWithoutConfirm",
+    "hideFromScreenSharing",
     "appearance",
 ];
 
@@ -452,6 +457,7 @@ impl Default for Settings {
             hotkeys: Settings::default_hotkeys(),
             launch_at_login: false,
             link_capture_without_confirm: false,
+            hide_from_screen_sharing: false,
             appearance: Appearance::System,
             editor: EditorPrefs::default(),
             did_first_launch: false,
@@ -489,6 +495,9 @@ mod tests {
         // Links nehmen ohne Einstellung nie ohne Rückfrage auf, auch mit alter settings.json ohne das Feld.
         assert!(!s.link_capture_without_confirm && !partial.link_capture_without_confirm);
         assert!(json.contains(r#""linkCaptureWithoutConfirm":false"#));
+        // Knips-Fenster sind für Bildschirmübertragungen standardmäßig sichtbar, auch mit alter settings.json.
+        assert!(!s.hide_from_screen_sharing && !partial.hide_from_screen_sharing);
+        assert!(json.contains(r#""hideFromScreenSharing":false"#));
     }
 
     #[test]
@@ -502,11 +511,12 @@ mod tests {
             "quickAccessSeconds": 3600,
             "redactStyle": "blur",
             "linkCaptureWithoutConfirm": true,
+            "hideFromScreenSharing": true,
             "disabledHotkeys": ["captureArea"],
             "saveFolder": r"D:\Screenshots\Knips",
         });
         let next = s.patched(&patch, all).unwrap();
-        assert!(!next.play_sound && next.link_capture_without_confirm);
+        assert!(!next.play_sound && next.link_capture_without_confirm && next.hide_from_screen_sharing);
         assert_eq!(next.quick_access_seconds, 3600);
         assert_eq!(next.redact_style, RedactStyle::Blur);
         assert_eq!(next.save_folder, r"D:\Screenshots\Knips");
@@ -520,6 +530,7 @@ mod tests {
         // falsche Typen, unbekannte Auswahlwerte, Bereiche, kein Objekt
         for bad in [
             json!({ "playSound": "ja" }),
+            json!({ "hideFromScreenSharing": 1 }),
             json!({ "redactStyle": "schwarz" }),
             json!({ "imageFormat": "bmp" }),
             json!({ "autoRedactKinds": ["email", "passwort"] }),
@@ -540,7 +551,7 @@ mod tests {
         }
         // Editoren dürfen nur den Zensurstil ändern
         assert_eq!(s.patched(&json!({ "redactStyle": "pixelate" }), &EDITOR_WINDOW_FIELDS).unwrap().redact_style, RedactStyle::Pixelate);
-        for key in ["linkCaptureWithoutConfirm", "saveFolder", "launchAtLogin"] {
+        for key in ["linkCaptureWithoutConfirm", "hideFromScreenSharing", "saveFolder", "launchAtLogin"] {
             assert!(s.patched(&json!({ key: true }), &EDITOR_WINDOW_FIELDS).is_err(), "{key}");
         }
         assert!(s.patched(&json!({ "playSound": false }), &[]).is_err());

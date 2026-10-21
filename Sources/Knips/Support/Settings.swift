@@ -108,6 +108,14 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
     @Published var disabledHotkeys: Set<HotkeyAction> {
         didSet { d.set(disabledHotkeys.map(\.rawValue).sorted(), forKey: "disabledHotkeys") }
     }
+    /// Alle Knips-Fenster aus Bildschirmübertragungen anderer Apps heraushalten (`ScreenSharing`), z. B. damit
+    /// unzensierte Originale im Editor nicht im Stream landen. Standardmäßig aus.
+    @Published var hideFromScreenSharing: Bool {
+        didSet {
+            d.set(hideFromScreenSharing, forKey: "hideFromScreenSharing")
+            ScreenSharing.applyAll()
+        }
+    }
     /// Hell, Dunkel oder wie macOS — gilt sofort für alle Fenster (`NSApp.appearance`).
     @Published var appearance: AppearanceMode {
         didSet {
@@ -154,6 +162,7 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
             autoRedactKinds = Set(SensitiveDetector.Kind.allCases)
         }
         retentionDays = d.object(forKey: "retentionDays") as? Int ?? 30
+        hideFromScreenSharing = d.object(forKey: "hideFromScreenSharing") as? Bool ?? false
         appearance = AppearanceMode(rawValue: d.string(forKey: "appearance") ?? "") ?? .system
         // Bis 20.10.2026 ließ sich die Rückfrage vor Aufnahmen per Link hier abschalten. Jedes andere Programm kann
         // die Benutzereinstellungen umschreiben — die Rückfrage kommt deshalb immer (`LinkCommands`).
@@ -202,7 +211,6 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
     func applyAppearance() {
         NSApplication.shared.appearance = appearance.nsAppearance
     }
-
     /// Tatsächlich registrierte Kürzel.
     var activeHotkeys: [HotkeyAction: KeyCombo] { hotkeys.filter { !disabledHotkeys.contains($0.key) } }
 
@@ -240,5 +248,38 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
                 Log.error("Autostart umschalten fehlgeschlagen: \(error.localizedDescription)")
             }
         }
+    }
+}
+
+/// „In Bildschirmübertragungen verbergen“ (Einstellungen → Datenschutz): Ist es an, bekommen alle Knips-Fenster
+/// `sharingType = .none` — andere Apps, die den Bildschirm teilen oder aufnehmen (Teams, Zoom, Discord …), sehen sie
+/// dann nicht. Standardmäßig aus: Dann sehen andere Apps Knips wie jedes andere Fenster. Knips' eigene Standbilder
+/// und Videos lassen Knips-Fenster ohnehin weg (Content-Filter, `ScreenCapture.filter`).
+@MainActor enum ScreenSharing {
+    static var sharingType: NSWindow.SharingType { AppSettings.shared.hideFromScreenSharing ? .none : .readOnly }
+
+    /// Beim Anlegen eines Fensters, bevor es erscheint.
+    static func apply(to window: NSWindow) {
+        let type = sharingType
+        if window.sharingType != type { window.sharingType = type }
+    }
+
+    /// Nach dem Umschalten: alle offenen Fenster sofort.
+    static func applyAll() {
+        for window in NSApp.windows { apply(to: window) }
+    }
+
+    private static var observers: [NSObjectProtocol] = []
+
+    /// Auffangnetz für Fenster, die nicht über `apply(to:)` angelegt werden: beim Erscheinen und beim Aktivieren.
+    static func start() {
+        guard observers.isEmpty else { return }
+        for name in [NSWindow.didChangeOcclusionStateNotification, NSWindow.didBecomeKeyNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { note in
+                guard let window = note.object as? NSWindow else { return }
+                onMainActor { apply(to: window) }
+            })
+        }
+        applyAll()
     }
 }

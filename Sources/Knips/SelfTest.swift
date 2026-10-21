@@ -324,15 +324,44 @@ import Vision
             view.refresh()
             try renderLayer(view.layer!, size: size, scale: scale, url: out.appendingPathComponent("ui-auswahl-\(name).png"))
         }
+
+        // Bevor das Standbild da ist (der erste ScreenCaptureKit-Aufruf dauert): Das Overlay ist durchsichtig und dunkelt
+        // den laufenden Bildschirm nur ab — nie schwarz. Danach deckt das Standbild alles.
+        let overlay = SelectionOverlay(screens: [screen], windows: [], purpose: .screenshot, windowMode: false) { _ in }
+        let view = SelectionView(screen: screen, overlay: overlay)
+        view.frame = NSRect(origin: .zero, size: size)
+        overlay.mouseMoved(to: CGPoint(x: screen.frame.maxX - 2, y: screen.frame.maxY - 2))
+        view.layout()
+        view.refresh()
+        let early = renderContext(view.layer!, size: size, scale: scale)
+        try write(early.makeImage()!, out.appendingPathComponent("ui-auswahl-vor-standbild.png"))
+        let earlyAlpha = alpha(early, x: early.width / 2, y: early.height / 2)
+        view.setImage(frozen.image)
+        view.refresh()
+        let late = renderContext(view.layer!, size: size, scale: scale)
+        let lateAlpha = alpha(late, x: late.width / 2, y: late.height / 2)
+        let ok = (0.3...0.5).contains(earlyAlpha) && lateAlpha > 0.99
+        print("   \(ok ? "ok    " : "FALSCH") vor dem Standbild durchsichtig abgedunkelt (Deckkraft \(String(format: "%.2f", earlyAlpha))), danach deckend (\(String(format: "%.2f", lateAlpha)))")
+        if !ok { throw CheckFailed(message: "Overlay vor dem Standbild nicht durchsichtig") }
     }
 
-    private static func renderLayer(_ layer: CALayer, size: CGSize, scale: CGFloat, url: URL) throws {
+    private static func renderContext(_ layer: CALayer, size: CGSize, scale: CGFloat) -> CGContext {
         let w = Int(size.width * scale), h = Int(size.height * scale)
         let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
                             space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue)!
         ctx.scaleBy(x: scale, y: scale)
         layer.render(in: ctx)
-        try write(ctx.makeImage()!, url)
+        return ctx
+    }
+
+    /// Deckkraft 0…1 eines Pixels (premultipliedFirst: A zuerst).
+    private static func alpha(_ ctx: CGContext, x: Int, y: Int) -> Double {
+        guard let data = ctx.data else { return 0 }
+        return Double(data.load(fromByteOffset: y * ctx.bytesPerRow + x * 4, as: UInt8.self)) / 255
+    }
+
+    private static func renderLayer(_ layer: CALayer, size: CGSize, scale: CGFloat, url: URL) throws {
+        try write(renderContext(layer, size: size, scale: scale).makeImage()!, url)
     }
 
     // MARK: Video
@@ -481,6 +510,30 @@ import Vision
         let image = try await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: scw), configuration: config)
         try write(image, url)
         print("   Fensterposition: \(window.frame.origin)")
+    }
+
+    /// Was ScreenCaptureKit (wie eine fremde Aufnahme-App) von einem eigenen Fenster liefert: „fehlt“, „leer“ oder
+    /// die mittlere Helligkeit. Nur zur Auskunft.
+    private static func sharedImageInfo(_ window: NSWindow) async -> String {
+        guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false),
+              let scw = content.windows.first(where: { $0.windowID == CGWindowID(window.windowNumber) }) else { return "fehlt" }
+        let config = SCStreamConfiguration()
+        config.width = 64
+        config.height = 64
+        config.showsCursor = false
+        guard let image = try? await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: scw), configuration: config),
+              let ctx = CGContext(data: nil, width: 16, height: 16, bitsPerComponent: 8, bytesPerRow: 64, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return "Fehler" }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: 16, height: 16))
+        guard let data = ctx.data else { return "Fehler" }
+        let px = data.bindMemory(to: UInt8.self, capacity: 16 * 16 * 4)
+        var sum = 0, alpha = 0
+        for i in 0..<(16 * 16) {
+            sum += Int(px[i * 4]) + Int(px[i * 4 + 1]) + Int(px[i * 4 + 2])
+            alpha += Int(px[i * 4 + 3])
+        }
+        if alpha == 0 || sum == 0 { return "leer" }
+        return "Helligkeit \(sum / (16 * 16 * 3))"
     }
 
     /// Hell und dunkel (Dateiname ohne bzw. mit „-dunkel“). `KNIPS_TEST_APPEARANCE=light|dark` beschränkt auf eine.
@@ -766,6 +819,24 @@ import Vision
                 telemetry.setConsent(true)
                 try await windowShot(window, out.appendingPathComponent("einstellungen-privacy-statistik-an.png"))
                 telemetry.setConsent(false)
+
+                // „In Bildschirmübertragungen verbergen“ (Sandbox-Domäne): alle Knips-Fenster `.none`, auch neue; aus → `.readOnly`.
+                check("Bildschirm teilen: standardmäßig aus, andere Apps sehen Knips", !settings.hideFromScreenSharing && window.sharingType == .readOnly)
+                let before = await sharedImageInfo(window)
+                settings.hideFromScreenSharing = true
+                let dialog = BrandDialogWindow.make(width: 320, title: "Test")
+                check("an: alle Fenster für andere Apps verborgen (sharingType .none)", NSApp.windows.allSatisfy { $0.sharingType == .none })
+                check("an: neues Fenster gleich verborgen", dialog.sharingType == .none)
+                check("an: gespeichert (Sandbox-Domäne)", UserDefaults.knips.bool(forKey: "hideFromScreenSharing"))
+                try await Task.sleep(nanoseconds: 300_000_000)
+                // Was eine andere App über ScreenCaptureKit vom Fenster bekommt.
+                let after = await sharedImageInfo(window)
+                check("ScreenCaptureKit (wie andere Apps): aus \(before), an \(after)",
+                      before.hasPrefix("Helligkeit") && (after == "leer" || after == "fehlt"))
+                settings.hideFromScreenSharing = false
+                check("aus: alle Fenster wieder sichtbar (sharingType .readOnly)", NSApp.windows.allSatisfy { $0.sharingType == .readOnly })
+                check("aus: gespeichert", !UserDefaults.knips.bool(forKey: "hideFromScreenSharing"))
+                dialog.orderOut(nil)
             }
         }
         window.orderOut(nil)

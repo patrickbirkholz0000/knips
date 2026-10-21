@@ -48,6 +48,7 @@ enum SelectionResult {
             // Nicht-aktivierendes Panel: die App, in der gearbeitet wird, bleibt aktiv — ihre Fenster
             // erscheinen im Screenshot nicht grau, und danach muss kein Fokus zurückgegeben werden.
             let window = OverlayPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            ScreenSharing.apply(to: window)
             window.setFrame(screen.frame, display: false)
             window.level = .screenSaver
             window.isOpaque = false

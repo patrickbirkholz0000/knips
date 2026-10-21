@@ -5,6 +5,7 @@ import SwiftUI
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppSettings.shared.applyAppearance()   // Hell/Dunkel/System, bevor das erste Fenster erscheint
+        ScreenSharing.start()                  // „In Bildschirmübertragungen verbergen“ auch für jedes neue Fenster
         NSApp.mainMenu = Self.makeMainMenu()
         Paths.ensure(Paths.items)
         _ = CaptureStore.shared

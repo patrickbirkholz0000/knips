@@ -25,6 +25,7 @@ import SwiftUI
         size = NSSize(width: size.width * f, height: size.height * f)
         let panel = PinPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel, .resizable],
                              backing: .buffered, defer: false)
+        ScreenSharing.apply(to: panel)
         panel.level = .floating
         panel.isMovableByWindowBackground = true
         panel.hasShadow = true

@@ -195,6 +195,7 @@ import UniformTypeIdentifiers
     private func ensurePanel() {
         guard panel == nil else { return }
         let p = QuickAccessPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        ScreenSharing.apply(to: p)
         p.isOpaque = false
         p.backgroundColor = .clear
         p.hasShadow = false

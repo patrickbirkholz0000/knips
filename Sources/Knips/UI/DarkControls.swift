@@ -281,6 +281,7 @@ enum AreaFrame {
 @MainActor enum FloatingPanel {
     static func make(_ rect: NSRect, ignoresMouse: Bool, level: NSWindow.Level = .statusBar) -> NSPanel {
         let p = ClickablePanel(contentRect: rect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        ScreenSharing.apply(to: p)
         p.isOpaque = false
         p.backgroundColor = .clear
         p.hasShadow = false

@@ -48,6 +48,7 @@ import SwiftUI
         let window = NSWindow(contentRect: .zero, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
         window.applyEditorChrome()
+        ScreenSharing.apply(to: window)
         window.isReleasedWhenClosed = false
         window.title = item.title
         window.minSize = NSSize(width: EditorChrome.minWidth, height: 520)

@@ -46,7 +46,11 @@ fn main() {
 }
 
 fn run(args: Vec<String>) {
-    let mut builder = tauri::Builder::default();
+    // Keine Raw-Input-Anmeldung für Tastatur und Maus (tao tut das sonst für Geräte-Ereignisse, die Knips nicht
+    // braucht). Solange sie besteht, ruft Windows den Tastatur-Hook von Knips nicht auf, während ein Knips-Fenster
+    // im Vordergrund ist: Kürzel festlegen nahm keine Taste an, Hook-Kürzel (Druck, Win-Kombinationen) blieben über
+    // eigenen Fenstern stumm. Selbsttest `hotkeyrecord`.
+    let mut builder = tauri::Builder::default().device_event_filter(tauri::DeviceEventFilter::Always);
     // Zweiter Start (z. B. knips://area aus Stream Deck) → an die laufende Instanz, genau einmal.
     if paths::test_root().is_none() {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| app::second_instance(app, &argv)));

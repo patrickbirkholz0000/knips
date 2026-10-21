@@ -4,9 +4,10 @@ import { mockBootstrap } from "../shared/mock";
 import type { Bootstrap, HotkeyAction, KeyCombo, Settings } from "../shared/types";
 
 const names: Record<number, string> = { 0x2c: "Druck", 0x20: "Leertaste" };
+/** Wie `KeyCombo::display` in Rust: Win, Strg, Alt, Umschalt, Taste. */
 function label(c: KeyCombo): string {
-  const m = [c.mods & 2 ? "Strg" : "", c.mods & 1 ? "Alt" : "", c.mods & 4 ? "Umschalt" : "", c.mods & 8 ? "Win" : ""].filter(Boolean);
-  const key = names[c.vk] ?? (c.vk >= 0x30 && c.vk <= 0x5a ? String.fromCharCode(c.vk) : `#${c.vk}`);
+  const m = [c.mods & 8 ? "Win" : "", c.mods & 2 ? "Strg" : "", c.mods & 1 ? "Alt" : "", c.mods & 4 ? "Umschalt" : ""].filter(Boolean);
+  const key = names[c.vk] ?? (c.vk >= 0x30 && c.vk <= 0x5a ? String.fromCharCode(c.vk) : c.vk >= 0x70 && c.vk <= 0x87 ? `F${c.vk - 0x6f}` : `#${c.vk}`);
   return [...m, key].join("+");
 }
 
@@ -33,7 +34,14 @@ if (!inTauri) {
   registerMock("get_bootstrap", () => boot);
   registerMock("set_settings", ({ patch }) =>
     push(patch.saveFolder ? { paths: { ...boot.paths, saveFolder: patch.saveFolder } } : {}, patch));
+  // Zum Ansehen der Aufnahme: „aufnahme“ in der Adresse wartet ohne Ende, „ungueltig“ meldet dazu Umschalt+A als ungültig.
+  const href = globalThis.location?.href ?? "";
   registerMock("hotkey_record", ({ action }) => {
+    if (/ungueltig/.test(href)) {
+      const c = combo(0x41, 4);
+      setTimeout(() => mockEmit("hotkey-recorded", { action, result: "invalid", combo: c, message: `${label(c)} geht nicht – braucht Strg, Alt oder Win.` }), 250);
+    }
+    if (/aufnahme|ungueltig/.test(href)) return;
     setTimeout(() => {
       const c = combo(0x53, 12);
       push({}, { hotkeys: { ...boot.settings.hotkeys, [action]: c } });

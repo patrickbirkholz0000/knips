@@ -12,14 +12,20 @@ struct KeyCombo: Codable, Equatable, Hashable {
     }
 
     init?(event: NSEvent) {
+        let pressed = KeyCombo(pressed: event)
+        // Ohne ⌘/⌥/⌃ wäre die Taste beim normalen Tippen belegt.
+        guard pressed.modifiers & UInt32(cmdKey | optionKey | controlKey) != 0 else { return nil }
+        self = pressed
+    }
+
+    /// Was gedrückt wurde, auch wenn es als Kürzel nicht taugt (für die Rückmeldung beim Festlegen).
+    init(pressed event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         var mods: UInt32 = 0
         if flags.contains(.command) { mods |= UInt32(cmdKey) }
         if flags.contains(.shift) { mods |= UInt32(shiftKey) }
         if flags.contains(.option) { mods |= UInt32(optionKey) }
         if flags.contains(.control) { mods |= UInt32(controlKey) }
-        // Ohne ⌘/⌥/⌃ wäre die Taste beim normalen Tippen belegt.
-        guard mods & UInt32(cmdKey | optionKey | controlKey) != 0 else { return nil }
         self.init(keyCode: UInt32(event.keyCode), modifiers: mods)
     }
 

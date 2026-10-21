@@ -57,7 +57,8 @@ pub fn apply() {
 #[serde(rename_all = "camelCase")]
 struct Recorded {
     action: HotkeyAction,
-    /// „combo“, „remove“, „cancel“ oder „rejected“ (Kombination tippt ein Zeichen, siehe `message`).
+    /// „combo“, „remove“, „cancel“, „rejected“ (Kombination tippt ein Zeichen, siehe `message`) oder „invalid“
+    /// (Taste ohne Strg/Alt/Win, siehe `message`; die Aufnahme läuft weiter).
     result: &'static str,
     combo: Option<KeyCombo>,
     message: Option<String>,
@@ -80,11 +81,21 @@ pub fn altgr_conflict(combo: &KeyCombo) -> Option<String> {
     ))
 }
 
+/// Rückmeldung zu einer Taste, die ohne Strg/Alt/Win nicht als Kürzel taugt (nur „A“, Umschalt+A).
+pub fn invalid_message(combo: &KeyCombo) -> String {
+    format!("{} geht nicht – braucht Strg, Alt oder Win.", label(combo))
+}
+
 /// Nächste Tastenkombination für `action` aufnehmen (Einstellungen).
 pub fn record(action: HotkeyAction) {
     hotkeys::record(Box::new(move |result| {
         let k = knips();
         let (kind, combo, message) = match result {
+            RecordResult::Invalid(c) => {
+                // Die Aufnahme läuft weiter: nur Rückmeldung, nichts ändern.
+                k.emit("hotkey-recorded", Recorded { action, result: "invalid", combo: Some(c), message: Some(invalid_message(&c)) });
+                return;
+            }
             RecordResult::Combo(c) => match altgr_conflict(&c) {
                 Some(message) => ("rejected", Some(c), Some(message)),
                 None => ("combo", Some(c), None),

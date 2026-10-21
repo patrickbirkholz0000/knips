@@ -386,6 +386,11 @@ pub fn on_window_destroyed(label: &str) {
     if label.starts_with(crate::links::LABEL_PREFIX) {
         k.links.window_destroyed(label);
     }
+    // Einstellungen zu, während ein Kürzel aufgenommen wird: Der Hook schluckt sonst weiter jede Taste
+    // in allen Apps (die Seite räumt beim Schließen nicht mehr selbst auf).
+    if label == "settings" {
+        knips_platform::hotkeys::cancel_record();
+    }
 }
 
 #[allow(dead_code)]

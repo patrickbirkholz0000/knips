@@ -5,7 +5,10 @@
 //! der Kennung, die der Hook als eigene überspringt). Geprüft: Ereignis `hotkey-recorded`, Einstellung und
 //! Anzeige im Fenster, das neue Kürzel löst aus und das alte nicht mehr, Umschalt+F-Taste, Esc bricht ab,
 //! Rücktaste entfernt, ungültige Tasten (nur „A“, Umschalt+A) bekommen eine Rückmeldung und die Aufnahme
-//! läuft weiter. Ausführen ist durch eine Liste ersetzt: Es wird nie aufgenommen.
+//! läuft weiter; verliert das Fenster den Fokus oder wird es geschlossen, endet die Aufnahme; ein Hook-Kürzel
+//! (Druck) löst aus, während die Einstellungen vorn sind. Jede Taste meldet die Aufrufe des Tastatur-Hooks —
+//! bis 1.0.0 blieben sie bei 0, solange ein Knips-Fenster im Vordergrund war (Raw Input, siehe main.rs).
+//! Ausführen ist durch eine Liste ersetzt: Es wird nie aufgenommen.
 //! Bilder: `kuerzel-*.png` (hell und dunkel).
 
 use std::path::Path;
@@ -13,7 +16,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
-use knips_core::settings::{Appearance, HotkeyAction, KeyCombo, Settings, MOD_CONTROL, MOD_SHIFT};
+use knips_core::settings::{Appearance, HotkeyAction, KeyCombo, Settings, MOD_CONTROL, MOD_SHIFT, VK_SNAPSHOT};
 use knips_platform::hotkeys as hk;
 use parking_lot::Mutex;
 use serde::Deserialize;
@@ -141,6 +144,10 @@ fn steps(app: &AppHandle, out: &Path, fired: Arc<Mutex<Vec<HotkeyAction>>>, even
     run.check("Rücktaste: Anzeige", shown == "Nicht belegt", &shown);
     run.fires(ctrl_shift_l, None, "entferntes Strg+Umschalt+L löst nichts mehr aus");
 
+    // Ein Kürzel über den Tastatur-Hook (Druck, solange Windows die Taste dem Bildschirmausschnitt gibt) löst auch
+    // aus, während ein Knips-Fenster vorn ist (bis 1.0.0 nicht: Raw-Input-Anmeldung von tao, siehe main.rs).
+    run.fires(KeyCombo::new(VK_SNAPSHOT, 0), Some(A::CaptureArea), "Druck löst „Bereich“ aus, Einstellungen vorn");
+
     // 6. Zweiter Klick auf denselben Knopf bricht ab (ohne Taste).
     run.start("captureArea", false);
     run.click("captureArea");
@@ -159,13 +166,44 @@ fn steps(app: &AppHandle, out: &Path, fired: Arc<Mutex<Vec<HotkeyAction>>>, even
     run.press(KeyCombo::new(VK_ESCAPE, 0));
     let _ = run.wait_event(Duration::from_secs(2));
     run.settled();
+    k.settings.update(|s| s.appearance = Appearance::Light);
+    k.broadcast_bootstrap();
+
+    // 7. Ein anderes Fenster kommt nach vorn: Die Aufnahme endet (der Hook schluckt sonst Tasten in jeder App).
+    run.start("captureArea", false);
+    if run.window.is_focused().unwrap_or(false) {
+        crate::commands::show_history(app);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline && hk::is_recording() {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let shown = run.button("captureArea");
+        run.check("Fokus weg beendet die Aufnahme", !hk::is_recording() && shown == "Druck", format!("Hook wartet: {}, Anzeige {shown}", hk::is_recording()));
+        if let Some(h) = app.get_webview_window("history") {
+            let _ = h.hide();
+        }
+        crate::commands::show_settings(app, Some("shortcuts".into()));
+        std::thread::sleep(Duration::from_millis(600));
+    } else {
+        println!("   (Fokus weg nicht prüfbar: Einstellungen nicht im Vordergrund)");
+        run.click("captureArea");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+
+    // 8. Einstellungen schließen, während aufgenommen wird: Der Hook hört auf zu schlucken.
+    run.start("captureArea", false);
+    let _ = run.window.destroy();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline && hk::is_recording() {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    run.check("Schließen beendet die Aufnahme", !hk::is_recording(), format!("Hook wartet: {}", hk::is_recording()));
+    let now = k.settings.get().hotkeys.get(&A::CaptureArea).copied();
+    run.check("Schließen: Kürzel unverändert", now == Some(KeyCombo::new(VK_SNAPSHOT, 0)), format!("{now:?}"));
 
     let leftover = run.take_events();
     if !leftover.is_empty() {
         println!("   übrige Ereignisse: {leftover:?}");
-    }
-    if let Some(w) = app.get_webview_window("settings") {
-        let _ = w.hide();
     }
     if !run.failures.is_empty() {
         bail!("Kürzel ändern: {}", run.failures.join(", "));
@@ -263,7 +301,10 @@ impl Run<'_> {
 
     fn press(&self, combo: KeyCombo) {
         self.fired.lock().clear();
+        let before = hk::hook_calls();
         hk::simulate(combo);
+        std::thread::sleep(Duration::from_millis(150));
+        println!("   Taste vk {:#x} mods {}: Hook-Aufrufe {before} → {}", combo.vk, combo.mods, hk::hook_calls());
     }
 
     fn take_events(&self) -> Vec<Recorded> {
@@ -298,10 +339,13 @@ impl Run<'_> {
         let current = self.events.lock().first().map(|e| e.action);
         let shown = self.js("document.querySelector('.st-keybtn.is-rec')?.textContent ?? 'keine Aufnahme'");
         let hint = self.js("document.querySelector('[data-hotkey-hint]')?.textContent ?? ''");
+        let message = ev.as_ref().and_then(|e| e.message.clone()).unwrap_or_default();
         let ok = still
             && shown.starts_with("Tasten drücken")
-            && ev.as_ref().is_some_and(|e| e.result == "invalid" && e.message.as_deref().is_some_and(|m| m.contains("Strg, Alt oder Win")))
-            && hint.contains("Strg, Alt oder Win");
+            && ev.as_ref().is_some_and(|e| e.result == "invalid" && e.combo == Some(combo))
+            && message.starts_with(&format!("{name} geht nicht"))
+            && message.contains("Strg, Alt oder Win")
+            && hint.contains(&message);
         self.check(
             &format!("{name} abgelehnt, Aufnahme läuft weiter"),
             ok,

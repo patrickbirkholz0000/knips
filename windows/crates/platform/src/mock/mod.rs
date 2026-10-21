@@ -296,6 +296,8 @@ pub mod hotkeys {
         Remove,
         /// Esc.
         Cancel,
+        /// Taste ohne Strg/Alt/Win, die nicht allein stehen darf (nur „A“, Umschalt+A): die Aufnahme läuft weiter.
+        Invalid(KeyCombo),
     }
 
     /// Startet den Kürzel-Thread. `on_fire(id)` kommt aus diesem Thread.
@@ -312,9 +314,9 @@ pub mod hotkeys {
     }
 
     /// Nächste Tastenkombination aufnehmen (Einstellungen). Solange ruhen alle Kürzel; die Tasten
-    /// werden verschluckt (auch Druck und Win-Kombinationen). Ungültige Kombination → Signalton,
-    /// weiter warten.
-    pub fn record(on_result: Box<dyn FnOnce(RecordResult) + Send>) {
+    /// werden verschluckt (auch Druck und Win-Kombinationen). Ungültige Kombination → Signalton und
+    /// `RecordResult::Invalid`, weiter warten. `on_result` kommt aus einem eigenen Thread, nie aus dem Hook.
+    pub fn record(on_result: Box<dyn Fn(RecordResult) + Send + Sync>) {
         std::thread::spawn(move || on_result(RecordResult::Cancel));
     }
 
@@ -323,6 +325,11 @@ pub mod hotkeys {
     /// Wartet der Hook gerade auf die nächste Kombination?
     pub fn is_recording() -> bool {
         false
+    }
+
+    /// Bisherige Aufrufe des Tastatur-Hooks.
+    pub fn hook_calls() -> u32 {
+        0
     }
 
     /// Ist der Tastatur-Hook eingehängt?

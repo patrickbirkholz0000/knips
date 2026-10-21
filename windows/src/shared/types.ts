@@ -284,8 +284,11 @@ export interface PinInfo {
 
 export interface HotkeyRecorded {
   action: HotkeyAction;
-  /** "rejected": Die Kombination tippt auf einem installierten Layout ein Zeichen (Strg+Alt = AltGr), siehe `message`. */
-  result: "combo" | "remove" | "cancel" | "rejected";
+  /**
+   * "rejected": Die Kombination tippt auf einem installierten Layout ein Zeichen (Strg+Alt = AltGr), siehe `message`.
+   * "invalid": Taste ohne Strg/Alt/Win (nur „A“, Umschalt+A), siehe `message` — die Aufnahme läuft weiter.
+   */
+  result: "combo" | "remove" | "cancel" | "rejected" | "invalid";
   combo: KeyCombo | null;
   message: string | null;
 }

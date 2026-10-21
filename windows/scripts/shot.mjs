@@ -1,6 +1,6 @@
 // Screenshot einer Ansicht im Browser (Attrappe statt Tauri) — zum Prüfen der Oberfläche auf dem Mac.
 // Aufruf: pnpm dev (läuft auf :1430), dann
-//   node scripts/shot.mjs "<hash ohne #>" <ausgabe.png> [breite] [höhe] [--transparent] [--hover=<css-selektor>] [--wait=<ms>] [--scale=2]
+//   node scripts/shot.mjs "<hash ohne #>" <ausgabe.png> [breite] [höhe] [--transparent] [--hover=<css-selektor>] [--click=<css-selektor>] [--after=<ms nach hover/click>] [--wait=<ms>] [--scale=2] [--dark]
 // Beispiel: node scripts/shot.mjs "/menu" shots/menu.png 360 520 --transparent
 import { chromium } from "playwright";
 import { existsSync, readdirSync, mkdirSync } from "node:fs";
@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 
 const [hash, out, w = "900", h = "640", ...flags] = process.argv.slice(2);
 if (!hash || !out) {
-  console.error("Aufruf: node scripts/shot.mjs <hash> <out.png> [w] [h] [--transparent] [--hover=sel] [--click=sel] [--wait=ms] [--scale=2]");
+  console.error("Aufruf: node scripts/shot.mjs <hash> <out.png> [w] [h] [--transparent] [--hover=sel] [--click=sel] [--after=ms] [--wait=ms] [--scale=2] [--dark]");
   process.exit(2);
 }
 const flag = (name) => flags.find((f) => f.startsWith(`--${name}`))?.split("=").slice(1).join("=");
@@ -36,6 +36,8 @@ try {
 const page = await browser.newPage({
   viewport: { width: Number(w), height: Number(h) },
   deviceScaleFactor: Number(flag("scale") ?? 2),
+  // Dunkel wie der Systemmodus (die Attrappe steht auf „System“).
+  colorScheme: flags.includes("--dark") ? "dark" : "light",
 });
 page.on("console", (m) => {
   if (m.type() === "error" || m.type() === "warning") console.log(`[${m.type()}] ${m.text()}`);
@@ -47,7 +49,7 @@ const hover = flag("hover");
 if (hover) await page.hover(hover);
 const click = flag("click");
 if (click) await page.click(click);
-if (hover || click) await page.waitForTimeout(300);
+if (hover || click) await page.waitForTimeout(Number(flag("after") ?? 300));
 mkdirSync(dirname(out), { recursive: true });
 await page.screenshot({ path: out, omitBackground: flags.includes("--transparent") });
 await browser.close();

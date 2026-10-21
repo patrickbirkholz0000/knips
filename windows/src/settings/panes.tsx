@@ -1,6 +1,6 @@
 // Bereiche der Einstellungen außer „Start“ (Start.tsx). Inhalte und Funktionen wie bisher, Gestaltung nach
 // docs/design.md: Abschnitte mit Titel, weiße Karten mit Zeilen, Bedienelemente rechts.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -106,25 +106,65 @@ const GROUPS: [string, HotkeyAction[]][] = [
   ["Sonstiges", ["pinClipboard"]],
 ];
 
+/** Unter dem Kürzel, solange Knips auf die neue Kombination wartet. */
+function RecordHint({ action, invalid }: { action: HotkeyAction; invalid?: string }) {
+  return (
+    <span className="st-rechint" data-hotkey-hint={action} role="status" aria-live="polite">
+      {invalid && (
+        <span className="st-fail st-rechint__bad">
+          <Dot tone="missing" />
+          {invalid}
+        </span>
+      )}
+      <span>
+        Kombination mit <kbd>Strg</kbd>, <kbd>Alt</kbd> oder <kbd>Win</kbd> drücken – oder <span className="st-nowrap">eine F-Taste/<kbd>Druck</kbd></span>.{" "}
+        <kbd>Esc</kbd> bricht ab, <kbd>Rücktaste</kbd> entfernt.
+      </span>
+    </span>
+  );
+}
+
 export function Shortcuts({ boot }: { boot: Bootstrap }) {
   const { settings: s, hotkeyLabels, hotkeyFailures } = boot;
-  const [recording, setRecording] = useState<HotkeyAction | null>(null);
+  const [recording, setRecordingState] = useState<HotkeyAction | null>(null);
   const [rejected, setRejected] = useState<string | null>(null);
+  // Letzte ungültige Taste der laufenden Aufnahme; `n` zählt mit, damit jeder Druck sichtbar antwortet.
+  const [invalid, setInvalid] = useState<{ action: HotkeyAction; message: string; n: number } | null>(null);
+  const recordingRef = useRef<HotkeyAction | null>(null);
+  const setRecording = (a: HotkeyAction | null) => {
+    recordingRef.current = a;
+    setRecordingState(a);
+    setInvalid(null);
+  };
+  const cancelRec = () => {
+    if (!recordingRef.current) return;
+    api.hotkeyRecordCancel();
+    setRecording(null);
+  };
 
   useEffect(() => {
     const off = events.hotkeyRecorded((r) => {
+      if (r.result === "invalid") {
+        // Die Aufnahme läuft weiter. Eine verspätete Meldung nach dem Ende zeigt nichts mehr an.
+        if (recordingRef.current === r.action) {
+          setInvalid((prev) => ({ action: r.action, message: r.message ?? "Braucht Strg, Alt oder Win.", n: (prev?.n ?? 0) + 1 }));
+        }
+        return;
+      }
       setRecording(null);
       setRejected(r.result === "rejected" ? r.message ?? "Diese Kombination geht nicht." : null);
     });
     const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setRecording((r) => (r ? (api.hotkeyRecordCancel(), null) : r));
-      }
+      if (e.key === "Escape") cancelRec();
     };
+    // Der Tastatur-Hook schluckt während der Aufnahme jede Taste, auch in anderen Apps — verliert das Fenster
+    // den Fokus, endet die Aufnahme deshalb.
     window.addEventListener("keydown", key);
+    window.addEventListener("blur", cancelRec);
     return () => {
       off.then((f) => f());
       window.removeEventListener("keydown", key);
+      window.removeEventListener("blur", cancelRec);
       api.hotkeyRecordCancel();
     };
   }, []);
@@ -134,8 +174,7 @@ export function Shortcuts({ boot }: { boot: Bootstrap }) {
     set({ disabledHotkeys: on ? s.disabledHotkeys.filter((x) => x !== a) : [...s.disabledHotkeys, a] });
   const startRec = (a: HotkeyAction) => {
     if (recording === a) {
-      api.hotkeyRecordCancel();
-      setRecording(null);
+      cancelRec();
       return;
     }
     setRecording(a);
@@ -181,13 +220,17 @@ export function Shortcuts({ boot }: { boot: Bootstrap }) {
             const combo = s.hotkeys[a];
             const on = active(a);
             const failed = on && hotkeyFailures.includes(a);
+            const rec = recording === a;
+            const bad = rec && invalid?.action === a ? invalid : null;
             return (
               <Row
                 key={a}
                 className={on ? "st-sc" : "st-sc st-sc--off"}
                 title={hotkeyTitle[a]}
                 description={
-                  failed ? (
+                  rec ? (
+                    <RecordHint action={a} invalid={bad?.message} />
+                  ) : failed ? (
                     <span className="st-fail">
                       <Dot tone="missing" />
                       Von einer anderen App belegt – wähl eine andere Kombination.
@@ -195,7 +238,7 @@ export function Shortcuts({ boot }: { boot: Bootstrap }) {
                   ) : undefined
                 }
               >
-                <KeyButton action={a} label={hotkeyLabels[a]} recording={recording === a} dim={!on} onClick={() => startRec(a)} />
+                <KeyButton action={a} label={hotkeyLabels[a]} recording={rec} nudge={bad?.n ?? 0} dim={!on} onClick={() => startRec(a)} />
                 <Switch on={on} disabled={!combo} onChange={(v) => toggle(a, v)} label={`${hotkeyTitle[a]} an`} />
               </Row>
             );

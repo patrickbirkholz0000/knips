@@ -38,7 +38,7 @@ anyhow.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 chrono.workspace = true
-dirs = "6"
+dirs = "7"
 # Nutzungsstatistik: kleiner blockierender HTTP-Client; TLS über das System (Windows: SChannel),
 # kein C-Code — der Windows-Check auf dem Mac bleibt möglich.
 ureq = { version = "2.12", default-features = false, features = ["native-tls"] }

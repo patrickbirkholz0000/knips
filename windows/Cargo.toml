@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/core", "crates/platform", "src-tauri"]
 
 [workspace.package]
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 authors = ["Patrick Birkholz <kontakt@birkgroup.de>"]
 license = "GPL-3.0-or-later"

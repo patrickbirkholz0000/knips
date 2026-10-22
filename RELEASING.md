@@ -12,7 +12,7 @@ Ein Release besteht aus einem GitHub-Release in diesem Repo (`patrickbirkholz000
 Maßgeblich ist das Tag `vX.Y.Z`. `build.sh` liest es per `git describe` (ohne Tag gilt
 `CFBundleShortVersionString` aus `Resources/Info.plist`), der Workflow schreibt es beim Bauen in
 `windows/package.json`, `windows/Cargo.toml` und `windows/src-tauri/tauri.conf.json` (nicht eingecheckt).
-Eingecheckt steht dort die aktuelle Version, derzeit `1.0.1`; bei einer neuen Version am besten mit anheben
+Eingecheckt steht dort die aktuelle Version, derzeit `1.0.2`; bei einer neuen Version am besten mit anheben
 (`Cargo.lock` folgt über `cargo check`). Die Build-Nummer ist auf beiden Systemen die Zahl der Commits bis zum
 Tag (`git rev-list --count HEAD`): `build.sh` schreibt sie als `CFBundleVersion`, der Workflow gibt sie dem
 Windows-Build als `KNIPS_BUILD` mit (Nutzungsstatistik).

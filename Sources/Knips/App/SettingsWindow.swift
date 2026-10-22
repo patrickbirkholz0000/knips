@@ -127,7 +127,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .redaction: "Wie sensible Stellen in Bildern und Videos unkenntlich werden."
         case .export: "Größe und Format von Screenshots, GIFs und Videos."
         case .storage: "Wo deine Aufnahmen liegen und wie lange Originale bleiben."
-        case .privacy: "Freigaben von macOS und anonyme Nutzungsstatistik. Aufnahmen bleiben auf deinem Mac."
+        case .privacy: "Freigaben von macOS, Updates und anonyme Nutzungsstatistik. Aufnahmen bleiben auf deinem Mac."
         case .about: "Screenshots und kurze Bildschirmaufnahmen, mit Zensur für Bilder und Videos."
         }
     }
@@ -1159,7 +1159,18 @@ private struct StoragePane: View {
 private struct PrivacyPane: View {
     @ObservedObject private var telemetry = Telemetry.shared
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var updates = Updates.shared
     @ObservedObject var readiness: Readiness
+
+    /// Was Knips selbst ins Internet schickt: die tägliche Frage nach Updates und (mit Zustimmung) die Zähler.
+    private var network: String {
+        switch (updates.isActive && updates.automatic, telemetry.consent == true) {
+        case (true, true): "Kein Konto. Ins Internet gehen nur die Frage nach Updates und die anonymen Zähler"
+        case (true, false): "Kein Konto. Ins Internet geht nur die tägliche Frage nach Updates"
+        case (false, true): "Kein Konto. Ins Internet gehen nur die anonymen Zähler"
+        case (false, false): "Kein Konto, nichts geht ins Internet"
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 30) {
@@ -1185,6 +1196,12 @@ private struct PrivacyPane: View {
                 }
                 .padding(.vertical, 15)
             }
+            BrandSection(title: "Updates") {
+                BrandRow(title: "Automatisch aktualisieren",
+                         detail: "Knips fragt einmal am Tag bei GitHub nach einer neuen Version. GitHub sieht dabei deine IP-Adresse; Knips sendet dabei nichts weiter.") {
+                    BrandToggle(isOn: $updates.automatic, label: "Automatisch aktualisieren").disabled(!updates.isActive)
+                }
+            }
             BrandSection(title: "Bildschirm teilen", footer: "Knips' eigene Bildschirmfotos und Videos zeigen nie Knips-Fenster.") {
                 BrandRow(title: "In Bildschirmübertragungen verbergen",
                          detail: "Teams, Zoom, Discord und andere Apps, die deinen Bildschirm teilen oder aufnehmen, sehen Knips dann nicht – auch keine Originale im Editor.") {
@@ -1194,9 +1211,7 @@ private struct PrivacyPane: View {
             BrandSection(title: "So arbeitet Knips") {
                 InfoLine(symbol: "cpu", text: "Texterkennung läuft auf diesem Mac")
                 BrandRowDivider()
-                InfoLine(symbol: "network.slash", text: telemetry.consent == true
-                         ? "Kein Konto. Ins Internet gehen nur die anonymen Zähler"
-                         : "Kein Konto, nichts geht ins Internet")
+                InfoLine(symbol: "network.slash", text: network)
                 BrandRowDivider()
                 InfoLine(symbol: "checkmark.shield", text: "Geteilte Dateien sind immer die zensierte Fassung")
                 BrandRowDivider()
@@ -1214,6 +1229,7 @@ private struct PrivacyPane: View {
 
 struct AboutPane: View {
     static let sourceURL = URL(string: "https://github.com/patrickbirkholz0000/knips")!
+    @ObservedObject private var updates = Updates.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 30) {
@@ -1248,6 +1264,7 @@ struct AboutPane: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 30)
             }
+            UpdatesSection(updates: updates)
             BrandSection(title: "Schriften", detail: "Beide stehen unter der SIL Open Font License 1.1 und liegen der App bei.") {
                 fontRow("Outfit", "Text und Titel", file: "OFL-Outfit")
                 BrandRowDivider()
@@ -1285,12 +1302,159 @@ struct AboutPane: View {
         }
     }
 
-    /// Lizenztext aus dem App-Bundle (`Resources/Fonts`), sonst im Quellcode.
-    static func openLicense(_ file: String) {
-        if let url = Bundle.main.url(forResource: file, withExtension: "txt", subdirectory: "Fonts") {
+    /// Lizenztext aus dem App-Bundle (`Resources/Fonts` bzw. `Resources`), sonst im Quellcode.
+    static func openLicense(_ file: String, subdirectory: String? = "Fonts") {
+        if let url = Bundle.main.url(forResource: file, withExtension: "txt", subdirectory: subdirectory) {
             NSWorkspace.shared.open(url)
         } else {
-            NSWorkspace.shared.open(sourceURL.appendingPathComponent("blob/main/Resources/Fonts/\(file).txt"))
+            let path = ["blob/main/Resources", subdirectory, "\(file).txt"].compactMap { $0 }.joined(separator: "/")
+            NSWorkspace.shared.open(sourceURL.appendingPathComponent(path))
         }
+    }
+}
+
+/// Updates auf „Über Knips“: Zustand mit passendem Knopf, „Automatisch aktualisieren“ und Sparkle mit Lizenz.
+private struct UpdatesSection: View {
+    @ObservedObject var updates: Updates
+    // Während einer Aufnahme oder eines Scroll-Screenshots wartet „Neu starten und aktualisieren“.
+    @ObservedObject private var recorder = RecordingController.shared
+    @ObservedObject private var scroll = ScrollCaptureController.shared
+
+    private var footer: String {
+        if !updates.isActive {
+            return "Updates aus (\(updates.config.blockedReason ?? "Sparkle startet nicht")). In eigenen Builds schaltet KNIPS_UPDATE_FEED einen Test-Feed ein."
+        }
+        return "Knips fragt einmal am Tag bei GitHub nach einer neuen Version und installiert nur Updates mit gültiger Signatur."
+    }
+
+    var body: some View {
+        BrandSection(title: "Updates", footer: footer) {
+            UpdateStatusRow(updates: updates, busy: recorder.isBusy || scroll.active)
+            BrandRowDivider()
+            BrandRow(title: "Automatisch aktualisieren", detail: "Lädt neue Versionen im Hintergrund. Installiert wird beim Beenden von Knips.") {
+                BrandToggle(isOn: $updates.automatic, label: "Automatisch aktualisieren").disabled(!updates.isActive)
+            }
+            BrandRowDivider()
+            BrandRow(title: "Sparkle", detail: "Lädt und prüft die Updates · MIT-Lizenz") {
+                Button("Lizenz") { AboutPane.openLicense("Sparkle-LICENSE", subdirectory: nil) }
+                    .buttonStyle(BrandButtonStyle(kind: .secondary, compact: true))
+                    .help("Sparkle-LICENSE.txt")
+            }
+        }
+    }
+}
+
+/// Zeile mit dem Zustand der Updates: Symbol, Titel, ein Satz (Version, letzte Prüfung, Fortschritt), Knopf rechts.
+private struct UpdateStatusRow: View {
+    @ObservedObject var updates: Updates
+    let busy: Bool
+
+    private var installed: String { "Version \(AppVersion.short) · Build \(AppVersion.build)" }
+
+    private var checked: String {
+        updates.lastCheck.map { "geprüft \(Updates.describe($0))" } ?? "noch nicht geprüft"
+    }
+
+    private var symbol: String {
+        switch updates.state {
+        case .ready, .downloading, .verifying, .available, .info: "arrow.down.circle"
+        case .idle where updates.note == .upToDate: "checkmark.circle"
+        default: "arrow.triangle.2.circlepath"
+        }
+    }
+
+    private var title: String {
+        switch updates.state {
+        case .idle:
+            switch updates.note {
+            case .upToDate: "Knips ist auf dem neuesten Stand"
+            case .failed: "Suche nach Updates hat nicht geklappt"
+            case nil: "Knips \(AppVersion.short)"
+            }
+        case .checking: "Suche nach Updates …"
+        case let .downloading(version, _): "Knips \(version) wird geladen …"
+        case let .verifying(version): "Knips \(version) wird geprüft …"
+        case let .available(version), let .info(version, _): "Knips \(version) ist verfügbar"
+        case let .ready(version): "Knips \(version) ist bereit"
+        case .installing: "Knips wird aktualisiert …"
+        }
+    }
+
+    private var detail: Text {
+        switch updates.state {
+        case .idle:
+            if case let .failed(message) = updates.note { return Text(message) }
+            return Text("\(installed) · \(checked)")
+        case .checking: return Text(installed)
+        case let .downloading(_, progress):
+            // Zahlen in Mono (docs/design.md).
+            return progress.map { Text("\(Int(($0 * 100).rounded())) %").font(Brand.mono(12.5)) } ?? Text("Im Hintergrund.")
+        case .verifying: return Text("Prüft, ob das Update echt ist.")
+        case .available: return Text("Du nutzt Version \(AppVersion.short).")
+        case .info: return Text("Mehr dazu auf GitHub.")
+        case .ready: return Text(busy ? "Nach der Aufnahme möglich. Sonst beim Beenden von Knips." : "Wird beim Beenden von Knips installiert.")
+        case .installing: return Text("Knips startet gleich neu.")
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 14) {
+            BrandIconTile(symbol: symbol, size: 36)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(Brand.font(14, .medium)).foregroundStyle(Color.brand(Brand.ink))
+                detail
+                    .font(Brand.font(12.5))
+                    .foregroundStyle(Color.brand(Brand.inkSoft))
+                    .fixedSize(horizontal: false, vertical: true)
+                if case let .downloading(_, progress?) = updates.state {
+                    UpdateProgressBar(value: progress).padding(.top, 5)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            accessory
+        }
+        .padding(.vertical, 14)
+        .frame(minHeight: 66)
+    }
+
+    @ViewBuilder private var accessory: some View {
+        switch updates.state {
+        case .downloading(_, _?):
+            EmptyView()   // Fortschrittsbalken unter dem Text
+        case .checking, .downloading, .verifying, .installing:
+            ProgressView().controlSize(.small)
+        case .available:
+            Button("Laden und installieren") { updates.download() }
+                .buttonStyle(BrandButtonStyle(kind: .primary, compact: true))
+        case let .info(_, url):
+            Button("Ansehen") { NSWorkspace.shared.open(url ?? AboutPane.sourceURL.appendingPathComponent("releases/latest")) }
+                .buttonStyle(BrandButtonStyle(kind: .secondary, compact: true))
+        case .ready:
+            Button("Neu starten und aktualisieren") { updates.installNow() }
+                .buttonStyle(BrandButtonStyle(kind: .primary, compact: true))
+                .disabled(busy)
+        case .idle:
+            Button(updates.note == nil || updates.note == .upToDate ? "Jetzt nach Updates suchen" : "Erneut suchen") { updates.checkNow() }
+                .buttonStyle(BrandButtonStyle(kind: .secondary, compact: true))
+                .disabled(!updates.canCheck)
+        }
+    }
+}
+
+/// Schmaler Fortschrittsbalken in Königsblau.
+private struct UpdateProgressBar: View {
+    let value: Double
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.brand(Brand.fill))
+                Capsule().fill(Color.brand(Brand.accent)).frame(width: max(4, geo.size.width * value))
+            }
+        }
+        .frame(width: 220, height: 4)
+        .accessibilityElement()
+        .accessibilityLabel("Fortschritt")
+        .accessibilityValue("\(Int((value * 100).rounded())) Prozent")
     }
 }

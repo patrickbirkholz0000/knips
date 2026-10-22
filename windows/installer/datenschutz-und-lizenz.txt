@@ -5,9 +5,17 @@ DATENSCHUTZ (bitte zuerst lesen)
 Knips arbeitet auf diesem Rechner. Screenshots, Videos und erkannter
 Text bleiben auf dem Gerät. Es gibt kein Konto und keinen Upload.
 
-Einzige Ausnahme ist eine anonyme Nutzungsstatistik. Sie ist aus, bis
-du zustimmst: Beim ersten Start fragt Knips einmal („Knips
-verbessern?“). Ohne Zustimmung sendet Knips nichts.
+Ausnahmen sind die Suche nach Updates und eine freiwillige, anonyme
+Nutzungsstatistik.
+
+Updates: Knips fragt einmal am Tag bei GitHub nach einer neuen Version
+und lädt sie im Hintergrund. GitHub sieht dabei deine IP-Adresse; Knips
+sendet dabei nichts weiter. Abschalten: Einstellungen → Über Knips →
+„Automatisch aktualisieren“.
+
+Die Nutzungsstatistik ist aus, bis du zustimmst: Beim ersten Start
+fragt Knips einmal („Knips verbessern?“). Ohne Zustimmung sendet Knips
+nichts.
 
 Mit Zustimmung sendet Knips höchstens einmal am Tag an
 https://knips.velno.ai/v1/ping: App-Version, Windows-Version,

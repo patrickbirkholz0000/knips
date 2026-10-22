@@ -209,6 +209,15 @@ export const api = {
   /** Ereignis zählen, das nur die Oberfläche sieht. Rust nimmt nur Namen aus der Erlaubt-Liste an. */
   telemetryCount: (event: "censor_manual" | "censor_smart") => call<void>("telemetry_count", { event }),
 
+  // Aktualisierung
+  /** „Jetzt nach Updates suchen“ — im Hintergrund, Ergebnis über `bootstrap-changed` (`update`). */
+  updateCheck: () => call<void>("update_check"),
+  /**
+   * „Neu starten und aktualisieren“. Wirft mit einem Grund, warum es gerade nicht geht (Aufnahme, Speichern, offene
+   * Editoren); sonst beendet sich Knips, der Installer läuft und startet Knips wieder.
+   */
+  updateInstall: () => call<void>("update_install"),
+
   // Rückfrage vor Aufnahmen per knips://-Link (`#/link-confirm/<befehl>`)
   /**
    * Oberfläche bereit. true, sobald Rust das Fenster als sichtbar bestätigt — ab da läuft die Schutzzeit;

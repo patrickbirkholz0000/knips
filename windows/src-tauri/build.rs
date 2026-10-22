@@ -66,6 +66,8 @@ const COMMANDS: &[&str] = &[
     "video_cancel",
     "telemetry_set_consent",
     "telemetry_count",
+    "update_check",
+    "update_install",
     "link_confirm_shown",
     "link_confirm_decide",
     // Nur mit Feature `dev` registriert; erlaubt erst die Capability, die `selftest.rs` zur Laufzeit anlegt.

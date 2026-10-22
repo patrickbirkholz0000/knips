@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ArrowDownToLine,
   CheckCircle2,
   Check,
   Cpu,
@@ -12,6 +13,7 @@ import {
   Folder,
   Info,
   Keyboard,
+  RefreshCw,
   ScanText,
   ShieldCheck,
   SquareDashed,
@@ -20,9 +22,9 @@ import {
 } from "lucide-react";
 import { api, events } from "../shared/ipc";
 import { useItems } from "../shared/hooks";
-import { bytes } from "../shared/format";
+import { bytes, when } from "../shared/format";
 import { BrandMark, Wordmark } from "../shared/brand";
-import type { Bootstrap, HotkeyAction, RedactStyle, Settings as S } from "../shared/types";
+import type { Bootstrap, HotkeyAction, RedactStyle, Settings as S, UpdateStatus } from "../shared/types";
 import { Button, Card, DialogCard, Dot, IconTile, Keys, Notice, Point, Row, Section, Segmented, Select, StatusIcon, Switch } from "../shared/ui";
 import { KeyButton, SecondsField } from "./parts";
 import RedactPreview from "./RedactPreview";
@@ -662,6 +664,10 @@ export function Privacy({ boot }: { boot: Bootstrap }) {
           <Point icon={<UserX size={17} strokeWidth={2} />} title="Kein Konto">
             Nur wenn du zustimmst, sendet Knips anonyme Nutzungszähler.
           </Point>
+          <Point icon={<RefreshCw size={17} strokeWidth={2} />} title="Updates von GitHub">
+            Knips fragt einmal am Tag bei GitHub nach einer neuen Version. GitHub sieht dabei deine IP-Adresse; Knips sendet
+            dabei nichts weiter. Abschalten unter Über Knips.
+          </Point>
           <Point icon={<EyeOff size={17} strokeWidth={2} />} title="Geteilt wird die zensierte Fassung">
             Ablageordner, Kopieren und Herausziehen geben nie das Original weiter.
           </Point>
@@ -676,6 +682,89 @@ export function Privacy({ boot }: { boot: Bootstrap }) {
 
 // ---------------------------------------------------------------- Über Knips
 
+/** Stand der Suche unter „Version …“. */
+function updateLine(u: UpdateStatus): string {
+  if (!u.available) return "In dieser Fassung aus (Entwickler-Build oder Test).";
+  if (u.phase === "checking") return "Sucht nach einer neuen Version …";
+  if (u.phase === "downloading") return "Lädt die neue Version im Hintergrund …";
+  if (u.phase === "installing") return "Wird installiert …";
+  const last = u.lastCheck ? `Zuletzt gesucht: ${when(u.lastCheck)}.` : "Noch nicht gesucht.";
+  if (u.result === "error") return u.lastCheck ? `Zuletzt erfolgreich gesucht: ${when(u.lastCheck)}.` : last;
+  if (u.phase === "ready" || !u.lastCheck) return last;
+  return `Knips ist aktuell. ${last}`;
+}
+
+/** Automatische Aktualisierung: geladenes Update installieren, Einstellung, Suche von Hand. */
+function UpdateSection({ boot }: { boot: Bootstrap }) {
+  const u = boot.update;
+  const [installing, setInstalling] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
+  const searching = u.phase === "checking" || u.phase === "downloading";
+  const install = async () => {
+    setInstalling(true);
+    setInstallError(null);
+    try {
+      await api.updateInstall();
+    } catch (e) {
+      setInstallError(String(e));
+    } finally {
+      setInstalling(false);
+    }
+  };
+  return (
+    <Section
+      title="Aktualisierung"
+      footer="Knips fragt einmal am Tag bei GitHub nach einer neuen Version und lädt sie im Hintergrund. Installiert wird beim Beenden oder mit „Neu starten und aktualisieren“ – nie während einer Aufnahme."
+    >
+      {(u.phase === "ready" || u.phase === "installing") && u.version && (
+        <Row
+          className="st-update"
+          lead={
+            <IconTile>
+              <ArrowDownToLine size={17} strokeWidth={2} />
+            </IconTile>
+          }
+          title={`Version ${u.version} ist bereit`}
+          description={
+            installError ? (
+              <span className="st-fail">
+                <Dot tone="missing" />
+                {installError}
+              </span>
+            ) : (
+              "Wird beim Beenden installiert – oder gleich jetzt."
+            )
+          }
+        >
+          <Button variant="primary" data-act="update-install" disabled={installing || u.phase === "installing"} onClick={install}>
+            Neu starten und aktualisieren
+          </Button>
+        </Row>
+      )}
+      <Row title="Automatisch aktualisieren" description="Einmal am Tag nach einer neuen Version suchen und sie im Hintergrund laden." off={!u.available}>
+        <Switch on={boot.settings.autoUpdate} disabled={!u.available} onChange={(v) => set({ autoUpdate: v })} label="Automatisch aktualisieren" />
+      </Row>
+      <Row
+        title={`Installiert: Version ${boot.version}`}
+        description={
+          u.result === "error" && u.error && !searching ? (
+            <span className="st-fail">
+              <Dot tone="missing" />
+              {u.error} {updateLine(u)}
+            </span>
+          ) : (
+            updateLine(u)
+          )
+        }
+      >
+        <Button data-act="update-check" disabled={!u.available || searching || u.phase === "installing"} onClick={() => api.updateCheck()}>
+          {searching ? "Sucht …" : "Jetzt nach Updates suchen"}
+        </Button>
+      </Row>
+    </Section>
+  );
+}
+
 export function About({ boot }: { boot: Bootstrap }) {
   return (
     <>
@@ -687,6 +776,7 @@ export function About({ boot }: { boot: Bootstrap }) {
         <span className="st-about__ver">Version {boot.version}</span>
         <p>Freie Software (GPL) – ohne Konto, Aufnahmen bleiben auf deinem PC.</p>
       </Card>
+      <UpdateSection boot={boot} />
       <Section title="Funktionen" plain>
         <Card className="st-points">
           <Point icon={<SquareDashed size={17} strokeWidth={2} />} title="Bereich, Fenster oder Bildschirm">

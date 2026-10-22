@@ -6,8 +6,10 @@
 #   scripts/release.sh          nimmt das vX.Y.Z-Tag, das bereits auf HEAD liegt
 #
 # Ablauf: Vorbedingungen (main, sauber, gleich origin/main, Version neuer als die letzte) → scripts/package.sh
-# (signiert + notarisiert) → Tag pushen (startet .github/workflows/release.yml: Windows-Installer) →
-# Release-Entwurf mit DMG + SHA-256 → warten, bis der Windows-Installer dranhängt → Hinweis zum Veröffentlichen.
+# (signiert + notarisiert) → DMG für die automatischen Updates EdDSA-signieren, Signatur gegen die gebaute App prüfen,
+# appcast.xml schreiben → Tag pushen (startet .github/workflows/release.yml: Windows-Installer) →
+# Release-Entwurf mit DMG + SHA-256 + appcast.xml → warten, bis der Windows-Installer dranhängt → Hinweis zum
+# Veröffentlichen.
 # Veröffentlicht wird nie automatisch. Einrichtung und Fehlersuche: RELEASING.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -24,6 +26,11 @@ security find-identity -v -p codesigning | grep -q '"Developer ID Application: '
   die "Keine „Developer ID Application“-Identität im Schlüsselbund — siehe RELEASING.md, Einrichtung 1."
 xcrun notarytool history --keychain-profile "${KNIPS_NOTARY_PROFILE:-knips}" >/dev/null 2>&1 ||
   die "Notarisierungs-Profil „${KNIPS_NOTARY_PROFILE:-knips}“ fehlt oder wird abgelehnt — siehe RELEASING.md, Einrichtung 2."
+# Automatische Updates (Sparkle): privater EdDSA-Schlüssel im Schlüsselbund (nur nachsehen, ob es ihn gibt).
+SPARKLE_BIN=.build/artifacts/sparkle/Sparkle/bin
+SPARKLE_ACCOUNT=${KNIPS_SPARKLE_ACCOUNT:-knips}
+security find-generic-password -s "https://sparkle-project.org" -a "$SPARKLE_ACCOUNT" >/dev/null 2>&1 ||
+  die "EdDSA-Schlüssel „${SPARKLE_ACCOUNT}“ für die Updates fehlt im Schlüsselbund — siehe RELEASING.md, Einrichtung 5."
 [[ -f LICENSE ]] || die "LICENSE fehlt."
 
 # --- Stand des Repos -----------------------------------------------------------------------------------
@@ -95,6 +102,19 @@ DMG="build/Knips-$VERSION-$BUILD.dmg"
 (cd build && shasum -a 256 -c "$(basename "$DMG").sha256" >/dev/null) || die "Prüfsumme von $DMG stimmt nicht."
 [[ -z "$(git status --porcelain)" ]] || die "Der Build hat eingecheckte Dateien verändert (git status)."
 
+# --- Automatische Updates (Sparkle) ---------------------------------------------------------------------
+# Signiert wird das fertige (gestapelte) DMG, geprüft gegen SUPublicEDKey der gebauten App, bevor etwas hochgeht.
+APPCAST=build/appcast.xml
+step "Signiere das DMG für die automatischen Updates (EdDSA, Schlüssel „${SPARKLE_ACCOUNT}“)…"
+echo "  Beim ersten Mal fragt macOS, ob sign_update den Schlüssel benutzen darf: „Immer erlauben“."
+[[ -x "$SPARKLE_BIN/sign_update" ]] || die "sign_update fehlt ($SPARKLE_BIN) — swift package resolve"
+ED_SIGNATURE=$("$SPARKLE_BIN/sign_update" --account "$SPARKLE_ACCOUNT" -p "$DMG") || die "sign_update: $ED_SIGNATURE"
+swift scripts/update-signature.swift verify build/Knips.app "$DMG" "$ED_SIGNATURE" ||
+  die "Die EdDSA-Signatur passt nicht zu SUPublicEDKey in Resources/Info.plist — siehe RELEASING.md, Fehlersuche."
+scripts/appcast.sh build/Knips.app "$DMG" "https://github.com/$REPO/releases/download/$TAG/$(basename "$DMG")" \
+  "https://github.com/$REPO/releases/tag/$TAG" "$ED_SIGNATURE" >"$APPCAST"
+xmllint --noout "$APPCAST" || die "$APPCAST ist kein gültiges XML."
+
 # --- Release-Text --------------------------------------------------------------------------------------
 EXE="Knips_${VERSION}_x64-setup.exe"
 NOTES="build/release-notes-$TAG.md"
@@ -155,11 +175,11 @@ PUSHED=1
 if [[ "$STATE" == "none" ]] && gh release view "$TAG" >/dev/null 2>&1; then STATE=draft; fi
 if [[ "$STATE" == "draft" ]]; then
   step "Aktualisiere den vorhandenen Entwurf ${TAG}…"
-  gh release upload "$TAG" "$DMG" "$DMG.sha256" --clobber
+  gh release upload "$TAG" "$DMG" "$DMG.sha256" "$APPCAST" --clobber
   gh release edit "$TAG" --title "Knips $VERSION" --notes-file "$NOTES"
 else
   step "Lege den Release-Entwurf $TAG an…"
-  gh release create "$TAG" "$DMG" "$DMG.sha256" --draft --verify-tag --title "Knips $VERSION" --notes-file "$NOTES"
+  gh release create "$TAG" "$DMG" "$DMG.sha256" "$APPCAST" --draft --verify-tag --title "Knips $VERSION" --notes-file "$NOTES"
 fi
 
 # --- Auf den Windows-Installer warten ------------------------------------------------------------------
@@ -180,6 +200,8 @@ gh run watch "$RUN_ID" --exit-status --interval 30 >/dev/null ||
 
 ASSETS=$(gh release view "$TAG" --json assets -q '.assets[].name')
 grep -qx "$EXE" <<<"$ASSETS" || die "$EXE hängt nicht am Release (vorhanden: $(paste -sd ' ' - <<<"$ASSETS"))."
+grep -qx "appcast.xml" <<<"$ASSETS" || die "appcast.xml hängt nicht am Release (vorhanden: $(paste -sd ' ' - <<<"$ASSETS"))."
+grep -qx "latest.json" <<<"$ASSETS" || die "latest.json (Feed der Windows-Aktualisierung) hängt nicht am Release (vorhanden: $(paste -sd ' ' - <<<"$ASSETS"))."
 
 URL=$(gh release view "$TAG" --json url -q .url)
 cat <<EOF

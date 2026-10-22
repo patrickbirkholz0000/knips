@@ -252,12 +252,17 @@ pub struct Settings {
     /// Apps Knips wie jedes andere Fenster; nur Knips' eigene Bilder und Videos lassen Knips-Fenster weg.
     pub hide_from_screen_sharing: bool,
     pub appearance: Appearance,
+    /// Einmal am Tag bei GitHub nach einer neuen Version fragen und sie im Hintergrund laden (siehe `update`).
+    /// Installiert wird erst beim Beenden oder per „Neu starten und aktualisieren“. Standardmäßig an.
+    pub auto_update: bool,
     pub editor: EditorPrefs,
     // Interne Merker (Mac: einzelne UserDefaults-Schlüssel).
     pub did_first_launch: bool,
     pub asked_shortcut_takeover: bool,
     /// Knips hat „Druck-Taste öffnet Bildschirmausschnitt“ abgeschaltet.
     pub took_snipping_key: bool,
+    /// Unix-Sekunden der letzten erfolgreichen Suche nach Updates (Einstellungen → Über Knips).
+    pub update_last_check: Option<i64>,
     pub settings_version: u32,
 }
 
@@ -266,7 +271,7 @@ pub const EDITOR_TOOLS: [&str; 10] = ["select", "arrow", "rectangle", "ellipse",
 
 /// Felder, die das Einstellungsfenster über `set_settings` ändern darf. Alles andere (Kürzel, interne
 /// Merker, Nutzungsstatistik) ändert nur Rust selbst.
-pub const SETTINGS_WINDOW_FIELDS: [&str; 27] = [
+pub const SETTINGS_WINDOW_FIELDS: [&str; 28] = [
     "saveFolder",
     "copyToClipboard",
     "showQuickAccess",
@@ -294,6 +299,7 @@ pub const SETTINGS_WINDOW_FIELDS: [&str; 27] = [
     "linkCaptureWithoutConfirm",
     "hideFromScreenSharing",
     "appearance",
+    "autoUpdate",
 ];
 
 /// Felder, die Bild- und Video-Editor ändern dürfen (zuletzt gewählter Zensurstil).
@@ -463,10 +469,12 @@ impl Default for Settings {
             link_capture_without_confirm: false,
             hide_from_screen_sharing: false,
             appearance: Appearance::System,
+            auto_update: true,
             editor: EditorPrefs::default(),
             did_first_launch: false,
             asked_shortcut_takeover: false,
             took_snipping_key: false,
+            update_last_check: None,
             settings_version: Settings::VERSION,
         }
     }
@@ -501,6 +509,9 @@ mod tests {
         // Knips-Fenster sind für Bildschirmübertragungen standardmäßig sichtbar, auch mit alter settings.json.
         assert!(!s.hide_from_screen_sharing && !partial.hide_from_screen_sharing);
         assert!(json.contains(r#""hideFromScreenSharing":false"#));
+        // Automatisch aktualisieren ist standardmäßig an, auch mit alter settings.json ohne das Feld.
+        assert!(s.auto_update && partial.auto_update && partial.update_last_check.is_none());
+        assert!(json.contains(r#""autoUpdate":true"#) && json.contains(r#""updateLastCheck":null"#));
     }
 
     #[test]
@@ -554,11 +565,12 @@ mod tests {
             "redactStyle": "blur",
             "linkCaptureWithoutConfirm": true,
             "hideFromScreenSharing": true,
+            "autoUpdate": false,
             "disabledHotkeys": ["captureArea"],
             "saveFolder": r"D:\Screenshots\Knips",
         });
         let next = s.patched(&patch, all).unwrap();
-        assert!(!next.play_sound && next.link_capture_without_confirm && next.hide_from_screen_sharing);
+        assert!(!next.play_sound && next.link_capture_without_confirm && next.hide_from_screen_sharing && !next.auto_update);
         assert_eq!(next.quick_access_seconds, 3600);
         assert_eq!(next.redact_style, RedactStyle::Blur);
         assert_eq!(next.save_folder, r"D:\Screenshots\Knips");
@@ -566,13 +578,14 @@ mod tests {
         // leerer Ablageordner = Standard; unveränderter Ordner wird nicht erneut geprüft
         assert!(next.patched(&json!({ "saveFolder": "" }), all).is_ok());
         // nicht erlaubte Felder (Kürzel, interne Merker, Nutzungsstatistik, Unbekanntes)
-        for key in ["hotkeys", "didFirstLaunch", "askedShortcutTakeover", "tookSnippingKey", "settingsVersion", "editor", "telemetryConsent", "telemetryInstallId", "unbekannt"] {
+        for key in ["hotkeys", "didFirstLaunch", "askedShortcutTakeover", "tookSnippingKey", "updateLastCheck", "settingsVersion", "editor", "telemetryConsent", "telemetryInstallId", "unbekannt"] {
             assert!(s.patched(&json!({ key: true }), all).is_err(), "{key}");
         }
         // falsche Typen, unbekannte Auswahlwerte, Bereiche, kein Objekt
         for bad in [
             json!({ "playSound": "ja" }),
             json!({ "hideFromScreenSharing": 1 }),
+            json!({ "autoUpdate": "nie" }),
             json!({ "redactStyle": "schwarz" }),
             json!({ "imageFormat": "bmp" }),
             json!({ "autoRedactKinds": ["email", "passwort"] }),
@@ -593,7 +606,7 @@ mod tests {
         }
         // Editoren dürfen nur den Zensurstil ändern
         assert_eq!(s.patched(&json!({ "redactStyle": "pixelate" }), &EDITOR_WINDOW_FIELDS).unwrap().redact_style, RedactStyle::Pixelate);
-        for key in ["linkCaptureWithoutConfirm", "hideFromScreenSharing", "saveFolder", "launchAtLogin"] {
+        for key in ["linkCaptureWithoutConfirm", "hideFromScreenSharing", "saveFolder", "launchAtLogin", "autoUpdate"] {
             assert!(s.patched(&json!({ key: true }), &EDITOR_WINDOW_FIELDS).is_err(), "{key}");
         }
         assert!(s.patched(&json!({ "playSound": false }), &[]).is_err());

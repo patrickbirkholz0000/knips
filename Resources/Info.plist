@@ -49,5 +49,20 @@
 	<string>Knips nimmt bei Bildschirmaufnahmen auf Wunsch deinen Kommentar über das Mikrofon auf.</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Knips braucht Zugriff auf den Bildschirm, um Screenshots und Bildschirmaufnahmen zu machen. Deine Aufnahmen bleiben auf deinem Mac.</string>
+	<!-- Automatische Updates (Sparkle). Die Prüfung plant Knips selbst (Support/Updates.swift), daher
+	     SUEnableAutomaticChecks = false; Laden im Hintergrund bleibt erlaubt. Jede Version ist EdDSA-signiert und
+	     wird vor dem Entpacken geprüft. Kein NSAppTransportSecurity: Der Feed ist HTTPS. -->
+	<key>SUFeedURL</key>
+	<string>https://github.com/patrickbirkholz0000/knips/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>Uex5sCqo1M330seuED+IwciGZVR4x6h+5evS+GK2P8E=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
+	<key>SUAllowsAutomaticUpdates</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>

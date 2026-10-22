@@ -2,7 +2,7 @@
 // Bereiche ergänzen eigene Attrappen in ihrer mock.ts über registerMock.
 
 import { inTauri, mockEmit, registerMock } from "./ipc";
-import type { Bootstrap, CaptureItem, Settings } from "./types";
+import type { Bootstrap, CaptureItem, Settings, UpdateStatus } from "./types";
 
 export const mockSettings: Settings = {
   saveFolder: "",
@@ -38,11 +38,25 @@ export const mockSettings: Settings = {
   linkCaptureWithoutConfirm: false,
   hideFromScreenSharing: false,
   appearance: "system",
+  autoUpdate: true,
   editor: { tool: null, color: null, size: null, lastFrameStyle: null },
   didFirstLaunch: true,
   askedShortcutTakeover: true,
   tookSnippingKey: false,
+  updateLastCheck: Math.floor(Date.UTC(2026, 9, 12, 9, 41) / 1000),
   settingsVersion: 1,
+};
+
+// Zum Ansehen: „update“ in der Adresse = Version 1.0.2 liegt bereit, „updatefehler“ = letzte Suche gescheitert,
+// „updateaus“ = Fassung ohne Aktualisierung (Entwickler-Build).
+const href = globalThis.location?.href ?? "";
+export const mockUpdate: UpdateStatus = {
+  available: !/updateaus/.test(href),
+  phase: /update(?!fehler|aus)/.test(href) ? "ready" : "idle",
+  version: /update(?!fehler|aus)/.test(href) ? "1.0.2" : null,
+  lastCheck: mockSettings.updateLastCheck,
+  result: /updatefehler/.test(href) ? "error" : /update(?!aus)/.test(href) ? "ready" : "current",
+  error: /updatefehler/.test(href) ? "GitHub ist gerade nicht erreichbar." : null,
 };
 
 export const mockBootstrap: Bootstrap = {
@@ -70,6 +84,7 @@ export const mockBootstrap: Bootstrap = {
   telemetryConsent: null,
   // Zum Ansehen wie vor Windows 10 2004: „oldwin“ in der Adresse.
   captureExclusionSupported: !/oldwin/.test(globalThis.location?.href ?? ""),
+  update: mockUpdate,
 };
 
 const now = Date.UTC(2026, 9, 12, 14, 3, 27);
@@ -101,6 +116,10 @@ if (!inTauri) {
     mockEmit("bootstrap-changed", { ...mockBootstrap, settings, telemetryConsent });
   });
   registerMock("telemetry_count", () => {});
+  registerMock("update_check", () => {});
+  registerMock("update_install", () => {
+    throw "Erst die offenen Editoren schließen.";
+  });
   registerMock("link_confirm_shown", () => true);
   registerMock("link_confirm_decide", () => true);
   registerMock("set_settings", ({ patch }) => {

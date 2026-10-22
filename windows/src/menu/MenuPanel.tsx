@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
-  AppWindow, ArrowRight, BoxSelect, CircleDot, CircleStop, FileDown, Images, Monitor, Pin, Play, RotateCcw, ScanText,
+  AppWindow, ArrowDownToLine, ArrowRight, BoxSelect, CircleDot, CircleStop, FileDown, Images, Monitor, Pin, Play, RotateCcw, ScanText,
 } from "lucide-react";
 import { api, events } from "../shared/ipc";
 import { useBootstrap } from "../shared/hooks";
@@ -20,6 +20,8 @@ export default function MenuPanel(_: { params: string[]; query: URLSearchParams 
   const rec = useRecordingState();
   const recording = rec.phase === "recording" || rec.phase === "countdown";
   const [recent, setRecent] = useState<CaptureItem[]>([]);
+  // Warum „Neu starten und aktualisieren“ gerade nicht geht (Aufnahme, Speichern, offene Editoren).
+  const [updateNote, setUpdateNote] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   // Zuletzt-Liste beim Öffnen und bei Änderungen neu laden.
@@ -27,7 +29,13 @@ export default function MenuPanel(_: { params: string[]; query: URLSearchParams 
     let alive = true;
     const load = () => api.listItems().then((i) => alive && setRecent((i ?? []).slice(0, 4)));
     load();
-    const offs = [events.menuOpened(load), events.itemsChanged((i) => alive && setRecent(i.slice(0, 4)))];
+    const offs = [
+      events.menuOpened(() => {
+        load();
+        setUpdateNote(null);
+      }),
+      events.itemsChanged((i) => alive && setRecent(i.slice(0, 4))),
+    ];
     return () => {
       alive = false;
       offs.forEach((o) => o.then((f) => f()));
@@ -70,6 +78,13 @@ export default function MenuPanel(_: { params: string[]; query: URLSearchParams 
   const perform = (a: HotkeyAction) => () => api.perform(a);
   const ic = { size: 15, strokeWidth: 1.8 };
   const areaKey = label("captureArea");
+  // Geladenes Update: dezenter Hinweis über dem Fuß (nicht während eines Videos).
+  const update = boot?.update;
+  const showUpdate = !!update?.version && (update.phase === "ready" || update.phase === "installing") && !recording;
+  const installUpdate = () => {
+    setUpdateNote(null);
+    api.updateInstall().catch((e) => setUpdateNote(String(e)));
+  };
 
   return (
     <div className="mp" ref={ref}>
@@ -143,6 +158,25 @@ export default function MenuPanel(_: { params: string[]; query: URLSearchParams 
             </div>
           </div>
         </>
+      )}
+
+      {showUpdate && (
+        <div className="mp-update" role="status" title="Sonst wird es beim Beenden installiert.">
+          <span className="mp-update-ico">
+            <ArrowDownToLine size={15} strokeWidth={2} />
+          </span>
+          <span className="mp-update-text">
+            <span className="mp-update-title">Version {update!.version} ist bereit</span>
+            {update!.phase === "installing" ? (
+              <span className="mp-update-note">Wird installiert …</span>
+            ) : (
+              <button className="mp-update-btn" data-act="update-install" onClick={installUpdate}>
+                Neu starten und aktualisieren
+              </button>
+            )}
+            {updateNote && <span className="mp-update-note">{updateNote}</span>}
+          </span>
+        </div>
       )}
 
       <div className="mp-divider" />

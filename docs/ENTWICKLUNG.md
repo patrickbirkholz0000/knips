@@ -28,6 +28,13 @@ und den Defaults).
 Zwischenzertifikat WWDR G3 im Schlüsselbund liegen). Damit bleibt die Freigabe „Bildschirm- &
 Systemaudioaufnahme“ über Updates hinweg erhalten. Ad hoc signiert müsste sie nach jedem Build neu erteilt werden.
 
+**Sparkle** (automatische Updates, MIT, `Package.swift` mit fester Version): `build.sh` legt `Sparkle.framework` aus
+dem SwiftPM-Build nach `Contents/Frameworks` (rpath `@executable_path/../Frameworks` in `Package.swift`), ohne
+XPC-Dienste (Knips ist nicht sandboxed), Header und Module, dazu `Resources/Sparkle-LICENSE.txt`. Signiert wird von
+innen nach außen, ohne `--deep`: `Autoupdate`, `Updater.app`, Framework (Hardened Runtime, Zeitstempel wie die App,
+ohne die Entitlements von Knips), dann die App. Das Universal-Framework kommt fertig aus Sparkles XCFramework.
+`swift build` allein ergibt ein Programm, das nur im Bundle startet.
+
 ## Prüfen ohne den Bildschirm zu übernehmen
 
 `build/Knips.app/Contents/MacOS/Knips --selftest <test> <ordner>` (läuft isoliert in `<ordner>/sandbox`; Einstellungen in der
@@ -43,13 +50,15 @@ Domäne `de.birkgroup.knips.sandbox` (`UserDefaults.knips`), die jeder Test zu B
 | `live [hell\|dunkel\|beide]` | Bild- und Video-Editor als echtes Fenster, 1 pt in der Bildschirmecke, per SCK fotografiert — je Darstellung breit, schmal (`EditorChrome.minWidth` 860 pt), Werkzeuge, Rahmen (+ Popover), Zuschneiden; einmal Zoom, schlaue Balken, ⌘⏎/⌘Z genau einmal, Klicks in Höhe der Titelleiste landen in der SwiftUI-Fläche (hitTest) |
 | `settings [bereich,…]` | Einstellungsfenster je Bereich hell und dunkel (`einstellungen-<bereich>[-dunkel].png`), Start mit simuliertem Bereit-Check (`start-offen*.png` drei Schritte offen, `start-bereit*.png`) und Zählung der offenen Schritte, Darstellung System/Hell/Dunkel → `NSApp.appearance`, Kürzel-Eingabe (Hinweis während der Aufnahme; was aus einem Tastendruck wird: ⇧A, A, ↖ (`kVK_Home`), F5, ⌦, ⌘⌫ werden Kürzel, Esc bricht ab, ⌫/⇧⌫ entfernen; ↖, ⇧A und Esc als echte Eingabe über den Tastatur-Monitor, ohne Kürzel in der Sandbox; gespeichert ↖ und ⇧A mit Hinweis, `einstellungen-shortcuts-einzeltaste*.png`), Eintippen der Anzeigedauer, Datenschutz mit Statistik an/aus und „In Bildschirmübertragungen verbergen“ (alle Fenster `sharingType .none`, auch neue; ScreenCaptureKit bekommt das Fenster dann leer; aus → `.readOnly`); Dialoge Zustimmung (⏎ entscheidet nichts), Freigabe, Kürzel-Übernahme (`zustimmung*.png`, `freigabe*.png`, `kuerzel-uebernehmen*.png`, nur gezeigt — übernimmt nie) |
 | `links` | Rückfrage vor knips://fullscreen/last/record immer (auch mit fremdem `linkCaptureWithoutConfirm` in den Defaults), Esc/Schließen/Abbrechen = nichts, ⏎ erst nach der Schutzzeit (beginnt bei jedem Zeigen neu), weitere Links verfallen ohne das Fenster nach vorn zu holen, Absender in der Rückfrage (echtes GURL-Apple-Event an sich selbst → „Knips“), Stoppen und eigener Test-Kanal direkt, Link-Aufnahmen mit Quelle `.link`, Rückfrage „Text kopieren?“, Overlay per Link: ⏎ und Klick erst nach der Schutzzeit (nur Modell und Ansicht, nie auf dem Bildschirm). Aufnahmen sind durch eine Liste ersetzt, nimmt nie auf. Bilder hell und dunkel: `link-rueckfrage-*.png`, `link-text-kopieren*.png`, `link-schutzzeit.png` (Primärknopf noch blass, Fortschritt darunter), `link-einstellungen-datenschutz.png` |
+| `update [<feed-ordner>]` | Automatische Updates: Sperren (Selbsttest, Sandbox, CI, eigener Build ohne `KNIPS_UPDATE_FEED`; im Release wirkt `KNIPS_UPDATE_FEED` nicht), Zeitplan (erste Prüfung nach 5 min, höchstens alle 24 h), Einstellung bleibt gespeichert, Info.plist (Feed, `SUPublicEDKey`, Prüfung vor dem Entpacken, keine ATS-Ausnahme), Sparkle im Bundle ohne XPC-Dienste, alle Delegate-Methoden vorhanden, Texte. Ende zu Ende nur über `scripts/update-test.sh` (siehe „Updates“) |
+| `update-installed <ordner> <app> <build>` | Beobachter für `scripts/update-test.sh`: keine Fenster der Testkopie und ihrer Helfer, Build N+1 nach dem Beenden an derselben Stelle, Installer beendet, kein Neustart, Code-Signatur streng gültig |
 | `telemetry [live]` | Nutzungsstatistik: Sperren (Selbsttest/Sandbox/CI/Entwickler-Build), Payload (genau die Vertragsfelder, Allowlist, Deckel), Zustimmung → Zählen → Senden an lokalen Server (127.0.0.1) → Abmelden; Zähler bleiben nach Fehlern. `live` schickt zusätzlich einen echten Ping (nur mit `KNIPS_TELEMETRY=1`, Kanal `dev`) |
 | `output` | Ausgabe 1× + PNG/JPEG, Rahmen, Speichern aus dem Editor, „Text kopieren“ ohne Zensiertes (Karte; Editor mit Zuschnitt und angeschnittenem Schlüssel), Zwischenablage nach Zensieren + „Fertig“ = zensierte Fassung, fremder Inhalt bleibt, Link-Aufnahme ohne Zwischenablage, `knips://pin` lädt keine http-Adresse (private `NSPasteboard` über `Clipboard.testPasteboard`) |
 | `track` | Mitlaufender Zensurbalken in scrollendem Video (Texterkennung prüft jeden Zeitpunkt) |
 | `stitch` | Scroll-Screenshot: Ausschnitte → exakt das Originalbild (Pixelvergleich); nur neue Zeilen im Speicher, Obergrenze, Anhängen und Zusammensetzen gleichzeitig, Nachzügler einer beendeten Aufnahme landen nie in der nächsten |
 | `robust` | Ablage und Abläufe ohne Bildschirm: JPEG über 65 535 px → PNG, Ausweichordner bei nicht erreichbarer Ablage, Schreibfehler werden gemeldet, Aufräumen (Frist, `$TMPDIR/Knips`), Beenden wartet auf Schreibvorgänge; Aufnahme-Zustände mit einer Attrappe (belegt ab dem Start, Abbruch während Start/Countdown, Writer-Fehler, Beenden während der Aufnahme) |
 | `ocr-bench` | Tempo und Trefferzahl der Texterkennung auf Testbildern im Speicher (4K/5K 2× und 1× textreich, hohe/breite Bilder, ohne Text) |
-| `menu` / `history` | Menü-Panel und Verlauf-Fenster (Verlauf leer und mit Video, Maus über der neuesten Karte, hell und dunkel; leerer Filter) |
+| `menu` / `history` | Menü-Panel (auch mit Hinweis auf ein Update: `menu-update.png`, `menu-update-verfuegbar.png`) und Verlauf-Fenster (Verlauf leer und mit Video, Maus über der neuesten Karte, hell und dunkel; leerer Filter) |
 | `chrome` | Schwebeflächen ohne Bildschirm (Aufnahme-Attrappe): Aufnahme-Leiste, Countdown, Scroll-Leiste, Hinweise (HUD), Pin-Steuerung, Rahmen, Hinweiszeilen des Overlays, Menü während eines Videos — je über heller App und dunklem Grund |
 | `perf` / `record-bench` | Zeiten (Overlay, Speichern, Texterkennung) und Video-Varianten |
 | `video` | Video-Zensur mit Zeitbereich, Kürzen, MP4- und GIF-Export, Auto-Zensur im Video |
@@ -107,6 +116,55 @@ alle 6 h), 10 s Zeitlimit; Fehler → Zähler bleiben. Zustand in den UserDefaul
 `telemetryCounts`, `telemetryLastSent` — in der Test-Sandbox in der Domäne `de.birkgroup.knips.sandbox`. Nie gefragt,
 gezählt oder gesendet in Selbsttests, Sandbox (`KNIPS_TEST_DIR`) und CI. Eigene Builds (`KNIPS_DEV`) senden nur mit
 `KNIPS_TELEMETRY=1` (Kanal `dev`); `KNIPS_TELEMETRY_URL` ersetzt den Endpunkt — nur in eigenen Builds, im Release wirkungslos.
+
+## Updates (Sparkle)
+
+Feed `https://github.com/patrickbirkholz0000/knips/releases/latest/download/appcast.xml` (`SUFeedURL`), je Release ein
+eigenes `appcast.xml` (`scripts/appcast.sh`, aufgerufen von `scripts/release.sh`); Entwürfe zählen nicht als `latest`.
+Jedes DMG ist EdDSA-signiert (`SUPublicEDKey`), Sparkle prüft die Signatur vor dem Entpacken
+(`SUVerifyUpdateBeforeExtraction`) und danach die Code-Signatur der neuen App. Schlüssel und Release: `RELEASING.md`,
+Einrichtung 5.
+
+Ablauf (`Support/Updates.swift`): Knips plant selbst (`SUEnableAutomaticChecks` = false): erste Prüfung 5 min nach dem
+Start, dann stündlich nachsehen, ob die letzte Prüfung (`SPUUpdater.lastUpdateCheckDate`) 24 h her ist. Gefunden wird
+im Hintergrund geladen (`SUAutomaticallyUpdate`), geprüft und für das Beenden vorbereitet; Sparkle installiert, sobald
+Knips beendet ist — `applicationShouldTerminate` wartet vorher auf `QuitGuard` (Aufnahme, Scroll-Screenshot,
+Schreibvorgänge). Sofort geht es über „Neu starten und aktualisieren“ (`immediateInstallationBlock`), gesperrt solange
+`QuitGuard.needsTime`, zur Sicherheit verschiebt `shouldPostponeRelaunchForUpdate` den Neustart. Einstellung
+„Automatisch aktualisieren“ (`updateAutomatically`, Standard an): aus = keine Prüfung im Hintergrund, „Jetzt nach
+Updates suchen“ geht weiter und lädt ein gefundenes Update gleich.
+
+Oberfläche: Sparkles Fenster erscheinen nie. `UpdateDriver` (eigener `SPUUserDriver`) meldet jeden Schritt an
+`Updates` (`UpdateState`: Suche, Laden mit Fortschritt, Prüfen, verfügbar, bereit, Installieren); angezeigt wird es auf
+„Über Knips“ (Abschnitt „Updates“ mit Knopf je Zustand, Version, letzte Prüfung, Sparkle mit Lizenz) und, sobald es
+etwas zu tun gibt, als leiser Hinweis im Menü-Panel über dem Fuß („Knips 1.0.2 ist bereit“, Knopf „Neu starten“).
+Begründung: Knips ist eine Menüleisten-App ohne Dock-Symbol — ein aufspringendes Fenster bei einer Prüfung im
+Hintergrund stört mitten in fremden Apps, und Sparkles Standardfenster passen nicht zur Markensprache. Ein eigener
+Treiber für beide Wege (automatisch und von Hand) hält alles an einer Stelle und lässt sich ohne Fenster testen.
+
+Datenschutz: Die Anfragen tragen nur `User-Agent: Knips` und `Accept-Language: *` (keine Version, keine Sprache), kein
+Systemprofil, keine Cookies (`HTTPCookieStorage.shared.cookieAcceptPolicy = .never`; GitHub setzt beim Weiterleiten
+welche). GitHub sieht die IP-Adresse. Sparkle merkt sich `SULastCheckTime` u. a. in den Defaults von Knips und lädt nach
+`~/Library/Caches/de.birkgroup.knips/org.sparkle-project.Sparkle`.
+
+Sperren: nie in Selbsttests, Sandbox (`KNIPS_TEST_DIR`) und CI; eigene Builds (`KNIPS_DEV`) nur mit
+`KNIPS_UPDATE_FEED=<url>` (Testkanal: HTTPS oder HTTP auf 127.0.0.1/localhost), sonst ersetzte sich ein Entwickler-Build
+durch das Release. Im Release wirkt `KNIPS_UPDATE_FEED` nicht. Gesperrt entsteht kein `SPUUpdater`. Für HTTP auf
+diesem Mac braucht es keine ATS-Ausnahme; die Info.plist hat keine.
+
+**Ende-zu-Ende-Test** `scripts/update-test.sh [<ausgabeordner>]` (`SKIP_BUILD=1` nimmt `build/Knips.app`, `KEEP=1` lässt
+den Temp-Ordner stehen): zwei Testkopien von `build/Knips.app` in einem Temp-Ordner, alt (Build N) und neu (Build N+1),
+mit der Kennung `de.birkgroup.knips.aktualisierungstest` (eigene Defaults, Caches, Installer — nie die echte App oder
+`de.birkgroup.knips`) und einem Wegwerf-Schlüssel (`scripts/update-signature.swift new-key`; der echte Schlüssel bleibt
+unberührt). Die neue kommt wie bei `package.sh` in ein DMG, `sign_update` signiert es, `update-signature.swift verify`
+prüft gegen die alte App, `appcast.sh` schreibt die Feeds (richtig, falsch signiert, gleiche, ältere Version). Die alte
+Fassung läuft mit `--selftest update <ordner> <feed>`: lokaler Server, dann Gegenproben — Einstellung aus (keine
+Anfrage), gleiche und ältere Version (nichts geladen, höchstens eine Prüfung in 24 h), falsche Signatur im Hintergrund
+und von Hand (geladen, abgelehnt, Hinweis in den Einstellungen) — und zuletzt das richtige Update: im Hintergrund
+geladen, geprüft, bereit; Anfragen ohne Version, Sprache und Cookies. Dann beendet sie sich. Nebenher wartet
+`--selftest update-installed` aus `build/Knips.app`, bis Build N+1 an derselben Stelle liegt: kein Fenster der Testkopie
+oder von Sparkle während des ganzen Laufs, kein Neustart, Installer beendet, Code-Signatur streng gültig; zum Schluss
+`codesign --verify --deep --strict`.
 
 ## Bedienung
 
@@ -210,3 +268,5 @@ Overlay bricht ab, Scroll-Leiste beendet mit Speichern), volle Platte während e
 (Writer-Fehler → Abbruch mit Meldung), Beenden über das Menü während einer echten Aufnahme.
 Editoren: Hover auf Werkzeugen und Knöpfen, Fenster ziehen an freier Stelle der oberen Leiste, Vollbild (die leere
 `NSToolbar`, die die Ampel-Knöpfe mittig neben die Leiste setzt, wird dort ausgeblendet).
+Updates: „Neu starten und aktualisieren“ mit echtem Neustart (der Ende-zu-Ende-Test installiert beim Beenden, ein
+Neustart öffnete die Testkopie sichtbar), und ein echtes Update über GitHub nach dem ersten Release mit Updater.

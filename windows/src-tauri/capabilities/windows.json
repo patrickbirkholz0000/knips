@@ -29,7 +29,7 @@
     },
     {
       "identifier": "settings",
-      "description": "Einstellungen: Einstellungen der Oberfläche, Kürzel, Druck-Taste, Ablage, Zustimmung zur Statistik, erlaubte Webseiten.",
+      "description": "Einstellungen: Einstellungen der Oberfläche, Kürzel, Druck-Taste, Ablage, Zustimmung zur Statistik, Aktualisierung, erlaubte Webseiten.",
       "windows": [
         "settings"
       ],
@@ -49,12 +49,14 @@
         "allow-save-folder-ok",
         "allow-purge-originals",
         "allow-open-url",
-        "allow-telemetry-set-consent"
+        "allow-telemetry-set-consent",
+        "allow-update-check",
+        "allow-update-install"
       ]
     },
     {
       "identifier": "menu",
-      "description": "Menü-Panel: Aufnahmen starten, Fenster öffnen, zuletzt Aufgenommenes, Beenden.",
+      "description": "Menü-Panel: Aufnahmen starten, Fenster öffnen, zuletzt Aufgenommenes, geladenes Update installieren, Beenden.",
       "windows": [
         "menu"
       ],
@@ -70,7 +72,8 @@
         "allow-open-history",
         "allow-menu-resize",
         "allow-menu-close",
-        "allow-quit-app"
+        "allow-quit-app",
+        "allow-update-install"
       ]
     },
     {

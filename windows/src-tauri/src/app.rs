@@ -19,6 +19,7 @@ use crate::scroll::Scroll;
 use crate::settings::SettingsStore;
 use crate::store::Store;
 use crate::telemetry::Telemetry;
+use crate::update::{UpdateStatus, Updates};
 use crate::video::VideoJobs;
 use crate::{hotkeys, paths, tray, wm};
 
@@ -35,6 +36,8 @@ pub struct Knips {
     pub editors: Editors,
     pub video: VideoJobs,
     pub telemetry: Arc<Telemetry>,
+    /// Automatische Aktualisierung (`update.rs`).
+    pub updates: Arc<Updates>,
     /// knips://-Befehle mit Rückfrage vor sofortigen Aufnahmen.
     pub links: Links,
     /// Kürzel, die nicht registriert werden konnten.
@@ -80,6 +83,8 @@ pub struct Bootstrap {
     /// Windows kann Fenster aus Aufnahmen ausschließen (ab Windows 10 2004) — sonst wirkt
     /// „In Bildschirmübertragungen verbergen“ nicht.
     pub capture_exclusion_supported: bool,
+    /// Automatische Aktualisierung: Stand der Suche, geladene Version.
+    pub update: UpdateStatus,
 }
 
 #[derive(Serialize, Clone)]
@@ -113,6 +118,7 @@ impl Knips {
             media_available: self.media_available.get().copied().unwrap_or(true),
             telemetry_consent: self.telemetry.consent(),
             capture_exclusion_supported: knips_platform::capture::exclusion_supported(),
+            update: self.updates.status(),
             settings,
         }
     }
@@ -206,6 +212,7 @@ pub fn setup(app: &AppHandle) -> anyhow::Result<()> {
     let settings = Arc::new(SettingsStore::load());
     let store = Arc::new(Store::new(settings.clone()));
     let telemetry = Arc::new(Telemetry::from_env(settings.clone(), &app.package_info().version.to_string()));
+    let updates = Arc::new(Updates::from_env(settings.clone()));
     let state = Arc::new(Knips {
         app: app.clone(),
         settings: settings.clone(),
@@ -219,6 +226,7 @@ pub fn setup(app: &AppHandle) -> anyhow::Result<()> {
         editors: Editors::default(),
         video: VideoJobs::default(),
         telemetry: telemetry.clone(),
+        updates: updates.clone(),
         links: Links::default(),
         hotkey_failures: Mutex::new(vec![]),
         asset_files: Mutex::new(Default::default()),
@@ -296,7 +304,8 @@ pub fn setup(app: &AppHandle) -> anyhow::Result<()> {
     });
     telemetry.count("app_launch");
     telemetry.start();
-    log::info!("Knips gestartet ({})", if knips_platform::IS_REAL { "Windows" } else { "Attrappe" });
+    updates.start();
+    log::info!("Knips {} gestartet ({})", app.package_info().version, if knips_platform::IS_REAL { "Windows" } else { "Attrappe" });
     Ok(())
 }
 
@@ -372,7 +381,7 @@ pub fn handle_url(url: &str) {
     #[cfg(feature = "dev")]
     {
         let command = url.trim_start_matches("knips://").trim_matches('/').split(['/', '?']).next().unwrap_or("");
-        if crate::selftest::handle_debug_command(command) {
+        if crate::update::handle_test_command(&k.app, command) || crate::selftest::handle_debug_command(command) {
             return;
         }
     }

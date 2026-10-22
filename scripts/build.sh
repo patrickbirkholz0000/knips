@@ -51,19 +51,21 @@ elif [[ -z "$IDENTITY" ]]; then
   [[ -n "$IDENTITY" ]] || IDENTITY=$(awk '/Apple Development/ {print $2}' <<<"$IDENTITIES" | tail -1)
 fi
 
-SIGN=(--force --options runtime --entitlements "$ENTITLEMENTS" --identifier "$BUNDLE_ID")
 if [[ -z "$IDENTITY" || "$IDENTITY" == "-" ]]; then
   echo "⚠︎ Keine Signatur-Identität gefunden — ad hoc signiert (Freigabe muss nach jedem Update neu erteilt werden)."
   IDENTITY="-"
   NAME="ad hoc"
-  SIGN+=(--timestamp=none)
+  TS=--timestamp=none
 else
   NAME=$(identity_name "$IDENTITY")
   TIMESTAMP=0
   [[ "$NAME" == "Developer ID Application: "* ]] && TIMESTAMP=1
   TIMESTAMP=${KNIPS_TIMESTAMP:-$TIMESTAMP}
-  if [[ "$TIMESTAMP" == "1" ]]; then SIGN+=(--timestamp); else SIGN+=(--timestamp=none); fi
+  if [[ "$TIMESTAMP" == "1" ]]; then TS=--timestamp; else TS=--timestamp=none; fi
 fi
+SIGN=(--force --options runtime --entitlements "$ENTITLEMENTS" --identifier "$BUNDLE_ID" "$TS")
+# Verschachtelter Code (Sparkle) behält seine eigenen Kennungen und bekommt keine Entitlements von Knips.
+SIGN_NESTED=(--force --options runtime "$TS")
 
 # Eigene Builds enthalten Selbsttests und Test-Befehle (KNIPS_DEV); RELEASE=1 lässt sie weg (Weitergabe).
 SWIFT_ARGS=(-c release)
@@ -103,10 +105,25 @@ ditto Resources/Fonts "$APP/Contents/Resources/Fonts"
 plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$BUILD_NUMBER" "$APP/Contents/Info.plist"
 
+# Sparkle (automatische Updates, MIT; Lizenztext daneben) nach Contents/Frameworks — der rpath
+# @executable_path/../Frameworks steht in Package.swift. Knips ist nicht sandboxed: Die XPC-Dienste braucht Sparkle
+# dann nicht (SUEnableInstallerLauncherService & Co. sind aus), Header und Module braucht zur Laufzeit niemand.
+SPARKLE_SRC="$(dirname "$BIN")/Sparkle.framework"
+[[ -d "$SPARKLE_SRC" ]] || { echo "✗ Sparkle.framework fehlt: $SPARKLE_SRC" >&2; exit 1; }
+FW="$APP/Contents/Frameworks/Sparkle.framework"
+mkdir -p "$APP/Contents/Frameworks"
+ditto "$SPARKLE_SRC" "$FW"
+for part in XPCServices Headers PrivateHeaders Modules; do rm -rf "${FW:?}/$part" "${FW:?}/Versions/B/$part"; done
+cp Resources/Sparkle-LICENSE.txt "$APP/Contents/Resources/Sparkle-LICENSE.txt"
+
 # Weitergabe-Build: Debug-Symbole entfernen (wie Xcode bei Release-Archiven).
 if [[ "${RELEASE:-0}" == "1" ]]; then strip "$APP/Contents/MacOS/Knips"; fi
 
 echo "→ Signiere ($IDENTITY — $NAME)…"
+# Von innen nach außen, ohne --deep: erst Sparkles Programme, dann das Framework, zuletzt die App.
+codesign "${SIGN_NESTED[@]}" --sign "$IDENTITY" "$FW/Versions/B/Autoupdate"
+codesign "${SIGN_NESTED[@]}" --sign "$IDENTITY" "$FW/Versions/B/Updater.app"
+codesign "${SIGN_NESTED[@]}" --sign "$IDENTITY" "$FW"
 codesign "${SIGN[@]}" --sign "$IDENTITY" "$APP"
-codesign --verify --strict "$APP"
+codesign --verify --deep --strict "$APP"
 echo "✓ $APP ($VERSION, Build $BUILD_NUMBER)"

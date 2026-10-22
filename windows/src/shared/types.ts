@@ -179,11 +179,32 @@ export interface Settings {
   hideFromScreenSharing: boolean;
   /** Hell/Dunkel aller Fenster (docs/design.md); Menü, Pillen und Leisten bleiben immer dunkel. */
   appearance: Appearance;
+  /** Einmal am Tag bei GitHub nach einer neuen Version fragen und sie im Hintergrund laden (Standard: an). */
+  autoUpdate: boolean;
   editor: EditorPrefs;
   didFirstLaunch: boolean;
   askedShortcutTakeover: boolean;
   tookSnippingKey: boolean;
+  /** Letzte erfolgreiche Suche nach Updates (Unix-Sekunden); ändert nur Rust. */
+  updateLastCheck: number | null;
   settingsVersion: number;
+}
+
+export type UpdatePhase = "idle" | "checking" | "downloading" | "ready" | "installing";
+
+/** Automatische Aktualisierung (src-tauri/src/update.rs). */
+export interface UpdateStatus {
+  /** false: Diese Fassung sucht nie nach Updates (Entwickler-Build ohne Testkanal, Test-Sandbox, CI). */
+  available: boolean;
+  phase: UpdatePhase;
+  /** Geladene, geprüfte neue Version (phase "ready"). */
+  version: string | null;
+  /** Letzte erfolgreiche Suche (Unix-Sekunden). */
+  lastCheck: number | null;
+  /** Ergebnis der letzten Suche in dieser Sitzung. */
+  result: "current" | "ready" | "error" | null;
+  /** Kurzer Grund, wenn die letzte Suche oder Installation nicht geklappt hat. */
+  error: string | null;
 }
 
 export interface VideoInfo {
@@ -226,6 +247,8 @@ export interface Bootstrap {
   telemetryConsent: boolean | null;
   /** Windows kann Fenster aus Aufnahmen ausschließen (ab Windows 10 2004) — sonst wirkt „In Bildschirmübertragungen verbergen“ nicht. */
   captureExclusionSupported: boolean;
+  /** Automatische Aktualisierung: Stand der Suche, geladene Version. */
+  update: UpdateStatus;
 }
 
 export type RecordingPhase = "idle" | "countdown" | "recording" | "finishing";

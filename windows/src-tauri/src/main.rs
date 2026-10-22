@@ -26,10 +26,13 @@ mod selftest_capture;
 mod selftest_hotkeys;
 #[cfg(feature = "dev")]
 mod selftest_media;
+#[cfg(feature = "dev")]
+mod selftest_update;
 mod settings;
 mod store;
 mod telemetry;
 mod tray;
+mod update;
 mod video;
 mod wm;
 
@@ -53,6 +56,10 @@ fn run(args: Vec<String>) {
     // im Vordergrund ist: Kürzel festlegen nahm keine Taste an, Hook-Kürzel (Druck, Win-Kombinationen) blieben über
     // eigenen Fenstern stumm. Selbsttest `hotkeyrecord`.
     let mut builder = tauri::Builder::default().device_event_filter(tauri::DeviceEventFilter::Always);
+    #[allow(unused_mut)]
+    let mut context = tauri::generate_context!();
+    #[cfg(feature = "dev")]
+    update::allow_test_feed(&mut context);
     // Zweiter Start (z. B. knips://area aus Stream Deck) → an die laufende Instanz, genau einmal.
     if paths::test_root().is_none() {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| app::second_instance(app, &argv)));
@@ -68,6 +75,8 @@ fn run(args: Vec<String>) {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_deep_link::init())
+        // Ohne Rechte für die Fenster: Suchen und Installieren steuert `update.rs`.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
             app::setup(app.handle())?;
             {
@@ -147,6 +156,8 @@ fn run(args: Vec<String>) {
             commands::video_cancel,
             commands::telemetry_set_consent,
             commands::telemetry_count,
+            commands::update_check,
+            commands::update_install,
             commands::link_confirm_shown,
             commands::link_confirm_decide,
             #[cfg(feature = "dev")]
@@ -154,7 +165,7 @@ fn run(args: Vec<String>) {
             #[cfg(feature = "dev")]
             selftest::selftest_probe,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("Knips konnte nicht starten");
 
     app.run(|handle, event| match event {

@@ -11,7 +11,7 @@ import Vision
 @MainActor enum SelfTest {
     static func run(_ args: [String]) -> Int32 {
         guard args.count >= 2 else {
-            print("Aufruf: --selftest render|detect|ui|selection|settings|links|telemetry|video|capture|record <ordner>")
+            print("Aufruf: --selftest render|detect|ui|selection|settings|links|telemetry|update|video|capture|record <ordner>")
             return 2
         }
         let out = URL(fileURLWithPath: args[1], isDirectory: true)
@@ -75,6 +75,15 @@ import Vision
             case "ocr-bench": try ocrBench(out)
             case "robust": try robust(out)
             case "chrome": try runAsync { try await chrome(out) }
+            case "update":
+                let feed = args.count > 2 ? URL(fileURLWithPath: args[2], isDirectory: true) : nil
+                try runAsync { try await update(out, feedDir: feed) }
+            case "update-installed":
+                guard args.count > 3 else {
+                    print("Aufruf: --selftest update-installed <ordner> <Knips.app> <build>")
+                    return 2
+                }
+                try runAsync { try await updateInstalled(out, app: URL(fileURLWithPath: args[2], isDirectory: true), build: args[3]) }
             default:
                 print("Unbekannter Test \(args[0])")
                 return 2
@@ -575,6 +584,18 @@ import Vision
         model.hovered = "full"
         try await windowShot(window, out.appendingPathComponent("menu-hover.png"))
         print("   Panelgröße \(Int(size.width))×\(Int(size.height)), Hover-Flächen: \(model.frames.keys.sorted().joined(separator: ", "))")
+        // Geladenes bzw. gefundenes Update: leiser Hinweis über dem Fuß (nur gezeigt — Sparkle läuft im Selbsttest nie).
+        model.hovered = nil
+        for (name, state) in [("menu-update", UpdateState.ready(version: "1.0.2")), ("menu-update-verfuegbar", .available(version: "1.0.2"))] {
+            Updates.shared.simulate(state)
+            view.layoutSubtreeIfNeeded()
+            let grown = view.fittingSize
+            window.setContentSize(grown)
+            try await windowShot(window, out.appendingPathComponent("\(name).png"))
+            print("   \(name): Panel \(Int(grown.width))×\(Int(grown.height)) (+\(Int(grown.height - size.height)) pt)")
+            if grown.height <= size.height { throw CheckFailed(message: "Hinweis auf das Update fehlt im Menü") }
+        }
+        Updates.shared.simulate(.idle, active: false)
         window.orderOut(nil)
     }
 
@@ -773,6 +794,11 @@ import Vision
         check("Ablageordner der Sandbox erreichbar", Readiness.folderReachable(settings.saveFolder))
         check("nicht anlegbarer Ordner unerreichbar", !Readiness.folderReachable(URL(fileURLWithPath: "/System/Knips-gibt-es-nicht")))
 
+        // Updates wie in der weitergegebenen App (im Selbsttest läuft Sparkle nie, der Zustand ist nur gezeigt).
+        let checkedAt = Calendar.current.date(bySettingHour: 9, minute: 12, second: 0, of: Date()) ?? Date()
+        Updates.shared.simulate(.idle, note: .upToDate, lastCheck: checkedAt)
+        defer { Updates.shared.simulate(.idle, active: false) }
+
         let controller = SettingsWindowController()
         let window = controller.window!
         // Für die Durchsicht ganzer Seiten: KNIPS_TEST_WINDOW_HEIGHT=1400.
@@ -874,6 +900,21 @@ import Vision
                 settings.quickAccessAutoHide = hide
                 settings.quickAccessSeconds = seconds
                 if !wrong.isEmpty { throw CheckFailed(message: "Anzeigedauer falsch übernommen: \(wrong.joined(separator: ", "))") }
+            }
+            if pane == .about {
+                // Zustände der Updates (Abschnitt unter der Versionskarte); höheres Fenster, damit er ganz zu sehen ist.
+                let frame = window.frame
+                window.setContentSize(NSSize(width: SettingsWindowController.size.width, height: 1060))
+                let states: [(String, UpdateState, UpdateNote?)] = [
+                    ("aktuell", .idle, .upToDate), ("laedt", .downloading(version: "1.0.2", progress: 0.37), nil),
+                    ("bereit", .ready(version: "1.0.2"), nil), ("fehler", .idle, .failed(Updates.message(for: URLError(.notConnectedToInternet)))),
+                ]
+                for (name, state, note) in states {
+                    Updates.shared.simulate(state, note: note, lastCheck: checkedAt)
+                    try await windowShots(window, out, "einstellungen-about-update-\(name)")
+                }
+                Updates.shared.simulate(.idle, note: .upToDate, lastCheck: checkedAt)
+                window.setFrame(frame, display: false)
             }
             if pane == .privacy {
                 // Nutzungsstatistik an und aus — in der Sandbox-Domäne, die echte Zustimmung bleibt unberührt.

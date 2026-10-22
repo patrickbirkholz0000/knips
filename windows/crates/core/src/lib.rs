@@ -17,6 +17,7 @@ pub mod stitch;
 pub mod telemetry;
 pub mod textlayout;
 pub mod tracker;
+pub mod update;
 pub mod videodetect;
 
 pub use image::RgbaImage;

@@ -422,9 +422,10 @@ pub fn open_url(url: String) -> Res<()> {
     knips_platform::shell::open_url(&url).map_err(err)
 }
 
+/// Menü → „Beenden“. Liegt ein geladenes Update bereit, installiert Knips es dabei (`update::quit`).
 #[tauri::command]
 pub fn quit_app(app: AppHandle) {
-    app.exit(0);
+    crate::update::quit(&app);
 }
 
 #[tauri::command]
@@ -698,6 +699,21 @@ pub fn telemetry_count(event: String) {
     if matches!(event.as_str(), "censor_manual" | "censor_smart") {
         count(&event);
     }
+}
+
+// ------------------------------------------------------------------ Aktualisierung
+
+/// Einstellungen → „Jetzt nach Updates suchen“: sucht im Hintergrund, Ergebnis über `bootstrap-changed`.
+#[tauri::command]
+pub fn update_check() {
+    knips().updates.request_check();
+}
+
+/// „Neu starten und aktualisieren“ (Menü, Einstellungen). Kommt nur mit einem Grund zurück, warum es gerade nicht
+/// geht — sonst beendet sich Knips, der Installer läuft und startet Knips danach wieder.
+#[tauri::command]
+pub async fn update_install() -> Res<()> {
+    tauri::async_runtime::spawn_blocking(|| knips().updates.install(true)).await.map_err(err)?
 }
 
 // ------------------------------------------------------------------ knips://-Links

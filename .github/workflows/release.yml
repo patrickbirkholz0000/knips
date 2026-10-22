@@ -9,9 +9,13 @@
 #   sign-app        SignPath signiert knips.exe (wartet auf die Freigabe in SignPath)
 #   bundle          baut den Installer neu um die signierte knips.exe (SignPath kann NSIS nicht von innen signieren)
 #   sign-installer  SignPath signiert den Installer (zweite Freigabe)
-#   publish         prüft Signaturen und Prüfsumme, hängt die Dateien an das Release
+#   updater         signiert den endgültigen Installer mit dem Updater-Schlüssel, erzeugt latest.json (Feed der
+#                   automatischen Aktualisierung) und prüft sie mit dem öffentlichen Schlüssel aus tauri.conf.json
+#   publish         prüft Signaturen, Prüfsumme und latest.json, hängt die Dateien an das Release
 # Der API-Token steht nur als Eingabe der SignPath-Action in den beiden Signier-Jobs, die nichts bauen und
-# keinen Code auschecken; GH_TOKEN nur im Schritt, der ans Release hängt. Einrichtung: RELEASING.md.
+# keinen Code auschecken; der Updater-Schlüssel (Secret TAURI_SIGNING_PRIVATE_KEY, ggf. mit …_PASSWORD) nur im
+# Signierschritt des Jobs „updater“, der nichts baut und nichts hochlädt; GH_TOKEN nur im Schritt, der ans Release
+# hängt. Fehlt der Updater-Schlüssel, bricht der Lauf gleich am Anfang ab. Einrichtung: RELEASING.md.
 #
 # Variablen (Settings → Secrets and variables → Actions → Variables): SIGNPATH_ORGANIZATION_ID,
 # SIGNPATH_PROJECT_SLUG (Standard knips), SIGNPATH_SIGNING_POLICY_SLUG (Standard release-signing; enthält der
@@ -63,6 +67,17 @@ jobs:
           # Ganze Historie: die Build-Nummer ist wie auf dem Mac (scripts/build.sh) die Zahl der Commits.
           fetch-depth: 0
           persist-credentials: false
+
+      # Ohne Updater-Schlüssel gäbe es keine latest.json — installierte Fassungen fänden die neue Version nie.
+      # Deshalb vor 20 Minuten Bauen prüfen (nur ob er gesetzt ist; der Schlüssel selbst kommt nie in diesen Job).
+      - name: Updater-Schlüssel eingerichtet?
+        env:
+          HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          if ($env:HAS_UPDATER_KEY -ne 'true') {
+            # In '…': PowerShell läse „ und “ sonst als Anführungszeichen.
+            throw 'Secret TAURI_SIGNING_PRIVATE_KEY fehlt: Ohne den Updater-Schlüssel entsteht keine latest.json, und installierte Fassungen fänden das Update nicht. Einrichtung: RELEASING.md, Abschnitt „Automatische Updates (Windows)“.'
+          }
 
       - name: Version aus dem Tag, Build-Nummer aus der Historie
         id: version
@@ -289,13 +304,70 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  publish:
+  # Updater-Signatur über genau die Datei, die ins Release kommt (unsigniert: aus „windows“, sonst aus
+  # „sign-installer“), und latest.json dazu. Prüft gegen den öffentlichen Schlüssel aus tauri.conf.json des Tags.
+  updater:
     needs: [windows, sign-installer]
     # Unsigniert: direkt nach dem Bauen. Signiert: erst wenn auch der Installer signiert ist.
     if: >-
       !cancelled() && needs.windows.result == 'success' &&
       (needs.windows.outputs.signing == 'true' && needs.sign-installer.result == 'success' ||
        needs.windows.outputs.signing != 'true' && needs.sign-installer.result == 'skipped')
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: windows
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 10
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: windows/pnpm-lock.yaml
+
+      # Für `tauri signer sign` (Tauri-CLI aus dem Lockfile).
+      - name: Abhängigkeiten
+        run: pnpm install --frozen-lockfile
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.windows.outputs.signing == 'true' && 'installer-signed' || 'installer-unsigned' }}
+          path: ${{ runner.temp }}/release
+
+      - name: Updater-Signatur und latest.json
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          VERSION: ${{ needs.windows.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          $exe = Join-Path $env:RUNNER_TEMP "release/Knips_$($env:VERSION)_x64-setup.exe"
+          $url = "https://github.com/$env:REPO/releases/download/$env:TAG/Knips_$($env:VERSION)_x64-setup.exe"
+          $notes = "Knips $($env:VERSION): https://github.com/$env:REPO/releases/tag/$env:TAG"
+          ./scripts/update-feed.ps1 -Installer $exe -Version $env:VERSION -Url $url -Notes $notes -Out (Join-Path $env:RUNNER_TEMP "feed/latest.json")
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: update-feed
+          path: ${{ runner.temp }}/feed/latest.json
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [windows, sign-installer, updater]
+    if: ${{ !cancelled() && needs.updater.result == 'success' }}
     runs-on: windows-latest
     timeout-minutes: 20
     permissions:
@@ -315,6 +387,16 @@ jobs:
           name: ${{ needs.windows.outputs.signing == 'true' && 'installer-signed' || 'installer-unsigned' }}
           path: ${{ runner.temp }}/release
 
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: update-feed
+          path: ${{ runner.temp }}/release
+
+      # Nur für scripts/update-feed.mjs (ohne Abhängigkeiten).
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
       - name: Signatur und Prüfsumme
         id: files
         env:
@@ -331,6 +413,12 @@ jobs:
             $status = (Get-AuthenticodeSignature $exe).Status
             Write-Host "Installer unsigniert ($status)."
           }
+          # latest.json gehört zu genau dieser Datei: Updater-Signatur, Version und Adresse, geprüft mit dem
+          # öffentlichen Schlüssel aus tauri.conf.json des Tags (den die installierten Fassungen auch haben).
+          node scripts/update-feed.mjs --check (Join-Path $env:RUNNER_TEMP "release/latest.json") --installer $exe
+          if ($LASTEXITCODE -ne 0) { throw "latest.json passt nicht zum Installer." }
+          $feed = Get-Content -Raw (Join-Path $env:RUNNER_TEMP "release/latest.json") | ConvertFrom-Json
+          if ($feed.version -ne $env:VERSION) { throw "latest.json nennt Version $($feed.version) statt $($env:VERSION)." }
           $hash = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant()
           # Format wie `shasum -a 256`, damit `shasum -c` und Get-FileHash beide passen.
           [IO.File]::WriteAllText("$exe.sha256", "$hash  $([IO.Path]::GetFileName($exe))`n")
@@ -351,7 +439,9 @@ jobs:
             gh release create "$TAG" --draft --verify-tag --title "Knips $VERSION" \
               --notes "Entwurf. Das macOS-DMG und der Release-Text kommen über scripts/release.sh dazu."
           fi
-          gh release upload "$TAG" "$EXE" "$EXE.sha256" --clobber
+          # latest.json: Feed der automatischen Aktualisierung (releases/latest/download/latest.json). Zählt erst,
+          # wenn das Release veröffentlicht ist — Entwürfe sind für GitHub nie „latest“.
+          gh release upload "$TAG" "$EXE" "$EXE.sha256" "$(dirname "$EXE")/latest.json" --clobber
           gh release view "$TAG" --json isDraft,assets --jq '"Entwurf: \(.isDraft)", (.assets[].name)'
 
       - name: Probelauf mit Testzertifikat

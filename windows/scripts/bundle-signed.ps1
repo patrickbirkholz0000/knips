@@ -3,7 +3,8 @@
 #
 # SignPath kann NSIS-Installer nicht von innen signieren. Deshalb: App-EXE signieren lassen, hier den Installer
 # neu bündeln, dann den Installer signieren lassen. `tauri bundle` würde die EXE sonst „patchen“ (Bundle-Typ für
-# den Updater, den Knips nicht nutzt) und damit die Signatur zerstören — daher --no-binary-patching.
+# den Updater) und damit die Signatur zerstören — daher --no-binary-patching. Ohne Bundle-Typ sucht der Updater in
+# latest.json nur den Eintrag `windows-x86_64` (statt zuerst `windows-x86_64-nsis`) — genau den schreibt release.yml.
 param(
   [Parameter(Mandatory = $true)] [string]$SignedExe,
   [Parameter(Mandatory = $true)] [string]$Version,

@@ -53,6 +53,7 @@ und fasst die echte Zwischenablage nicht an (Prüfungen der Zwischenablage nutze
 | `settings` | Einstellungsfenster je Bereich |
 | `links` | Rückfrage vor Aufnahmen per `knips://`-Link, Absender, Schutzzeit, Overlay per Link |
 | `telemetry` | Nutzungsstatistik gegen einen lokalen Server |
+| `update` | Automatische Updates: Sperren, Zeitplan, Info.plist, Sparkle im Bundle. Ende zu Ende mit zwei Builds, lokalem Feed und Wegwerf-Schlüssel: `scripts/update-test.sh` |
 | `output` | Ausgabe 1×, PNG/JPEG, Rahmen, Speichern, „Text kopieren“ ohne Zensiertes und Weggeschnittenes, Zwischenablage nach dem Zensieren |
 | `video`, `track` | Video-Zensur, Kürzen, MP4/GIF-Export, mitlaufende Balken |
 | `stitch` | Scroll-Screenshot pixelgenau gegen das Original |
@@ -96,8 +97,9 @@ Hand starten. Ergebnisse liegen im Artefakt „knips-windows“.
 - Die Windows-Fassung folgt der Mac-App. Ändert sich Verhalten nur auf einer Plattform, schreib dazu,
   ob die andere nachziehen sollte.
 - Bei Änderungen an der Oberfläche bitte einen Screenshot anhängen.
-- Knips baut keine Netzwerkverbindungen auf außer der freiwilligen Statistik. Neue Statistik-Ereignisse
-  nur zusammen mit der Liste unter [Datenschutz](README.md#datenschutz) und der Server-Allowlist ändern.
+- Knips baut keine Netzwerkverbindungen auf außer der freiwilligen Statistik und, unter Windows, der Suche nach
+  Updates bei GitHub (`latest.json`, ohne Kennung). Neue Statistik-Ereignisse nur zusammen mit der Liste unter
+  [Datenschutz](README.md#datenschutz) und der Server-Allowlist ändern.
 
 ## Commits
 

@@ -23,6 +23,7 @@ import SwiftUI
             if Bundle.main.bundlePath.hasPrefix("/Applications") { AppSettings.shared.launchAtLogin = true }
         }
         Telemetry.shared.start()
+        Updates.shared.start()   // erste Prüfung erst nach einigen Minuten, nie in eigenen Builds ohne Testkanal
         if !ScreenCapture.hasPermission {
             // Die Statistik-Frage kommt nach dem Neustart, den die Freigabe ohnehin verlangt.
             PermissionWindowController.show()

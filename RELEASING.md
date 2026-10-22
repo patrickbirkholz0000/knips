@@ -1,11 +1,13 @@
 # Knips veröffentlichen
 
-Ein Release besteht aus einem GitHub-Release in diesem Repo (`patrickbirkholz0000/knips`) mit vier Dateien:
+Ein Release besteht aus einem GitHub-Release in diesem Repo (`patrickbirkholz0000/knips`) mit diesen Dateien:
 
 | Datei | kommt von | Signatur |
 |---|---|---|
 | `Knips-X.Y.Z-<build>.dmg` + `.sha256` | `scripts/release.sh` auf dem Mac (über `scripts/package.sh`) | Developer ID, von Apple notarisiert, Ticket gestapelt |
+| `appcast.xml` | `scripts/release.sh` (über `scripts/appcast.sh`) | enthält die EdDSA-Signatur des DMG für die automatischen Updates (Sparkle) |
 | `Knips_X.Y.Z_x64-setup.exe` + `.sha256` | `.github/workflows/release.yml` auf Windows-Runnern | SignPath (Zertifikat der SignPath Foundation), falls eingerichtet, sonst unsigniert |
+| `latest.json` | `.github/workflows/release.yml`, Job `updater` | enthält die Updater-Signatur (Minisign) über genau diesen Installer, siehe [Automatische Updates (Windows)](#5-automatische-updates-windows) |
 
 Maßgeblich ist das Tag `vX.Y.Z`. `build.sh` liest es per `git describe` (ohne Tag gilt
 `CFBundleShortVersionString` aus `Resources/Info.plist`), der Workflow schreibt es beim Bauen in
@@ -25,6 +27,10 @@ Windows-Build als `KNIPS_BUILD` mit (Nutzungsstatistik).
 `KNIPS_SIGN_IDENTITY` (SHA-1 oder exakter Name) übersteuert beides. Signiert wird immer per SHA-1, mit
 Hardened Runtime, `Resources/Knips.entitlements` und Kennung `de.birkgroup.knips`. Developer ID bekommt
 immer einen sicheren Zeitstempel (braucht Netz), Apple Development keinen (`KNIPS_TIMESTAMP=1` erzwingt ihn).
+Das eingebettete `Sparkle.framework` (automatische Updates) signiert `build.sh` vorher mit derselben Identität,
+von innen nach außen und ohne `--deep`: `Autoupdate`, `Updater.app`, das Framework, dann die App — jeweils mit
+Hardened Runtime und Zeitstempel, ohne die Entitlements von Knips. Die XPC-Dienste von Sparkle braucht Knips
+nicht (nicht sandboxed) und lässt sie weg. `package.sh` prüft das vor der Notarisierung.
 
 Wer das Release-DMG auf dem eigenen Mac installiert, erteilt die Freigabe für diese Fassung einmal neu. Ein
 späteres `install.sh` wechselt wieder auf Apple Development und braucht dann wieder die alte Freigabe.
@@ -179,6 +185,105 @@ Identitätsprüfung der Birkholz & Rabitzsch GbR und kleiner monatlicher Gebühr
 Azure-Pfad im Workflow ist entfernt; umgestellt würden nur die Jobs `sign-app` und `sign-installer` (Azures
 eigene GitHub-Action statt der von SignPath).
 
+### 5. Automatische Updates der Mac-App (Sparkle)
+
+Knips fragt einmal am Tag nach
+`https://github.com/patrickbirkholz0000/knips/releases/latest/download/appcast.xml` (`SUFeedURL` in
+`Resources/Info.plist`). Jede Version hängt ihr eigenes `appcast.xml` an ihr Release; `latest` ist immer das
+neueste **veröffentlichte** Release, Entwürfe zählen nicht. Ein Update erreicht die Nutzer also erst, wenn der
+Entwurf veröffentlicht ist. Jedes DMG trägt eine EdDSA-Signatur (ed25519), die Knips vor dem Entpacken gegen
+`SUPublicEDKey` prüft; danach prüft Sparkle die Code-Signatur der neuen App. Ablauf und Oberfläche:
+`docs/ENTWICKLUNG.md`, Abschnitt „Updates“.
+
+**Schlüssel.** `generate_keys --account knips` legt den privaten Schlüssel einmalig im Schlüsselbund des Macs ab,
+auf dem Releases entstehen. Der öffentliche steht als `SUPublicEDKey` in `Resources/Info.plist`. Sparkles Werkzeuge liegen nach
+`swift build` bzw. `swift package resolve` unter `.build/artifacts/sparkle/Sparkle/bin/`. Öffentlichen Schlüssel
+anzeigen:
+
+```
+.build/artifacts/sparkle/Sparkle/bin/generate_keys --account knips -p
+```
+
+**Sicherung:** Ohne den privaten Schlüssel lässt sich kein Update mehr signieren, das installierte Fassungen
+annehmen. Mit `generate_keys --account knips -x <datei>` in eine Datei außerhalb des Repos exportieren, sicher
+verwahren (Passwortmanager, verschlüsseltes Backup) und die Datei danach löschen.
+
+Auf einem anderen Mac zurückholen: Inhalt wieder in eine Datei schreiben, dann
+`generate_keys --account knips -f <datei>` und die Datei löschen.
+
+**Schlüssel verloren:** Sparkle nimmt ersatzweise ein DMG an, das mit derselben Developer ID (Team S8QR9YWZS7)
+signiert ist, und übernimmt dann den neuen `SUPublicEDKey` aus der neuen App. Neuen Schlüssel erzeugen, in die
+Info.plist eintragen, ein Release damit herausgeben. EdDSA-Schlüssel und Developer-ID-Zertifikat nie in derselben
+Version wechseln, sonst nimmt keine installierte Fassung das Update an.
+
+**1.0.0 und 1.0.1 haben noch keinen Updater.** Wer eine dieser Versionen hat, aktualisiert einmal von Hand (neues DMG
+laden, Knips in „Programme“ ersetzen); ab dann geht es automatisch. Am besten einen Satz dazu in den Text des ersten
+Releases mit Updater schreiben (im Entwurf vor dem Veröffentlichen).
+
+**Sparkle selbst aktualisieren:** Version in `Package.swift` (fest, `exact:`) anheben, `swift package resolve`,
+Änderungen von Sparkle lesen, `Resources/Sparkle-LICENSE.txt` aus `.build/artifacts/sparkle/Sparkle/LICENSE`
+übernehmen, dann `scripts/update-test.sh` (Ende-zu-Ende-Test mit zwei Builds und Wegwerf-Schlüssel, siehe
+`docs/ENTWICKLUNG.md`).
+
+### 6. Automatische Updates der Windows-Fassung (Tauri)
+
+Die Windows-Fassung aktualisiert sich selbst, ab der ersten Version nach 1.0.1, ohne eigenen Server: über das
+offizielle `tauri-plugin-updater` (MIT/Apache-2.0). Ablauf in der App: `windows/src-tauri/src/update.rs`, Regeln
+`windows/crates/core/src/update.rs`, Einzelheiten `windows/ENTWICKLUNG.md` („Automatische Aktualisierung“).
+
+- **Feed:** `https://github.com/patrickbirkholz0000/knips/releases/latest/download/latest.json` (in
+  `windows/src-tauri/tauri.conf.json`, `plugins.updater`). Jede Version bringt ihre eigene `latest.json` als
+  Release-Datei mit. GitHub zählt Entwürfe nie als „latest“: Ein Update geht erst an die Nutzer, wenn das Release
+  veröffentlicht ist. Ein veröffentlichtes Release ohne `latest.json` (etwa nur fürs DMG) hielte die Updates an,
+  bis wieder eines mit `latest.json` erscheint.
+- **Signatur:** Der Job `updater` in `release.yml` signiert den **endgültigen** Installer (nach SignPath bzw.
+  unsigniert) mit `tauri signer sign --app-version X.Y.Z` und schreibt `latest.json` (`scripts/update-feed.ps1` →
+  `scripts/update-feed.mjs`): Version, `pub_date`, `notes` mit Link zur Release-Seite, `platforms.windows-x86_64` mit
+  `signature` und `url` auf `Knips_X.Y.Z_x64-setup.exe` des Tags. Geprüft wird gleich danach und noch einmal in
+  `publish` mit dem öffentlichen Schlüssel aus `tauri.conf.json` des Tags — passt der Schlüssel nicht, hängt nichts
+  am Release. Die App verlangt, dass die Signatur die Versionsnummer nennt (`requireSignedVersion`), lädt nur über
+  HTTPS und installiert nie etwas Älteres oder Gleiches.
+- **Installation:** NSIS pro Benutzer, passiv (nur Fortschrittsbalken), ohne Administratorrechte. Beim Beenden ohne
+  Neustart, per „Neu starten und aktualisieren“ mit. Einstellungen, Ablage, Verlauf, Druck-Taste und Autostart
+  bleiben (Aktualisierungsmodus `/UPDATE`, die Deinstallations-Hooks laufen dabei nicht).
+- **1.0.0 und 1.0.1** haben noch keinen Updater: Wer sie installiert hat, aktualisiert einmal von Hand (Installer
+  von der Releases-Seite oder `irm https://knips.velno.ai/install.ps1 | iex`); ab dann geht es von selbst. Am besten
+  im Release-Text der ersten Version mit Updater erwähnen.
+- **`install.ps1` und winget** funktionieren unverändert: beide nehmen den Installer, nicht `latest.json`. Nach einer
+  Selbstaktualisierung zeigt `winget list` die neue Version (der Installer schreibt `DisplayVersion`), ein späteres
+  `winget upgrade` installiert einfach darüber.
+
+**Einrichtung:**
+
+- Schlüsselpaar mit `pnpm tauri signer generate` erzeugen (mit Passwort), außerhalb des Repos. Den öffentlichen
+  Schlüssel in `windows/src-tauri/tauri.conf.json` eintragen.
+- GitHub-Secrets `TAURI_SIGNING_PRIVATE_KEY` (Inhalt der Schlüsseldatei) und `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+  über die Standardeingabe setzen, damit nichts in einer Befehlszeile steht:
+
+  ```
+  gh secret set TAURI_SIGNING_PRIVATE_KEY < <schlüsseldatei>
+  gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD < <passwortdatei>
+  ```
+
+  Fehlt das Secret, bricht `release.yml` gleich zu Beginn mit einem Hinweis ab.
+
+**Schlüssel sichern — wichtig.** Ohne den privaten Schlüssel und sein Passwort lässt sich nie wieder ein Update
+signieren, das bereits installierte Fassungen annehmen; dann bliebe nur, alle Nutzer einmal von Hand auf eine
+Version mit neuem Schlüssel zu bringen. Schlüssel und Passwort deshalb verschlüsselt an einem zweiten Ort ablegen
+(Passwortmanager oder verschlüsseltes Backup), nie ins Repo, nie unverschlüsselt in eine Cloud. Das GitHub-Secret
+lässt sich nicht wieder auslesen und ist kein Backup.
+
+**Schlüssel wechseln** (nur wenn er verloren oder bekannt geworden ist): neues Paar erzeugen, öffentlichen Schlüssel in
+`tauri.conf.json`, Secrets neu setzen. Installierte Fassungen kennen nur den alten Schlüssel — die erste Version mit
+neuem Schlüssel muss deshalb noch mit dem **alten** signiert sein (falls vorhanden): `latest.json` von Hand mit dem
+alten Schlüssel signieren und hochladen. Ist der alte verloren, bleibt nur der Hinweis an die Nutzer, einmal von Hand
+zu aktualisieren.
+
+**Probe ohne Release:** `windows.yml` spielt den Ablauf bei jedem Lauf nach — Job `signatur` mit Wegwerf-Schlüssel
+über den signierten Installer (`latest.json` erzeugen und prüfen, Gegenproben), Schritt „Aktualisierung (Ende zu
+Ende)“ mit zwei echten Installern 0.0.1 → 0.0.2 (`windows/scripts/update-test.ps1`). Einzeln:
+`gh workflow run windows.yml --ref <zweig> -f selbsttests=update`.
+
 ## Release erstellen
 
 Voraussetzungen: alles auf `main` gemergt und gepusht, Windows-CI grün, Arbeitsverzeichnis sauber.
@@ -190,20 +295,33 @@ scripts/release.sh            # oder: nimmt das vX.Y.Z-Tag, das schon auf HEAD l
 
 Das Skript
 
-1. prüft Developer ID, Notarisierungs-Profil, `gh`-Anmeldung, `LICENSE`, dass `main` sauber und gleich
-   `origin/main` ist und dass die neue Version größer als die letzte ist,
+1. prüft Developer ID, Notarisierungs-Profil, den EdDSA-Schlüssel für die Updates, `gh`-Anmeldung, `LICENSE`,
+   dass `main` sauber und gleich `origin/main` ist und dass die neue Version größer als die letzte ist,
 2. legt das Tag lokal an und baut mit `scripts/package.sh` das notarisierte DMG (dauert mit zwei
    Notarisierungen meist 5–15 Minuten),
-3. pusht das Tag; das startet `release.yml` (Windows-Installer, etwa 20–30 Minuten, mit SignPath dazu die
+3. signiert das fertige DMG mit Sparkles `sign_update` (Schlüssel `knips` aus dem Schlüsselbund; beim ersten Mal
+   fragt macOS nach: „Immer erlauben“), prüft die Signatur mit `scripts/update-signature.swift` gegen
+   `SUPublicEDKey` der gebauten App und schreibt mit `scripts/appcast.sh` `build/appcast.xml` mit genau dieser
+   Version (`sparkle:version` = Build-Nummer, `sparkle:shortVersionString` = Version, mindestens macOS 14.0,
+   Länge, Signatur, Link auf die Release-Seite, DMG-Adresse des Tags),
+4. pusht das Tag; das startet `release.yml` (Windows-Installer, etwa 20–30 Minuten, mit SignPath dazu die
    beiden Freigaben),
-4. legt den Release-**Entwurf** mit DMG, Prüfsumme und Release-Text an (`build/release-notes-vX.Y.Z.md`),
-5. wartet auf den Windows-Lauf und prüft, dass der Installer am Entwurf hängt.
+5. legt den Release-**Entwurf** mit DMG, Prüfsumme, `appcast.xml` und Release-Text an
+   (`build/release-notes-vX.Y.Z.md`),
+6. wartet auf den Windows-Lauf und prüft, dass Installer, `appcast.xml` und `latest.json` am Entwurf hängen.
 
 Scheitert es vor dem Push, entfernt es ein selbst angelegtes Tag wieder. Danach den Entwurf selbst ansehen,
 beide Downloads einmal testen und veröffentlichen:
 
 ```
 gh release edit v1.0.0 --draft=false
+```
+
+Erst danach liefert `releases/latest/download/appcast.xml` die neue Version, und die installierten Macs holen sie
+innerhalb eines Tages (frühestens fünf Minuten nach ihrem nächsten Start). Prüfen:
+
+```
+curl -sL https://github.com/patrickbirkholz0000/knips/releases/latest/download/appcast.xml | grep -E 'sparkle:(short)?[vV]ersion'
 ```
 
 Nur ein Test-DMG ohne Notarisierung (nicht zur Weitergabe, Gatekeeper blockiert es auf anderen Macs):
@@ -302,6 +420,12 @@ Get-AuthenticodeSignature .\Knips_1.0.0_x64-setup.exe | Format-List Status, Sign
 Signiert erwartet: `Status: Valid`, Zertifikat `CN=SignPath Foundation`. Dasselbe für
 `%LOCALAPPDATA%\Knips\knips.exe` nach der Installation.
 
+`latest.json` gegen den Installer und den öffentlichen Schlüssel prüfen (aus `windows/`, nur Node):
+
+```
+node scripts/update-feed.mjs --check ~/Downloads/latest.json --installer ~/Downloads/Knips_1.0.2_x64-setup.exe
+```
+
 ## Fehlersuche
 
 **Notarisierung hängt bei „In Progress“.** Meist dauert sie wenige Minuten. Bei den ersten Einreichungen
@@ -324,7 +448,27 @@ widerrufen, app-spezifisches Passwort gelöscht): `store-credentials` wiederhole
 
 **Status „Invalid“.** `package.sh` gibt das Protokoll von Apple aus. Häufige Ursachen sind fehlende Hardened
 Runtime, fehlender Zeitstempel, `get-task-allow` in den Entitlements oder unsignierter Code im Bundle;
-`package.sh` prüft die ersten drei schon vor dem Hochladen.
+`package.sh` prüft die ersten drei schon vor dem Hochladen, auch für `Autoupdate`, `Updater.app` und
+`Sparkle.framework`.
+
+**`sign_update`: „Signing key not found for account knips“.** Der EdDSA-Schlüssel fehlt in diesem Schlüsselbund
+(anderer Mac, neu eingerichtet): aus der Sicherung zurückholen (Einrichtung 5). Fragt macOS bei jedem Release
+nach dem Schlüssel, im Dialog „Immer erlauben“ wählen; nach einem Wechsel der Sparkle-Version fragt es einmal neu.
+
+**„Die EdDSA-Signatur passt nicht zu SUPublicEDKey“.** Signiert wurde mit einem anderen Schlüssel als dem, den die
+App kennt (anderes Konto, falscher Import, Info.plist von Hand geändert). Mit `generate_keys --account knips -p`
+vergleichen; nichts hochladen, bis beide übereinstimmen.
+
+**Updates kommen nicht an.** Ist das Release veröffentlicht und kein Entwurf? Liefert der `curl`-Befehl aus
+„Release erstellen“ die neue Build-Nummer? Größer als die installierte (`CFBundleVersion`)? Was Knips und Sparkle
+melden, steht im Systemprotokoll:
+
+```
+log show --last 1d --info --predicate 'subsystem == "de.birkgroup.knips" OR subsystem == "org.sparkle-project.Sparkle"'
+```
+
+Ein veröffentlichtes Release mit falschem `appcast.xml` lässt sich nicht ändern: eine neue Version herausgeben.
+Den ganzen Weg ohne GitHub prüft `scripts/update-test.sh`.
 
 **`errSecInternalComponent` beim Signieren** (z. B. über SSH): Schlüsselbund ist gesperrt.
 `security unlock-keychain ~/Library/Keychains/login.keychain-db`, dann erneut.
@@ -341,6 +485,24 @@ daher eine neue Version. Nur eine Freigabe verpasst (Zeitüberschreitung in `sig
 nicht (ProductName „Knips“, Version, Dateiname wie in `.signpath/artifact-configurations/`), die
 Artefakt-Konfiguration in SignPath ist veraltet (aus dem Repo neu einfügen), oder die Herkunft stimmt nicht
 (Lauf nicht auf dem Tag gestartet, nicht auf GitHub-Runnern).
+
+**Job `updater` scheitert.** „TAURI_SIGNING_PRIVATE_KEY fehlt“: Secret setzen (siehe Einrichtung 6). „incorrect
+updater private key password“: `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` passt nicht zum Schlüssel — beide Secrets neu
+setzen. „Signatur stammt von einem anderen Schlüssel“: Secret und öffentlicher Schlüssel in
+`tauri.conf.json` gehören nicht zusammen (nach einem Schlüsselwechsel einen von beiden vergessen). Danach
+`gh run rerun <id> --failed`; bei einem Fehler im Code braucht es wie immer eine neue Version.
+
+**Installierte Fassungen finden das Update nicht.** Release veröffentlicht (kein Entwurf, keine Vorabversion)?
+`latest.json` am Release? `curl -sL https://github.com/patrickbirkholz0000/knips/releases/latest/download/latest.json`
+muss die neue Version nennen. Knips sucht höchstens einmal am Tag (erste Suche einige Minuten nach dem Start);
+„Jetzt nach Updates suchen“ unter Einstellungen → Über Knips sucht sofort. Gründe stehen im Protokoll
+`%LOCALAPPDATA%\de.birkgroup.knips\logs\knips.log` (Zeilen „Aktualisierung …“). Fassungen bis 1.0.1 haben keinen
+Updater.
+
+**Update geladen, aber nicht installiert.** Installiert wird nur beim Beenden über das Menü oder per „Neu starten
+und aktualisieren“, nie während einer Aufnahme, eines Scroll-Screenshots oder während Knips speichert; der Knopf
+nennt den Grund (auch: offene Editoren). Wird Windows heruntergefahren, bleibt das Update in
+`%LOCALAPPDATA%\de.birkgroup.knips\update\` und steht beim nächsten Start ohne neuen Download bereit.
 
 **Falsches Tag, noch nicht veröffentlicht.** Entwurf und Tag löschen, dann neu starten:
 

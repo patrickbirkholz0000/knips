@@ -71,6 +71,17 @@ if (!inTauri) {
   });
   registerMock("snipping_restore", () => void push({ snippingKeyEnabled: true }, { tookSnippingKey: false }));
   registerMock("telemetry_set_consent", ({ consent }) => void push({ telemetryConsent: consent }));
+  // „Jetzt nach Updates suchen“: kurz suchen, dann aktuell (oder Version 1.0.2, mit „update“ in der Adresse).
+  registerMock("update_check", () => {
+    push({ update: { ...boot.update, phase: "checking" } });
+    setTimeout(() => {
+      const now = Math.floor(Date.now() / 1000);
+      push({ update: { ...boot.update, phase: boot.update.version ? "ready" : "idle", result: boot.update.version ? "ready" : "current", error: null, lastCheck: now } });
+    }, 1200);
+  });
+  registerMock("update_install", () => {
+    throw "Erst die offenen Editoren schließen.";
+  });
   registerMock("choose_save_folder", () => "D:\\Aufnahmen\\Knips");
   registerMock("save_folder_ok", () => !missing);
   registerMock("purge_originals", () => {});

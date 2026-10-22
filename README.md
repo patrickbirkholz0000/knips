@@ -87,6 +87,9 @@ Voraussetzung: macOS 14 (Sonoma) oder neuer, Apple Silicon oder Intel.
 4. **Mikrofon** fragt macOS erst, wenn du Videos mit Kommentar aufnimmst (ab macOS 15).
 5. Knips fragt beim Start, ob es die macOS-Kürzel ⇧⌘3, ⇧⌘4 und ⇧⌘5 übernehmen darf. Rückgängig unter
    Einstellungen → Tastaturkürzel → „macOS-Kürzel wiederherstellen“.
+6. **Updates** lädt Knips selbst und installiert sie beim Beenden (siehe [Datenschutz](#datenschutz)). Version
+   1.0.0 und 1.0.1 können das noch nicht: von dort einmal von Hand aktualisieren, also das neue DMG laden und
+   Knips in „Programme“ ersetzen.
 
 ### Windows
 
@@ -126,6 +129,10 @@ Danach:
   Einstellungen → Allgemein → „Mit Windows starten“).
 - Unter Windows 11 öffnet die Druck-Taste den Bildschirmausschnitt. Knips fragt beim ersten Start, ob es
   die Taste übernehmen darf. Zurückgeben lässt sie sich unter Einstellungen → Tastaturkürzel.
+- **Updates:** Knips sucht einmal am Tag nach einer neuen Version und lädt sie im Hintergrund. Installiert wird
+  sie, wenn du Knips beendest, oder sofort mit „Neu starten und aktualisieren“ (im Menü und unter Einstellungen →
+  Über Knips). Abschalten: Einstellungen → Über Knips → „Automatisch aktualisieren“. Fassungen bis 1.0.1 können
+  das noch nicht; sie einmal von Hand auf die neue Version bringen (Installer oder PowerShell wie oben).
 - **Deinstallieren:** Einstellungen → Apps → Installierte Apps → Knips → Deinstallieren (oder
   `winget uninstall PatrickBirkholz.Knips`).
 
@@ -170,9 +177,21 @@ Teilst du deinen Bildschirm (Teams, Zoom, Discord, OBS), sehen die anderen die K
 Fenster. Soll der Editor mit unzensierten Originalen nicht im Stream auftauchen, schalte in den Einstellungen unter
 Datenschutz „In Bildschirmübertragungen verbergen“ ein. Knips' eigene Bildschirmfotos zeigen nie Knips-Fenster.
 
+### Updates
+
+Knips fragt einmal am Tag bei GitHub nach einer neuen Version. GitHub sieht dabei deine IP-Adresse; Knips sendet
+dabei nichts weiter: keine Kennung, keine Zähler, keine Angaben zum Rechner, keine Cookies. Abgefragt wird nur eine
+Datei am neuesten Release dieses Repos (`appcast.xml` auf dem Mac, `latest.json` unter Windows). Eine neue Version
+lädt Knips im Hintergrund, prüft ihre Signatur und installiert sie, wenn du Knips beendest, oder sofort mit „Neu
+starten und aktualisieren“. Abschalten lässt sich das unter Einstellungen → Über Knips → „Automatisch
+aktualisieren“; „Jetzt nach Updates suchen“ geht dann weiterhin von Hand. Entwickler-Builds, Selbsttests und die CI
+fragen nie. Dafür nutzt Knips auf dem Mac [Sparkle](https://sparkle-project.org) (MIT-Lizenz), unter Windows das
+Updater-Plugin von Tauri (MIT/Apache-2.0).
+
 ### Anonyme Nutzungsstatistik (freiwillig)
 
-Das ist die einzige Verbindung ins Internet, die Knips selbst aufbaut, und sie ist aus, bis du zustimmst.
+Außer der Frage nach Updates ist das die einzige Verbindung ins Internet, die Knips selbst aufbaut, und sie ist
+aus, bis du zustimmst.
 Beim ersten Start fragt Knips einmal („Knips verbessern?“). Schließt du die Frage ohne Antwort, gilt das
 als Nein, und Knips fragt beim nächsten Start noch einmal. Ändern kannst du die Wahl jederzeit in den
 Einstellungen unter „Anonyme Nutzungsstatistik“.
@@ -259,6 +278,10 @@ Sicherheitslücken bitte vertraulich melden, siehe [SECURITY.md](SECURITY.md).
 Public License, Version 3 oder (nach deiner Wahl) jeder späteren Version, weitergeben und verändern.
 Knips wird ohne jede Gewährleistung bereitgestellt. Der vollständige Text steht in [LICENSE](LICENSE).
 
+Die Mac-App enthält [Sparkle](https://sparkle-project.org) für die automatischen Updates (MIT-Lizenz); der
+Lizenztext liegt der App bei (Einstellungen → Über Knips) und steht in
+[Resources/Sparkle-LICENSE.txt](Resources/Sparkle-LICENSE.txt).
+
 ---
 
 <img src="design/app-icon-1024.png" width="88" height="88" alt="Knips icon: four selection corners around a censor bar">
@@ -303,7 +326,9 @@ Get the packages from [Releases](https://github.com/patrickbirkholz0000/knips/re
 
 - **macOS 14+:** open the DMG, drag Knips into Applications, start it and allow screen recording under
   System Settings → Privacy & Security → Screen & System Audio Recording, then restart Knips. The
-  microphone is only requested when you record with commentary (macOS 15+).
+  microphone is only requested when you record with commentary (macOS 15+). Knips downloads updates by
+  itself and installs them when you quit it (see [Privacy](#privacy)); versions 1.0.0 and 1.0.1 can't do that
+  yet, so update from them once by hand (download the new DMG and replace Knips in Applications).
 - **Windows 10 version 2004 or later / Windows 11 (64-bit, see [System requirements](#system-requirements)),** per-user install without admin rights, three ways with the same installer:
   1. **winget** (once Knips is accepted into the Windows Package Manager):
      `winget install PatrickBirkholz.Knips`
@@ -316,6 +341,11 @@ Get the packages from [Releases](https://github.com/patrickbirkholz0000/knips/re
   3. **Installer from the Releases page:** run `Knips_…_x64-setup.exe`. While the installer is unsigned,
      SmartScreen shows “Windows protected your PC”: click “More info”, then “Run anyway”. Only download the
      installer from this repo's Releases page.
+
+  Updates: Knips checks for a new version once a day and downloads it in the background. It is installed when
+  you quit Knips, or right away with „Neu starten und aktualisieren“ (menu, or Einstellungen → Über Knips).
+  Turn it off under Einstellungen → Über Knips → „Automatisch aktualisieren“. Versions up to 1.0.1 cannot update
+  themselves yet; update them once by hand (installer or PowerShell as above).
 
   Uninstall: Settings → Apps → Installed apps → Knips → Uninstall (or `winget uninstall PatrickBirkholz.Knips`).
 
@@ -333,7 +363,15 @@ When you share your screen (Teams, Zoom, Discord, OBS), Knips windows are visibl
 the editor with unredacted originals out of a stream, turn on „In Bildschirmübertragungen verbergen“ under
 Datenschutz in the settings. Knips' own screenshots never show Knips windows.
 
-Everything runs locally. The only network traffic Knips creates is the optional anonymous usage
+Everything runs locally. Once a day Knips asks GitHub whether there is a new version (`appcast.xml` on the Mac,
+`latest.json` on Windows, from this repo's latest release). GitHub sees your IP address; Knips sends nothing else (no
+identifier, no counters, no details about your computer, no cookies). A new version is downloaded in the background,
+its signature is checked, and it is installed when you quit Knips or right away via „Neu starten und
+aktualisieren“. Turn it off with „Automatisch aktualisieren“ under Über Knips in the settings; „Jetzt nach Updates
+suchen“ still works by hand. This uses [Sparkle](https://sparkle-project.org) (MIT license) on the Mac and Tauri's
+updater plugin (MIT/Apache-2.0) on Windows.
+
+Apart from the update check, the only network traffic Knips creates is the optional anonymous usage
 statistics. Knips asks once on first launch; nothing is sent unless you agree, and you can change it
 any time in the settings („Anonyme Nutzungsstatistik“). With consent, Knips sends at most once a day the
 fields listed in the table [above](#datenschutz) to `https://knips.velno.ai/v1/ping`: format version,
@@ -379,3 +417,6 @@ macOS: `scripts/build.sh`. Windows: `pnpm install` and `pnpm tauri build` in `wi
 terms of the GNU General Public License as published by the Free Software Foundation, either version 3
 of the License, or (at your option) any later version. Knips is distributed without any warranty. See
 [LICENSE](LICENSE).
+
+The Mac app includes [Sparkle](https://sparkle-project.org) for automatic updates (MIT license); its license text
+ships with the app (settings → Über Knips) and is in [Resources/Sparkle-LICENSE.txt](Resources/Sparkle-LICENSE.txt).

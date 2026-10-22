@@ -24,3 +24,14 @@ export function bytes(n: number): string {
   const digits = v >= 100 || i === 0 ? 0 : 1;
   return `${v.toLocaleString("de-DE", { maximumFractionDigits: digits, minimumFractionDigits: 0 })} ${units[i]}`;
 }
+
+/** Zeitpunkt (Unix-Sekunden) → „heute, 09:41“ / „gestern, 18:02“ / „12.10.2026, 09:41“. */
+export function when(unixSeconds: number, now: Date = new Date()): string {
+  const d = new Date(unixSeconds * 1000);
+  const time = d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((day(now) - day(d)) / 86_400_000);
+  if (days === 0) return `heute, ${time}`;
+  if (days === 1) return `gestern, ${time}`;
+  return `${d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" })}, ${time}`;
+}

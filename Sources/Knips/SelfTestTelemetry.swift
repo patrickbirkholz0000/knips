@@ -2,7 +2,8 @@
 import AppKit
 import Network
 
-/// Winziger HTTP-Empfänger auf 127.0.0.1 — nimmt Pings an und antwortet mit `status`.
+/// Winziger HTTP-Empfänger auf 127.0.0.1 — nimmt Pings an und antwortet mit `status`, oder liefert über `responder`
+/// eigene Antworten (Feed und DMG im Selbsttest `update`).
 final class TestHTTPServer: @unchecked Sendable {
     struct Request {
         let method: String
@@ -11,11 +12,18 @@ final class TestHTTPServer: @unchecked Sendable {
         let body: Data
     }
 
+    struct Response {
+        var status: Int
+        var headers: [String: String] = [:]
+        var body = Data()
+    }
+
     private let listener: NWListener
     private let queue = DispatchQueue(label: "de.birkgroup.knips.test-http")
     private let lock = NSLock()
     private var received: [Request] = []
     private var answer = 204
+    private var handler: (@Sendable (Request) -> Response)?
 
     init() throws {
         let parameters = NWParameters.tcp
@@ -28,6 +36,10 @@ final class TestHTTPServer: @unchecked Sendable {
     var status: Int {
         get { lock.withLock { answer } }
         set { lock.withLock { answer = newValue } }
+    }
+    var responder: (@Sendable (Request) -> Response)? {
+        get { lock.withLock { handler } }
+        set { lock.withLock { handler = newValue } }
     }
 
     func start() async throws -> UInt16 {
@@ -69,12 +81,16 @@ final class TestHTTPServer: @unchecked Sendable {
             var buffer = buffer
             if let data { buffer.append(data) }
             if let request = Self.parse(buffer) {
-                let status = self.lock.withLock { () -> Int in
+                let (status, handler) = self.lock.withLock { () -> (Int, (@Sendable (Request) -> Response)?) in
                     self.received.append(request)
-                    return self.answer
+                    return (self.answer, self.handler)
                 }
-                let head = "HTTP/1.1 \(status) \(status == 204 ? "No Content" : "Error")\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                connection.send(content: Data(head.utf8), completion: .contentProcessed { _ in connection.cancel() })
+                let response = handler?(request) ?? Response(status: status)
+                let reason = [200: "OK", 204: "No Content", 404: "Not Found"][response.status] ?? "Error"
+                var head = "HTTP/1.1 \(response.status) \(reason)\r\nContent-Length: \(response.body.count)\r\nConnection: close\r\n"
+                for (name, value) in response.headers.sorted(by: { $0.key < $1.key }) { head += "\(name): \(value)\r\n" }
+                head += "\r\n"
+                connection.send(content: Data(head.utf8) + response.body, completion: .contentProcessed { _ in connection.cancel() })
             } else if complete || error != nil {
                 connection.cancel()
             } else {

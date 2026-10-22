@@ -64,6 +64,11 @@ impl VideoJobs {
         self.cancels.lock().remove(&id.to_string());
     }
 
+    /// Läuft gerade eine Arbeit am Video (Export, Speichern, Auto-Zensur, Verfolgen)?
+    pub fn busy(&self) -> bool {
+        !self.cancels.lock().is_empty()
+    }
+
     pub fn cancel(&self, id: &str) {
         if let Some(flag) = self.cancels.lock().get(id) {
             flag.store(true, Ordering::SeqCst);

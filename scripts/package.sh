@@ -126,6 +126,18 @@ check_app_signature() {
   grep -q '^TeamIdentifier=S8QR9YWZS7$' <<<"$info" || echo "⚠︎ TeamIdentifier ist nicht S8QR9YWZS7." >&2
   ! grep -q 'get-task-allow' <<<"$ents" || die "Entitlements enthalten get-task-allow — Apple lehnt das ab."
   grep -E '^(Identifier|CodeDirectory|Authority|Timestamp|TeamIdentifier)=?' <<<"$info" | indent
+  # Sparkle (automatische Updates): jedes Teil einzeln signiert, ebenfalls mit Hardened Runtime, Zeitstempel und
+  # Developer ID — sonst lehnt Apple die Notarisierung ab. XPC-Dienste gehören nicht hinein (Knips ist nicht sandboxed).
+  local fw="$1/Contents/Frameworks/Sparkle.framework" part
+  [[ -d "$fw" ]] || die "Sparkle.framework fehlt in $1."
+  [[ ! -e "$fw/Versions/B/XPCServices" ]] || die "Sparkle.framework enthält noch XPC-Dienste."
+  for part in "$fw/Versions/B/Autoupdate" "$fw/Versions/B/Updater.app" "$fw"; do
+    info=$(codesign -dvv "$part" 2>&1)
+    grep -Eq '^CodeDirectory .*flags=0x[0-9a-f]+\([^)]*runtime' <<<"$info" || die "${part#"$1/"} ohne Hardened Runtime signiert."
+    grep -q '^Timestamp=' <<<"$info" || die "${part#"$1/"} ohne sicheren Zeitstempel signiert."
+    grep -q '^Authority=Developer ID Application: ' <<<"$info" || die "${part#"$1/"} nicht mit Developer ID signiert."
+  done
+  echo "   Sparkle.framework: Autoupdate, Updater.app und Framework mit Developer ID, Hardened Runtime, Zeitstempel"
 }
 
 # --- Notarisierung -------------------------------------------------------------------------------------

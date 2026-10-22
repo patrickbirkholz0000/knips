@@ -58,6 +58,12 @@
   "plugins": {
     "deep-link": {
       "desktop": { "schemes": ["knips"] }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY2RDREMUQyRTU1ODBDNTAKUldSUURGamwwdEhVOWtLQzc0Q3BxTG11TlJKWEdoM1dJNXZ6dmxPTFU0dG1NUFk5MEFMbmJsVVoK",
+      "endpoints": ["https://github.com/patrickbirkholz0000/knips/releases/latest/download/latest.json"],
+      "requireSignedVersion": true,
+      "windows": { "installMode": "passive" }
     }
   }
 }

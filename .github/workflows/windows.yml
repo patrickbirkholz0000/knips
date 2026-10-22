@@ -1,7 +1,9 @@
 # Windows-Fassung bauen und auf einem echten Windows prüfen: Kern-Tests, Selbsttests (mit Bildern der eigenen
-# Fenster), Installer, Installation per install.ps1. Ergebnisse als Artefakt „knips-windows“.
+# Fenster), Installer, Installation per install.ps1, automatische Aktualisierung von Ende zu Ende (zwei echte
+# Installer, Feed auf 127.0.0.1). Ergebnisse als Artefakt „knips-windows“.
 # Zweiter Job „signatur“: der Signatur-Ablauf aus release.yml (App-EXE signieren → Installer neu bündeln →
-# Installer signieren) mit einem Wegwerf-Zertifikat statt SignPath.
+# Installer signieren → Updater-Signatur und latest.json) mit Wegwerf-Zertifikat und -Schlüssel statt SignPath und
+# Secret.
 #
 # Drittanbieter-Actions sind auf Commit-SHAs festgelegt (Version im Kommentar); Dependabot hält sie aktuell.
 name: Windows
@@ -13,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       selbsttests:
-        description: "Nur diese Selbsttests (z. B. „selection firstshot ui“), ohne Installer — leer = alles"
+        description: "Nur diese Selbsttests (z. B. „selection firstshot ui“), ohne Installer — leer = alles; „update“ auch mit dem Ende-zu-Ende-Test der Aktualisierung"
         required: false
         default: ""
 
@@ -87,6 +89,7 @@ jobs:
           Install-WindowsFeature Server-Media-Foundation | Out-String | Write-Host
 
       - name: Selbsttest-Build (mit Entwickler-Code)
+        id: selftest-build
         run: cargo build --profile selftest -p knips --features dev,custom-protocol
 
       - name: Selbsttests
@@ -119,6 +122,13 @@ jobs:
           $setup = @(Get-ChildItem target/release/bundle/nsis -Filter "*_x64-setup.exe")
           if ($setup.Count -ne 1) { throw "Erwartet genau einen Installer, gefunden: $($setup.Count)" }
           ./scripts/uninstall-test.ps1 -Setup $setup[0].FullName -Out shots/uninstall
+
+      # Automatische Aktualisierung von Ende zu Ende: zwei Entwickler-Installer 0.0.1 und 0.0.2 (Profil selftest, nur
+      # die App wird neu gebaut) mit Wegwerf-Updater-Schlüssel, Feed auf 127.0.0.1, echte Installation über den
+      # Updater, Gegenproben. Einzeln: -f selbsttests="update" (dazu der Selbsttest `update`).
+      - name: Aktualisierung (Ende zu Ende)
+        if: always() && steps.selftest-build.outcome == 'success' && (!inputs.selbsttests || contains(inputs.selbsttests, 'update'))
+        run: ./scripts/update-test.ps1 -Out shots/aktualisierung
 
       - name: Installer-Seiten fotografieren
         if: always() && steps.installer.outcome == 'success'
@@ -239,6 +249,59 @@ jobs:
           THUMB: ${{ steps.cert.outputs.thumbprint }}
           SETUP: ${{ steps.bundle.outputs.setup }}
         run: ./scripts/test-install.ps1 -Installer $env:SETUP -ProbeThumbprint $env:THUMB
+
+      # Wie der Job „updater“ in release.yml (scripts/update-feed.ps1) über den fertig signierten Installer, mit einem
+      # Wegwerf-Schlüssel statt des Secrets: Updater-Signatur, latest.json, Prüfung mit dem öffentlichen Schlüssel.
+      # Gegenproben: ohne Schlüssel Abbruch mit Grund, veränderter Installer und fremder Schlüssel abgelehnt.
+      - name: Updater-Signatur und latest.json (wie release.yml)
+        env:
+          VERSION: ${{ steps.cert.outputs.version }}
+          SETUP: ${{ steps.bundle.outputs.setup }}
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP "updater"
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          $tag = "v$env:VERSION"
+          $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/Knips_$($env:VERSION)_x64-setup.exe"
+          $notes = "Knips $($env:VERSION): https://github.com/$env:GITHUB_REPOSITORY/releases/tag/$tag"
+          $feed = Join-Path $work "latest.json"
+          # Wegwerf-Schlüssel mit Passwort; das Passwort steht nur in der Umgebung, wie das Secret in release.yml.
+          $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(24))
+          node -e "require('@tauri-apps/cli').run(['signer', 'generate', '--ci', '-w', process.argv[1], '-p', process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD], 'tauri').catch((e) => { console.error(String(e)); process.exit(1); })" "$work/probe.key" | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Wegwerf-Schlüssel nicht erzeugt" }
+          $pub = (Get-Content -Raw "$work/probe.key.pub").Trim()
+
+          # Fehlt das Secret, bricht das Signieren mit Grund ab.
+          $missing = $null
+          try { ./scripts/update-feed.ps1 -Installer $env:SETUP -Version $env:VERSION -Url $url -Out $feed -PubKey $pub } catch { $missing = $_.Exception.Message }
+          if ($missing -notmatch "TAURI_SIGNING_PRIVATE_KEY fehlt") { throw "Ohne Schlüssel hätte update-feed.ps1 mit Grund abbrechen müssen: $missing" }
+          Write-Host "Ohne Schlüssel: $missing"
+
+          $hash = (Get-FileHash -Algorithm SHA256 $env:SETUP).Hash
+          $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content -Raw "$work/probe.key").Trim()
+          ./scripts/update-feed.ps1 -Installer $env:SETUP -Version $env:VERSION -Url $url -Out $feed -PubKey $pub -Notes $notes
+          Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY, Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+          Get-Content $feed | Write-Host
+          if ((Get-FileHash -Algorithm SHA256 $env:SETUP).Hash -ne $hash) { throw "Die Updater-Signatur hat den Installer verändert." }
+          $sig = Get-AuthenticodeSignature -LiteralPath $env:SETUP
+          if ($sig.Status -ne "Valid") { throw "Authenticode-Signatur nach der Updater-Signatur: $($sig.Status)" }
+          $json = Get-Content -Raw $feed | ConvertFrom-Json
+          if ($json.version -ne $env:VERSION -or $json.platforms."windows-x86_64".url -ne $url -or $json.notes -ne $notes) { throw "latest.json hat nicht die erwartete Form." }
+          node scripts/update-feed.mjs --check $feed --installer $env:SETUP --pubkey $pub
+          if ($LASTEXITCODE -ne 0) { throw "latest.json besteht die Prüfung nicht." }
+
+          # Gegenproben: veränderter Installer (gleicher Name) und der Release-Schlüssel aus tauri.conf.json (fremd).
+          $copyDir = Join-Path $work "manipuliert"
+          New-Item -ItemType Directory -Force -Path $copyDir | Out-Null
+          $copy = Join-Path $copyDir (Split-Path -Leaf $env:SETUP)
+          $bytes = [IO.File]::ReadAllBytes($env:SETUP)
+          $bytes[[int]($bytes.Length / 2)] = $bytes[[int]($bytes.Length / 2)] -bxor 0xFF
+          [IO.File]::WriteAllBytes($copy, $bytes)
+          node scripts/update-feed.mjs --check $feed --installer $copy --pubkey $pub
+          if ($LASTEXITCODE -eq 0) { throw "Veränderter Installer hätte abgelehnt werden müssen." }
+          node scripts/update-feed.mjs --check $feed --installer $env:SETUP
+          if ($LASTEXITCODE -eq 0) { throw "Mit fremdem Schlüssel (tauri.conf.json) hätte die Prüfung scheitern müssen." }
+          Write-Host "Gegenproben abgelehnt (veränderter Installer, fremder Schlüssel)."
+          exit 0
 
       - name: Zertifikat entfernen
         if: always() && steps.cert.outputs.thumbprint != ''

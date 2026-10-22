@@ -290,6 +290,11 @@ impl Store {
         }
     }
 
+    /// Schreibt Knips gerade noch etwas (Aufnahme, Editor, Löschen)?
+    pub fn writing(&self) -> bool {
+        !self.inner.lock().pending.is_empty()
+    }
+
     /// Wartet, bis alle Schreibvorgänge dieser Aufnahme auf der Platte sind.
     pub fn wait_until_written(&self, id: Id) {
         let last = self.inner.lock().writes.get(&id).cloned();

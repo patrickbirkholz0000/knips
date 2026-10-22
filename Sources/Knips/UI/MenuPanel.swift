@@ -87,7 +87,8 @@ import SwiftUI
             openRecent: { [weak self] item in self?.run { QuickAccessController.edit(item, tool: nil) } },
             settings: { [weak self] in self?.run { SettingsWindowController.show() } },
             history: { [weak self] in self?.run { HistoryWindowController.show() } },
-            quit: { NSApp.terminate(nil) }
+            quit: { NSApp.terminate(nil) },
+            update: { [weak self] in self?.run { Updates.shared.continueUpdate() } }
         )
     }
 
@@ -129,6 +130,8 @@ struct MenuActions {
     var settings: () -> Void
     var history: () -> Void
     var quit: () -> Void
+    /// Hinweis auf ein Update: installieren („Neu starten“), laden oder ansehen.
+    var update: () -> Void = {}
 }
 
 @MainActor final class MenuPanelModel: ObservableObject {
@@ -187,11 +190,14 @@ private extension View {
 // MARK: - Inhalt
 
 /// Panel-Inhalt (docs/design.md, „Menü-Panel“): Kopf mit Zeichen, Wortmarke und Status; Hauptaktion als große
-/// gehobene Zeile mit Tastenkappen; Raster der weiteren Aktionen; `ZULETZT` mit Vorschaubildern; leiser Fuß.
+/// gehobene Zeile mit Tastenkappen; Raster der weiteren Aktionen; `ZULETZT` mit Vorschaubildern; leiser Hinweis auf ein
+/// geladenes Update; leiser Fuß.
 struct MenuPanelView: View {
     @ObservedObject var model: MenuPanelModel
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var recorder = RecordingController.shared
+    @ObservedObject private var scroll = ScrollCaptureController.shared
+    @ObservedObject private var updates = Updates.shared
     let actions: MenuActions
 
     static let width: CGFloat = 344
@@ -211,6 +217,9 @@ struct MenuPanelView: View {
                 recentRow
             }
             divider.padding(.top, 14).padding(.bottom, 6)
+            if let notice = updateNotice {
+                updateRow(notice).padding(.top, 4).padding(.bottom, 6)
+            }
             footer
         }
         .padding(Self.inset)
@@ -409,6 +418,69 @@ struct MenuPanelView: View {
         .hoverID(id)
         .onDrag { DragProvider.make(for: item) }
         .help(item.title)
+    }
+
+    // MARK: Update
+
+    private struct UpdateNotice {
+        let symbol: String
+        let title: String
+        let detail: String
+        let button: String
+        let help: String
+        var enabled = true
+    }
+
+    /// Nur, wenn es etwas zu tun gibt: geladenes Update, gefundenes Update oder Hinweis auf eine neue Version.
+    private var updateNotice: UpdateNotice? {
+        switch updates.state {
+        case let .ready(version):
+            let busy = recorder.isBusy || scroll.active
+            return UpdateNotice(symbol: "arrow.down.circle", title: "Knips \(version) ist bereit",
+                                detail: busy ? "Nach der Aufnahme möglich" : "Installiert beim Beenden",
+                                button: "Neu starten", help: "Neu starten und aktualisieren", enabled: !busy)
+        case let .available(version):
+            return UpdateNotice(symbol: "arrow.down.circle", title: "Knips \(version) ist verfügbar", detail: "Noch nicht geladen",
+                                button: "Laden", help: "Laden und installieren")
+        case let .info(version, _):
+            return UpdateNotice(symbol: "info.circle", title: "Knips \(version) ist verfügbar", detail: "Mehr dazu auf GitHub",
+                                button: "Ansehen", help: "Release-Seite öffnen")
+        default:
+            return nil
+        }
+    }
+
+    private func updateRow(_ notice: UpdateNotice) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        return HStack(spacing: 10) {
+            Image(systemName: notice.symbol)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.brand(Brand.Dark.accent))
+                .frame(width: 28, height: 28)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.brand(Brand.Dark.accentSoft)))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(notice.title)
+                    .font(Brand.font(13, .medium))
+                    .foregroundStyle(Color.brand(Brand.Dark.ink))
+                    .lineLimit(1)
+                Text(notice.detail)
+                    .font(Brand.font(11.5))
+                    .foregroundStyle(Color.brand(Brand.Dark.muted))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            Button(notice.button, action: actions.update)
+                .buttonStyle(DarkButtonStyle(kind: .primary, height: 26, fontSize: 12))
+                .disabled(!notice.enabled)
+                .opacity(notice.enabled ? 1 : 0.45)
+                .help(notice.help)
+                .accessibilityLabel(notice.help)
+        }
+        .padding(.leading, 9)
+        .padding(.trailing, 10)
+        .frame(height: 48)
+        .background(shape.fill(Color.brand(Brand.Dark.raised.withAlphaComponent(0.55))))
+        .overlay(shape.strokeBorder(Color.brand(Brand.Dark.line)))
     }
 
     // MARK: Fuß

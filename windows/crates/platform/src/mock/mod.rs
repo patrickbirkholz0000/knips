@@ -321,11 +321,12 @@ pub mod hotkeys {
 
     pub enum RecordResult {
         Combo(KeyCombo),
-        /// Rücktaste/Entf ohne Strg/Alt/Win: Kürzel entfernen.
+        /// Rücktaste ohne Strg/Alt/Win: Kürzel entfernen.
         Remove,
         /// Esc.
         Cancel,
-        /// Taste ohne Strg/Alt/Win, die nicht allein stehen darf (nur „A“, Umschalt+A): die Aufnahme läuft weiter.
+        /// Keine echte Taste (Zeichen per Unicode-Eingabe, Eingabemethode, siehe `KeyCombo::is_valid`): die Aufnahme
+        /// läuft weiter.
         Invalid(KeyCombo),
     }
 
@@ -334,8 +335,8 @@ pub mod hotkeys {
         let _ = on_fire;
     }
 
-    /// Ersetzt alle Kürzel. `RegisterHotKey`, wo möglich; Win-Kombinationen, belegte Kürzel und
-    /// Druck (solange Windows sie dem Bildschirmausschnitt gibt) über den Tastatur-Hook, der die
+    /// Ersetzt alle Kürzel. `RegisterHotKey`, wo möglich; Win-Kombinationen, belegte Kürzel (außer Tasten zum
+    /// Tippen) und Druck (solange Windows sie dem Bildschirmausschnitt gibt) über den Tastatur-Hook, der die
     /// Taste dann verschluckt. Liefert die IDs, die gar nicht funktionieren.
     pub fn apply(bindings: &[(u32, KeyCombo)]) -> Vec<u32> {
         let _ = bindings;
@@ -370,6 +371,20 @@ pub mod hotkeys {
     pub fn simulate(combo: KeyCombo) {
         let _ = combo;
     }
+
+    /// Ein Zeichen per Unicode-Eingabe senden (Selbsttest `hotkeyrecord`).
+    pub fn simulate_char(c: char) {
+        let _ = c;
+    }
+
+    /// Selbsttest: `combo` belegen wie ein anderes Programm, solange der Rückgabewert lebt.
+    pub fn occupy(combo: KeyCombo) -> Option<Occupied> {
+        let _ = combo;
+        Some(Occupied)
+    }
+
+    /// Von `occupy` belegtes Kürzel; wird beim Fallenlassen wieder frei.
+    pub struct Occupied;
 
     /// Name der Taste `vk` auf dem aktuellen Layout — die Attrappe tut so, als wäre es das deutsche.
     pub fn key_name(vk: u32) -> String {

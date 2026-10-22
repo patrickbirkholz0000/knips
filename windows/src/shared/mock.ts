@@ -54,6 +54,7 @@ export const mockBootstrap: Bootstrap = {
     toggleRecording: "Umschalt+Druck",
   },
   hotkeyFailures: [],
+  hotkeyNotes: {},
   snippingKeyEnabled: true,
   paths: {
     itemsDir: "C:\\Users\\Nutzer\\AppData\\Local\\de.birkgroup.knips\\items",

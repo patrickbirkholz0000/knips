@@ -1,6 +1,7 @@
 #if KNIPS_DEV
 import AppKit
 import AVFoundation
+import Carbon
 import ScreenCaptureKit
 import SwiftUI
 import Vision
@@ -792,27 +793,71 @@ import Vision
                 Readiness.shared.simulated = nil
             }
             if pane == .shortcuts {
-                // Aufnahme mit Hinweis, dann mit Rückmeldung zu einer ungültigen Taste (nur gezeigt, ohne Tastatur-Monitor).
+                // Aufnahme mit Hinweis (nur gezeigt).
                 let recorder = HotkeyRecorderState.shared
                 recorder.recording = .captureArea
                 try await windowShot(window, out.appendingPathComponent("einstellungen-shortcuts-eingabe.png"))
-                func key(_ code: UInt16, _ chars: String, _ flags: NSEvent.ModifierFlags) -> NSEvent? {
-                    NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0,
-                                     context: nil, characters: chars, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)
-                }
-                if let shiftA = key(0, "A", .shift), let cmdShiftA = key(0, "A", [.command, .shift]), let f5 = key(96, "", []) {
-                    check("⇧A taugt nicht als Kürzel, Rückmeldung zeigt ⇧A",
-                          KeyCombo(event: shiftA) == nil && KeyCombo(pressed: shiftA).display == "⇧A")
-                    check("F5 allein taugt nicht als Kürzel", KeyCombo(event: f5) == nil)
-                    check("⇧⌘A taugt", KeyCombo(event: cmdShiftA) == KeyCombo(keyCode: 0, modifiers: 768)) // ⌘ 256 + ⇧ 512
-                    recorder.invalid = KeyCombo(pressed: shiftA)
-                    recorder.invalidCount += 1
-                } else {
-                    check("Tastenereignisse erzeugt", false)
-                }
-                try await windowShots(window, out, "einstellungen-shortcuts-ungueltig")
                 recorder.recording = nil
-                recorder.invalid = nil
+                // Was beim Festlegen aus einem Tastendruck wird: jede Taste taugt, auch allein; Esc bricht ab, ⌫ entfernt.
+                func key(_ code: Int, _ chars: String, _ flags: NSEvent.ModifierFlags) -> NSEvent? {
+                    NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: window.windowNumber,
+                                     context: nil, characters: chars, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: UInt16(code))
+                }
+                let shift = UInt32(shiftKey), cmd = UInt32(cmdKey)
+                let cases: [(String, NSEvent?, HotkeyRecorderState.Outcome)] = [
+                    ("⇧A wird Kürzel", key(kVK_ANSI_A, "A", .shift), .combo(KeyCombo(keyCode: UInt32(kVK_ANSI_A), modifiers: shift))),
+                    ("A allein wird Kürzel", key(kVK_ANSI_A, "a", []), .combo(KeyCombo(keyCode: UInt32(kVK_ANSI_A), modifiers: 0))),
+                    ("Pos1 (kVK_Home) allein wird Kürzel", key(kVK_Home, "", []), .combo(KeyCombo(keyCode: UInt32(kVK_Home), modifiers: 0))),
+                    ("F5 allein wird Kürzel", key(kVK_F5, "", []), .combo(KeyCombo(keyCode: UInt32(kVK_F5), modifiers: 0))),
+                    ("⌦ allein wird Kürzel (entfernt nicht)", key(kVK_ForwardDelete, "", []), .combo(KeyCombo(keyCode: UInt32(kVK_ForwardDelete), modifiers: 0))),
+                    ("⇧⌘A wird Kürzel", key(kVK_ANSI_A, "A", [.command, .shift]), .combo(KeyCombo(keyCode: UInt32(kVK_ANSI_A), modifiers: cmd | shift))),
+                    ("⌘⌫ wird Kürzel", key(kVK_Delete, "", .command), .combo(KeyCombo(keyCode: UInt32(kVK_Delete), modifiers: cmd))),
+                    ("Esc bricht ab", key(kVK_Escape, "\u{1b}", []), .cancel),
+                    ("⇧Esc bricht ab", key(kVK_Escape, "\u{1b}", .shift), .cancel),
+                    ("⌫ entfernt", key(kVK_Delete, "", []), .remove),
+                    ("⇧⌫ entfernt", key(kVK_Delete, "", .shift), .remove),
+                ]
+                for (name, event, want) in cases {
+                    guard let event else { check("\(name): Tastenereignis erzeugt", false); continue }
+                    check(name, HotkeyRecorderState.outcome(of: event) == want)
+                }
+                // Hinweis nur bei Tasten zum Tippen und Navigieren, allein oder mit ⇧.
+                let typing = [kVK_ANSI_A, kVK_ANSI_1, kVK_Space, kVK_Return, kVK_Tab, kVK_Home, kVK_End, kVK_PageUp, kVK_PageDown,
+                              kVK_LeftArrow, kVK_UpArrow, kVK_ForwardDelete, kVK_ANSI_Keypad5, kVK_ANSI_KeypadEnter, kVK_ANSI_Comma]
+                let other = [kVK_F5, kVK_F12, kVK_Help, kVK_Escape]
+                check("Hinweis bei Tipptasten allein und mit ⇧",
+                      typing.allSatisfy { KeyCombo(keyCode: UInt32($0), modifiers: 0).isTypingKey && KeyCombo(keyCode: UInt32($0), modifiers: shift).isTypingKey })
+                check("kein Hinweis mit ⌘/⌥/⌃",
+                      typing.allSatisfy { code in [cmdKey, optionKey, controlKey].allSatisfy { !KeyCombo(keyCode: UInt32(code), modifiers: UInt32($0)).isTypingKey } })
+                check("kein Hinweis bei F-Tasten, Hilfe, Esc", other.allSatisfy { !KeyCombo(keyCode: UInt32($0), modifiers: 0).isTypingKey })
+
+                // Echte Eingabe über den Tastatur-Monitor der Aufnahme. Ohne Kürzel in der Sandbox: Das Ende der Aufnahme
+                // registriert die Kürzel neu, und ein globales ↖ oder ⇧⌘4 aus dem Test hätte auf dem Rechner nichts verloren.
+                let saved = (settings.hotkeys, settings.disabledHotkeys)
+                settings.hotkeys = [:]
+                let typed: [(String, NSEvent?, KeyCombo?)] = [
+                    ("↖", key(kVK_Home, "", []), KeyCombo(keyCode: UInt32(kVK_Home), modifiers: 0)),
+                    ("⇧A", key(kVK_ANSI_A, "A", .shift), KeyCombo(keyCode: UInt32(kVK_ANSI_A), modifiers: shift)),
+                    ("Esc", key(kVK_Escape, "\u{1b}", []), nil),
+                ]
+                for (name, event, want) in typed {
+                    var result: KeyCombo?? = .none
+                    recorder.start(.captureArea) { result = .some($0) }
+                    if let event { NSApp.postEvent(event, atStart: false) }
+                    pumpEvents(for: 0.3)
+                    check("Aufnahme über den Monitor: \(name) → \(want?.display ?? "abgebrochen")", result == .some(want) && recorder.recording == nil)
+                    recorder.cancel()
+                }
+
+                // Gespeichert: Hinweis unter ↖ und ⇧A, nicht unter ⇧⌘3 (Bild hell und dunkel).
+                var keys = AppSettings.defaultHotkeys
+                keys[.captureArea] = KeyCombo(keyCode: UInt32(kVK_Home), modifiers: 0)
+                keys[.captureWindow] = KeyCombo(keyCode: UInt32(kVK_ANSI_A), modifiers: shift)
+                settings.hotkeys = keys
+                settings.disabledHotkeys = []
+                try await windowShots(window, out, "einstellungen-shortcuts-einzeltaste")
+                settings.hotkeys = saved.0
+                settings.disabledHotkeys = saved.1
             }
             if pane == .general {
                 // Anzeigedauer eingeschaltet (Sandbox-Domäne — die echten Einstellungen bleiben unberührt).

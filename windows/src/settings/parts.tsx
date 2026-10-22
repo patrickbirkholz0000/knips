@@ -43,8 +43,8 @@ export function SecondsField({ value, min, max, onChange }: { value: number; min
 }
 
 /**
- * Kürzel als Tastenkappen; Klick nimmt eine neue Kombination auf. `nudge` zählt ungültige Tasten während der
- * Aufnahme: Jede neue lässt den Knopf kurz zucken.
+ * Kürzel als Tastenkappen; Klick nimmt eine neue Taste oder Kombination auf. `nudge` zählt ungültige Eingaben
+ * während der Aufnahme: Jede neue lässt den Knopf kurz zucken.
  */
 export function KeyButton({
   action,
@@ -75,7 +75,7 @@ export function KeyButton({
       type="button"
       data-hotkey={action}
       className={cx("st-keybtn", recording && "is-rec", !recording && !label && "is-empty", dim && "is-dim")}
-      title="Klicken und neue Tastenkombination drücken"
+      title="Klicken und neue Taste oder Kombination drücken"
       onClick={onClick}
     >
       {recording ? "Tasten drücken …" : label ? <Keys combo={label} /> : "Nicht belegt"}

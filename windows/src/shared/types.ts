@@ -202,6 +202,8 @@ export interface Bootstrap {
   hotkeyLabels: Partial<Record<HotkeyAction, string>>;
   /** Kürzel, die nicht registriert werden konnten. */
   hotkeyFailures: HotkeyAction[];
+  /** Hinweis je Kürzel, das eine Taste zum Tippen allein belegt („Pos1 wirkt jetzt überall – …“). */
+  hotkeyNotes: Partial<Record<HotkeyAction, string>>;
   /** Windows 11: „Druck-Taste öffnet Bildschirmausschnitt“ ist an. */
   snippingKeyEnabled: boolean;
   paths: {
@@ -290,7 +292,7 @@ export interface HotkeyRecorded {
   action: HotkeyAction;
   /**
    * "rejected": Die Kombination tippt auf einem installierten Layout ein Zeichen (Strg+Alt = AltGr), siehe `message`.
-   * "invalid": Taste ohne Strg/Alt/Win (nur „A“, Umschalt+A), siehe `message` — die Aufnahme läuft weiter.
+   * "invalid": keine echte Taste (Zeichen per Unicode-Eingabe, Eingabemethode), siehe `message` — die Aufnahme läuft weiter.
    */
   result: "combo" | "remove" | "cancel" | "rejected" | "invalid";
   combo: KeyCombo | null;

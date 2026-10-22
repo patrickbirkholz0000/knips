@@ -3,12 +3,14 @@
 //! Einstellungen → Tastaturkürzel öffnen, den Knopf eines Kürzels anklicken (im Fenster und einmal mit der
 //! simulierten Maus), dann Tasten wie von einer Tastatur drücken (`SendInput` als fremde Eingabe — nicht mit
 //! der Kennung, die der Hook als eigene überspringt). Geprüft: Ereignis `hotkey-recorded`, Einstellung und
-//! Anzeige im Fenster, das neue Kürzel löst aus und das alte nicht mehr, Umschalt+F-Taste, Esc bricht ab,
-//! Rücktaste entfernt, ungültige Tasten (nur „A“, Umschalt+A) bekommen eine Rückmeldung und die Aufnahme
-//! läuft weiter; verliert das Fenster den Fokus oder wird es geschlossen, endet die Aufnahme; ein Hook-Kürzel
-//! (Druck) löst aus, während die Einstellungen vorn sind. Jede Taste meldet die Aufrufe des Tastatur-Hooks —
-//! bis 1.0.0 blieben sie bei 0, solange ein Knips-Fenster im Vordergrund war (Raw Input, siehe main.rs).
-//! Ausführen ist durch eine Liste ersetzt: Es wird nie aufgenommen.
+//! Anzeige im Fenster, das neue Kürzel löst aus und das alte nicht mehr; einzelne Tasten („A“, Umschalt+A,
+//! Pos1, Entf) werden angenommen und bekommen den Hinweis, dass sie in anderen Apps fehlen, Pos1 kommt in der
+//! Seite nicht an (`RegisterHotKey` schluckt sie); eine Taste, die ein anderes Programm hat, steht als belegt da;
+//! Umschalt+F-Taste, Esc bricht ab, Rücktaste entfernt, ein Zeichen per Unicode-Eingabe (keine Taste) bekommt
+//! eine Rückmeldung und die Aufnahme läuft weiter; verliert das Fenster den Fokus oder wird es geschlossen, endet
+//! die Aufnahme; ein Hook-Kürzel (Druck) löst aus, während die Einstellungen vorn sind. Jede Taste meldet die
+//! Aufrufe des Tastatur-Hooks — bis 1.0.0 blieben sie bei 0, solange ein Knips-Fenster im Vordergrund war
+//! (Raw Input, siehe main.rs). Ausführen ist durch eine Liste ersetzt: Es wird nie aufgenommen.
 //! Bilder: `kuerzel-*.png` (hell und dunkel).
 
 use std::path::Path;
@@ -25,11 +27,16 @@ use tauri::{AppHandle, Listener, Manager, WebviewWindow};
 use crate::selftest::{probe, shoot};
 
 const VK_A: u32 = 0x41;
+const VK_B: u32 = 0x42;
 const VK_K: u32 = 0x4B;
 const VK_L: u32 = 0x4C;
 const VK_F7: u32 = 0x76;
 const VK_ESCAPE: u32 = 0x1B;
 const VK_BACK: u32 = 0x08;
+const VK_END: u32 = 0x23;
+const VK_HOME: u32 = 0x24;
+const VK_DELETE: u32 = 0x2E;
+const VK_PACKET: u32 = 0xE7;
 
 /// Nutzlast von `hotkey-recorded` (wie `hotkeys::Recorded`).
 #[derive(Deserialize, Debug, Clone)]
@@ -95,31 +102,86 @@ fn steps(app: &AppHandle, out: &Path, fired: Arc<Mutex<Vec<HotkeyAction>>>, even
     println!("Einstellungen im Vordergrund: {}", run.window.is_focused().unwrap_or(false));
     run.shoot("kuerzel-vorher.png");
 
-    // 1. Ganzen Bildschirm (Strg+Druck) → Strg+Umschalt+K, mit ungültigen Tasten dazwischen.
+    // 1. Ganzen Bildschirm (Strg+Druck) → nur „A“: angenommen, mit Hinweis, löst aus.
     run.start("captureFullscreen", false);
     run.shoot("kuerzel-aufnahme.png");
-    run.invalid(KeyCombo::new(VK_A, 0), "A");
+    let a = KeyCombo::new(VK_A, 0);
+    run.record(A::CaptureFullscreen, a, "A");
+    run.note("captureFullscreen", Some("A"));
+    run.fires(a, Some(A::CaptureFullscreen), "A löst „Bildschirm“ aus");
+
+    // 2. Umschalt+A: angenommen, mit Hinweis; „A“ allein löst nichts mehr aus.
+    run.start("captureFullscreen", false);
+    let shift_a = KeyCombo::new(VK_A, MOD_SHIFT);
+    run.record(A::CaptureFullscreen, shift_a, "Umschalt+A");
+    run.note("captureFullscreen", Some("Umschalt+A"));
+    run.fires(shift_a, Some(A::CaptureFullscreen), "Umschalt+A löst „Bildschirm“ aus");
+    run.fires(a, None, "„A“ allein löst nichts mehr aus");
+
+    // 3. Pos1: angenommen, mit Hinweis; löst aus, Umschalt+A nicht mehr. Die Seite im Vordergrund bekommt Pos1 nicht
+    // (`RegisterHotKey` gibt den Tastendruck nicht weiter), eine freie Taste schon.
+    run.start("captureFullscreen", false);
+    let home = KeyCombo::new(VK_HOME, 0);
+    run.record(A::CaptureFullscreen, home, "Pos1");
+    run.note("captureFullscreen", Some("Pos1"));
+    run.shoot("kuerzel-einzeltaste.png");
+    run.fires(home, Some(A::CaptureFullscreen), "Pos1 löst „Bildschirm“ aus");
+    run.fires(shift_a, None, "altes Umschalt+A löst nichts mehr aus");
+    run.swallowed(home, "Pos1");
+
+    // 4. Ein Zeichen per Unicode-Eingabe ist keine Taste: Rückmeldung, die Aufnahme läuft weiter. Dann
+    // Strg+Umschalt+K: kein Hinweis mehr, Pos1 löst nichts mehr aus.
+    run.start("captureFullscreen", false);
+    run.invalid('x');
     run.shoot("kuerzel-ungueltig.png");
-    run.invalid(KeyCombo::new(VK_A, MOD_SHIFT), "Umschalt+A");
     let ctrl_shift_k = KeyCombo::new(VK_K, MOD_CONTROL | MOD_SHIFT);
     run.record(A::CaptureFullscreen, ctrl_shift_k, "Strg+Umschalt+K");
+    run.note("captureFullscreen", None);
     run.shoot("kuerzel-neu.png");
     run.fires(ctrl_shift_k, Some(A::CaptureFullscreen), "Strg+Umschalt+K löst „Bildschirm“ aus");
+    run.fires(home, None, "altes Pos1 löst nichts mehr aus");
 
-    // 2. Noch einmal ändern: Strg+Umschalt+L; das alte Strg+Umschalt+K löst nichts mehr aus.
+    // 5. Noch einmal ändern: Strg+Umschalt+L; das alte Strg+Umschalt+K löst nichts mehr aus.
     run.start("captureFullscreen", false);
     let ctrl_shift_l = KeyCombo::new(VK_L, MOD_CONTROL | MOD_SHIFT);
     run.record(A::CaptureFullscreen, ctrl_shift_l, "Strg+Umschalt+L");
     run.fires(ctrl_shift_l, Some(A::CaptureFullscreen), "Strg+Umschalt+L löst „Bildschirm“ aus");
     run.fires(ctrl_shift_k, None, "altes Strg+Umschalt+K löst nichts mehr aus");
 
-    // 3. Unbelegtes Kürzel mit echtem Mausklick → Umschalt+F7.
+    // 6. Unbelegtes Kürzel mit echtem Mausklick → Umschalt+F7 (F-Taste: kein Hinweis).
     run.start("captureText", true);
     let shift_f7 = KeyCombo::new(VK_F7, MOD_SHIFT);
     run.record(A::CaptureText, shift_f7, "Umschalt+F7");
+    run.note("captureText", None);
     run.fires(shift_f7, Some(A::CaptureText), "Umschalt+F7 löst „Text erfassen“ aus");
 
-    // 4. Esc bricht ab: Kürzel bleibt.
+    // 7. Ende hat ein anderes Programm: gespeichert, aber als belegt angezeigt (kein Hook, der es ihm wegnimmt);
+    // ist die Taste wieder frei, gilt das Kürzel nach dem nächsten Registrieren.
+    let end = KeyCombo::new(VK_END, 0);
+    match hk::occupy(end) {
+        Some(held) => {
+            run.start("captureLastArea", false);
+            run.record(A::CaptureLastArea, end, "Ende");
+            let failures = k.hotkey_failures.lock().clone();
+            run.check("belegtes Ende: nicht registriert", failures.contains(&A::CaptureLastArea), format!("{failures:?}"));
+            let fail = run.fail("captureLastArea");
+            run.check("belegtes Ende: Zeile „belegt“", fail.contains("Von einer anderen App belegt"), format!("„{fail}“"));
+            run.note("captureLastArea", None);
+            run.shoot("kuerzel-belegt.png");
+            run.fires(end, None, "belegtes Ende löst nichts aus");
+            drop(held);
+            crate::hotkeys::apply();
+            k.broadcast_bootstrap();
+            run.settled();
+            let fail = run.fail("captureLastArea");
+            run.check("freies Ende: keine Zeile „belegt“", fail.is_empty(), format!("„{fail}“"));
+            run.note("captureLastArea", Some("Ende"));
+            run.fires(end, Some(A::CaptureLastArea), "freies Ende löst „Letzter Bereich“ aus");
+        }
+        None => run.check("Ende belegen wie ein anderes Programm", false, "schon belegt"),
+    }
+
+    // 8. Esc bricht ab: Kürzel bleibt.
     run.start("captureText", false);
     run.press(KeyCombo::new(VK_ESCAPE, 0));
     let ev = run.wait_event(Duration::from_secs(2));
@@ -131,7 +193,13 @@ fn steps(app: &AppHandle, out: &Path, fired: Arc<Mutex<Vec<HotkeyAction>>>, even
     let shown = run.button("captureText");
     run.check("Esc: Anzeige unverändert", shown == "Umschalt+F7", &shown);
 
-    // 5. Rücktaste entfernt: danach „Nicht belegt“, Strg+Umschalt+L löst nichts mehr aus.
+    // 9. Entf entfernt nicht (das macht nur die Rücktaste), sondern wird selbst zum Kürzel.
+    run.start("captureScrolling", false);
+    let delete = KeyCombo::new(VK_DELETE, 0);
+    run.record(A::CaptureScrolling, delete, "Entf");
+    run.note("captureScrolling", Some("Entf"));
+
+    // 10. Rücktaste entfernt: danach „Nicht belegt“, Strg+Umschalt+L löst nichts mehr aus.
     run.start("captureFullscreen", false);
     run.press(KeyCombo::new(VK_BACK, 0));
     let ev = run.wait_event(Duration::from_secs(2));
@@ -148,28 +216,32 @@ fn steps(app: &AppHandle, out: &Path, fired: Arc<Mutex<Vec<HotkeyAction>>>, even
     // aus, während ein Knips-Fenster vorn ist (bis 1.0.0 nicht: Raw-Input-Anmeldung von tao, siehe main.rs).
     run.fires(KeyCombo::new(VK_SNAPSHOT, 0), Some(A::CaptureArea), "Druck löst „Bereich“ aus, Einstellungen vorn");
 
-    // 6. Zweiter Klick auf denselben Knopf bricht ab (ohne Taste).
+    // 11. Zweiter Klick auf denselben Knopf bricht ab (ohne Taste).
     run.start("captureArea", false);
     run.click("captureArea");
     std::thread::sleep(Duration::from_millis(400));
     let shown = run.button("captureArea");
     run.check("zweiter Klick beendet die Aufnahme", !hk::is_recording() && shown == "Druck", format!("Hook wartet: {}, Anzeige {shown}", hk::is_recording()));
 
-    // Dunkel: Aufnahme mit Hinweis und Rückmeldung zu einer ungültigen Taste.
+    // Dunkel: Aufnahme mit Hinweis, Rückmeldung zu einer Eingabe, die keine Taste ist, und Pos1 mit Hinweis.
     k.settings.update(|s| s.appearance = Appearance::Dark);
     k.broadcast_bootstrap();
     std::thread::sleep(Duration::from_millis(500));
     run.start("captureArea", false);
     run.shoot("kuerzel-aufnahme-dunkel.png");
-    run.invalid(KeyCombo::new(VK_A, MOD_SHIFT), "Umschalt+A");
+    run.invalid('x');
     run.shoot("kuerzel-ungueltig-dunkel.png");
     run.press(KeyCombo::new(VK_ESCAPE, 0));
     let _ = run.wait_event(Duration::from_secs(2));
     run.settled();
+    run.start("captureFullscreen", false);
+    run.record(A::CaptureFullscreen, home, "Pos1");
+    run.note("captureFullscreen", Some("Pos1"));
+    run.shoot("kuerzel-einzeltaste-dunkel.png");
     k.settings.update(|s| s.appearance = Appearance::Light);
     k.broadcast_bootstrap();
 
-    // 7. Ein anderes Fenster kommt nach vorn: Die Aufnahme endet (der Hook schluckt sonst Tasten in jeder App).
+    // 12. Ein anderes Fenster kommt nach vorn: Die Aufnahme endet (der Hook schluckt sonst Tasten in jeder App).
     run.start("captureArea", false);
     if run.window.is_focused().unwrap_or(false) {
         crate::commands::show_history(app);
@@ -190,7 +262,7 @@ fn steps(app: &AppHandle, out: &Path, fired: Arc<Mutex<Vec<HotkeyAction>>>, even
         std::thread::sleep(Duration::from_millis(300));
     }
 
-    // 8. Einstellungen schließen, während aufgenommen wird: Der Hook hört auf zu schlucken.
+    // 13. Einstellungen schließen, während aufgenommen wird: Der Hook hört auf zu schlucken.
     run.start("captureArea", false);
     let _ = run.window.destroy();
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -330,9 +402,12 @@ impl Run<'_> {
         std::thread::sleep(Duration::from_millis(500));
     }
 
-    /// Ungültige Taste: Rückmeldung `invalid` mit Text, die Aufnahme läuft weiter.
-    fn invalid(&mut self, combo: KeyCombo, name: &str) {
-        self.press(combo);
+    /// Zeichen per Unicode-Eingabe (VK_PACKET, keine Taste): Rückmeldung `invalid` mit Text, die Aufnahme läuft weiter.
+    fn invalid(&mut self, c: char) {
+        let before = hk::hook_calls();
+        hk::simulate_char(c);
+        std::thread::sleep(Duration::from_millis(150));
+        println!("   Zeichen „{c}“ per Unicode-Eingabe: Hook-Aufrufe {before} → {}", hk::hook_calls());
         let ev = self.wait_event(Duration::from_millis(1200));
         std::thread::sleep(Duration::from_millis(200));
         let still = hk::is_recording();
@@ -340,17 +415,52 @@ impl Run<'_> {
         let shown = self.js("document.querySelector('.st-keybtn.is-rec')?.textContent ?? 'keine Aufnahme'");
         let hint = self.js("document.querySelector('[data-hotkey-hint]')?.textContent ?? ''");
         let message = ev.as_ref().and_then(|e| e.message.clone()).unwrap_or_default();
+        let combo = KeyCombo::new(VK_PACKET, 0);
         let ok = still
             && shown.starts_with("Tasten drücken")
             && ev.as_ref().is_some_and(|e| e.result == "invalid" && e.combo == Some(combo))
-            && message.starts_with(&format!("{name} geht nicht"))
-            && message.contains("Strg, Alt oder Win")
+            && message == crate::hotkeys::INVALID_MESSAGE
             && hint.contains(&message);
         self.check(
-            &format!("{name} abgelehnt, Aufnahme läuft weiter"),
+            &format!("Unicode-Zeichen „{c}“ abgelehnt, Aufnahme läuft weiter"),
             ok,
             format!("Ereignis {ev:?}, Hook wartet {still}, Anzeige „{shown}“, Hinweis „{hint}“, weitere {current:?}"),
         );
+    }
+
+    /// Hinweis unter einem gespeicherten Kürzel, das eine Taste zum Tippen allein belegt (`None` = keiner).
+    fn note(&mut self, action: &str, key: Option<&str>) {
+        let shown = self.js(&format!("document.querySelector('[data-hotkey-note={action}]')?.textContent ?? ''"));
+        let (name, ok) = match key {
+            Some(k) => (format!("{k}: Hinweis „wirkt jetzt überall“"), shown == format!("{k} wirkt jetzt überall – in anderen Apps geht {k} dann nicht mehr.")),
+            None => (format!("{action}: kein Hinweis"), shown.is_empty()),
+        };
+        self.check(&name, ok, format!("„{shown}“"));
+    }
+
+    /// Zeile „Von einer anderen App belegt …“ unter dem Kürzel (leer, wenn keine da ist).
+    fn fail(&self, action: &str) -> String {
+        self.js(&format!(
+            "document.querySelector('[data-hotkey={action}]')?.closest('.k-row')?.querySelector('.st-fail')?.textContent ?? ''"
+        ))
+    }
+
+    /// Ein Kürzel aus einer einzelnen Taste kommt in der Seite im Vordergrund nicht an (`RegisterHotKey` schluckt den
+    /// Tastendruck, ohne Hook); eine freie Taste schon — sonst hat die Seite keinen Tastaturfokus und es ist nicht prüfbar.
+    fn swallowed(&mut self, combo: KeyCombo, name: &str) {
+        let keys = |run: &mut Self, c: KeyCombo| {
+            run.js("(window.__keys = [], window.__keysOn || window.addEventListener('keydown', (e) => window.__keys.push(e.key), true), window.__keysOn = true, 'ok')");
+            run.press(c);
+            std::thread::sleep(Duration::from_millis(200));
+            run.js("window.__keys.join(',')")
+        };
+        let free = keys(self, KeyCombo::new(VK_B, 0));
+        let got = keys(self, combo);
+        if free.is_empty() {
+            println!("   (Schlucken von {name} nicht prüfbar: Die Seite bekommt keine Tasten, Fokus {})", self.window.is_focused().unwrap_or(false));
+            return;
+        }
+        self.check(&format!("{name} kommt in der Seite nicht an"), got.is_empty(), format!("freie Taste: „{free}“, {name}: „{got}“"));
     }
 
     /// Gültige Kombination: Ereignis, Einstellung, Anzeige.

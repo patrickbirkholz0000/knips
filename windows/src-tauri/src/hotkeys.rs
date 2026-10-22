@@ -58,7 +58,7 @@ pub fn apply() {
 struct Recorded {
     action: HotkeyAction,
     /// „combo“, „remove“, „cancel“, „rejected“ (Kombination tippt ein Zeichen, siehe `message`) oder „invalid“
-    /// (Taste ohne Strg/Alt/Win, siehe `message`; die Aufnahme läuft weiter).
+    /// (keine echte Taste, siehe `message`; die Aufnahme läuft weiter).
     result: &'static str,
     combo: Option<KeyCombo>,
     message: Option<String>,
@@ -81,9 +81,16 @@ pub fn altgr_conflict(combo: &KeyCombo) -> Option<String> {
     ))
 }
 
-/// Rückmeldung zu einer Taste, die ohne Strg/Alt/Win nicht als Kürzel taugt (nur „A“, Umschalt+A).
-pub fn invalid_message(combo: &KeyCombo) -> String {
-    format!("{} geht nicht – braucht Strg, Alt oder Win.", label(combo))
+/// Rückmeldung zu einer Eingabe, die keine Taste ist (Zeichen per Unicode-Eingabe, Eingabemethode).
+pub const INVALID_MESSAGE: &str = "Keine Taste erkannt – bitte eine Taste der Tastatur drücken.";
+
+/// Hinweis unter einem Kürzel, das eine Taste zum Tippen oder Navigieren allein belegt (Pos1, „A“, Umschalt+A):
+/// Solange Knips läuft, kommt sie in keiner anderen App mehr an.
+pub fn typing_note(combo: &KeyCombo) -> Option<String> {
+    combo.is_typing_key().then(|| {
+        let name = label(combo);
+        format!("{name} wirkt jetzt überall – in anderen Apps geht {name} dann nicht mehr.")
+    })
 }
 
 /// Nächste Tastenkombination für `action` aufnehmen (Einstellungen).
@@ -93,7 +100,7 @@ pub fn record(action: HotkeyAction) {
         let (kind, combo, message) = match result {
             RecordResult::Invalid(c) => {
                 // Die Aufnahme läuft weiter: nur Rückmeldung, nichts ändern.
-                k.emit("hotkey-recorded", Recorded { action, result: "invalid", combo: Some(c), message: Some(invalid_message(&c)) });
+                k.emit("hotkey-recorded", Recorded { action, result: "invalid", combo: Some(c), message: Some(INVALID_MESSAGE.into()) });
                 return;
             }
             RecordResult::Combo(c) => match altgr_conflict(&c) {

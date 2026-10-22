@@ -27,18 +27,22 @@ impl KeyCombo {
         Self { vk, mods }
     }
 
-    /// Tasten, die beim normalen Tippen nicht vorkommen — dürfen ohne Strg/Alt/Win belegt werden
-    /// (Druck, Pause, Rollen, F1–F24, Einfg).
-    pub fn is_standalone_key(vk: u32) -> bool {
-        matches!(vk, 0x2C | 0x13 | 0x91 | 0x2D) || (0x70..=0x87).contains(&vk)
-    }
-
-    /// Wie `KeyCombo(event:)` auf dem Mac: ohne Strg/Alt/Win wäre eine normale Taste beim Tippen belegt.
+    /// Jede echte Taste taugt als Kürzel, auch allein (Pos1, „A“, Umschalt+A). Nicht: reine Modifier und
+    /// Werte, die keine Taste sind — Zeichen per Unicode-Eingabe (VK_PACKET, Bildschirmtastatur, Passwortmanager),
+    /// Eingabemethoden (VK_PROCESSKEY), 0 und 0xFF.
     pub fn is_valid(&self) -> bool {
         if matches!(self.vk, 0x10 | 0x11 | 0x12 | 0x5B | 0x5C | 0xA0..=0xA5) {
             return false; // reine Modifier
         }
-        self.mods & (MOD_CONTROL | MOD_ALT | MOD_WIN) != 0 || Self::is_standalone_key(self.vk)
+        !matches!(self.vk, 0 | 0xE5 | 0xE7) && self.vk < 0xFF
+    }
+
+    /// Taste, die beim Tippen oder Navigieren gebraucht wird (Buchstaben, Ziffern, Zeichen, Leertaste, Eingabe,
+    /// Tab, Pos1, Ende, Bild↑/↓, Pfeile, Entf, Ziffernblock), ohne Strg/Alt/Win — als Kürzel fehlt sie dann in
+    /// allen anderen Apps. Die Einstellungen sagen das dazu; `RegisterHotKey` statt Tastatur-Hook.
+    pub fn is_typing_key(&self) -> bool {
+        self.mods & (MOD_CONTROL | MOD_ALT | MOD_WIN) == 0
+            && matches!(self.vk, 0x09 | 0x0C | 0x0D | 0x20..=0x28 | 0x2E | 0x30..=0x39 | 0x41..=0x5A | 0x60..=0x6F | 0xBA..=0xC0 | 0xDB..=0xDF | 0xE2)
     }
 
     /// Braucht den Tastatur-Hook statt `RegisterHotKey` (Windows reserviert Win-Kombinationen).
@@ -484,7 +488,6 @@ mod tests {
         let us = |vk: u32| if vk == 0xBA { ";".to_string() } else { key_name(vk) };
         assert_eq!(KeyCombo::new(0xBA, MOD_CONTROL | MOD_SHIFT).display_with(us), "Strg+Umschalt+;");
         assert_eq!(KeyCombo::new(VK_SNAPSHOT, MOD_ALT).display_with(us), "Alt+Druck");
-        assert!(!KeyCombo::new(0x41, MOD_SHIFT).is_valid());
         assert!(KeyCombo::new(0x2C, MOD_SHIFT).is_valid());
         let json = serde_json::to_string(&s).unwrap();
         let back: Settings = serde_json::from_str(&json).unwrap();
@@ -498,6 +501,45 @@ mod tests {
         // Knips-Fenster sind für Bildschirmübertragungen standardmäßig sichtbar, auch mit alter settings.json.
         assert!(!s.hide_from_screen_sharing && !partial.hide_from_screen_sharing);
         assert!(json.contains(r#""hideFromScreenSharing":false"#));
+    }
+
+    #[test]
+    fn single_keys() {
+        // Jede Taste taugt, auch allein: Buchstaben, Ziffern, Pos1, Pfeile, Ziffernblock, F-Tasten, Druck.
+        for vk in [0x41, 0x5A, 0x30, 0x24, 0x23, 0x21, 0x22, 0x25, 0x28, 0x20, 0x0D, 0x09, 0x2E, 0x2D, 0x60, 0x6B, 0x77, 0x2C, 0x13, 0x91, 0xBA, 0xE2, 0xAD] {
+            for mods in [0, MOD_SHIFT, MOD_CONTROL, MOD_ALT | MOD_SHIFT, MOD_WIN] {
+                assert!(KeyCombo::new(vk, mods).is_valid(), "{vk:#x} mit {mods} gültig");
+            }
+        }
+        // Nicht: reine Modifier, Unicode-Eingabe, Eingabemethode, keine Taste.
+        for vk in [0x10, 0x11, 0x12, 0x5B, 0x5C, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xE5, 0xE7, 0, 0xFF, 0x100] {
+            assert!(!KeyCombo::new(vk, 0).is_valid(), "{vk:#x} ungültig");
+            assert!(!KeyCombo::new(vk, MOD_CONTROL).is_valid(), "Strg+{vk:#x} ungültig");
+        }
+        // Tasten zum Tippen und Navigieren, allein oder nur mit Umschalt → Hinweis in den Einstellungen.
+        for vk in [0x41, 0x5A, 0x30, 0x39, 0x20, 0x0D, 0x09, 0x24, 0x23, 0x21, 0x22, 0x25, 0x26, 0x27, 0x28, 0x2E, 0x60, 0x69, 0x6A, 0x6F, 0x0C, 0xBA, 0xC0, 0xDB, 0xDE, 0xE2] {
+            assert!(KeyCombo::new(vk, 0).is_typing_key(), "{} ist eine Tipptaste", key_name(vk));
+            assert!(KeyCombo::new(vk, MOD_SHIFT).is_typing_key(), "Umschalt+{} ist eine Tipptaste", key_name(vk));
+            for mods in [MOD_CONTROL, MOD_ALT, MOD_WIN, MOD_CONTROL | MOD_SHIFT] {
+                assert!(!KeyCombo::new(vk, mods).is_typing_key(), "{} mit Modifier {mods} ist keine", key_name(vk));
+            }
+        }
+        // F-Tasten, Druck, Pause, Rollen, Einfg, Medientasten: wie bisher ohne Hinweis.
+        for vk in [0x70, 0x77, 0x87, 0x2C, 0x13, 0x91, 0x2D, 0xAD, 0xB3] {
+            assert!(!KeyCombo::new(vk, 0).is_typing_key(), "{} ist keine Tipptaste", key_name(vk));
+            assert!(!KeyCombo::new(vk, MOD_SHIFT).is_typing_key(), "Umschalt+{} ist keine Tipptaste", key_name(vk));
+        }
+        assert_eq!(KeyCombo::new(0x24, 0).display(), "Pos1");
+        assert_eq!(KeyCombo::new(0x41, MOD_SHIFT).display(), "Umschalt+A");
+        // Gespeicherte Einzeltasten bleiben beim Laden erhalten, unbrauchbare fallen weg.
+        let mut s = Settings::default();
+        s.hotkeys.insert(HotkeyAction::CaptureText, KeyCombo::new(0x24, 0));
+        s.hotkeys.insert(HotkeyAction::PinClipboard, KeyCombo::new(0x41, MOD_SHIFT));
+        s.hotkeys.insert(HotkeyAction::CaptureScrolling, KeyCombo::new(0xE7, 0));
+        s.sanitize();
+        assert_eq!(s.hotkeys.get(&HotkeyAction::CaptureText), Some(&KeyCombo::new(0x24, 0)));
+        assert_eq!(s.hotkeys.get(&HotkeyAction::PinClipboard), Some(&KeyCombo::new(0x41, MOD_SHIFT)));
+        assert!(!s.hotkeys.contains_key(&HotkeyAction::CaptureScrolling));
     }
 
     #[test]

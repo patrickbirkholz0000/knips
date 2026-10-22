@@ -847,8 +847,10 @@ fn overlay_test() -> Result<()> {
 
 // ------------------------------------------------------------------ hotkeys / clipboard
 
-/// Kürzel über beide Wege: `RegisterHotKey` (Strg+Alt+F9, Alt+Druck) und Tastatur-Hook (Win+Umschalt+4,
-/// Druck solange Windows ihn dem Bildschirmausschnitt gibt). Tasten werden simuliert wie von der Tastatur.
+/// Kürzel über beide Wege: `RegisterHotKey` (Strg+Alt+F9, Alt+Druck, einzelne Tasten wie Pos1 und F8) und
+/// Tastatur-Hook (Win+Umschalt+4, Druck solange Windows ihn dem Bildschirmausschnitt gibt). Hat ein anderes Programm
+/// eine Kombination, übernimmt der Hook; eine Taste zum Tippen (Ende) bleibt dann nicht registriert. Tasten werden
+/// simuliert wie von der Tastatur.
 fn hotkeys_test() -> Result<()> {
     use knips_core::settings::{KeyCombo, MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, VK_SNAPSHOT};
     use knips_platform::hotkeys;
@@ -864,32 +866,57 @@ fn hotkeys_test() -> Result<()> {
         (2, KeyCombo::new(0x34, MOD_WIN | MOD_SHIFT)),
         (3, KeyCombo::new(VK_SNAPSHOT, MOD_ALT)),
         (4, KeyCombo::new(VK_SNAPSHOT, MOD_SHIFT)),
+        (5, KeyCombo::new(0x24, 0)),
+        (6, KeyCombo::new(0x77, 0)),
     ];
     let failed = hotkeys::apply(&bindings);
-    println!("Nicht registrierbar: {failed:?}");
+    println!("Nicht registrierbar: {failed:?}, Hook aktiv: {}", hotkeys::hook_installed());
     let mut missing = vec![];
-    for (id, combo) in bindings {
+    // Löst `combo` genau `want` aus (`None` = nichts)?
+    let fires = |combo: KeyCombo, want: Option<u32>, name: &str, missing: &mut Vec<String>| {
         while rx.try_recv().is_ok() {}
+        let calls = hotkeys::hook_calls();
         hotkeys::simulate(combo);
-        match rx.recv_timeout(Duration::from_millis(1500)) {
-            Ok(got) if got == id => println!("   ok     {}", combo.display()),
-            Ok(got) => {
-                println!("   FALSCH {}: Kennung {got}", combo.display());
-                missing.push(combo.display());
-            }
-            Err(_) => {
-                println!("   FALSCH {}: nichts ausgelöst", combo.display());
-                missing.push(combo.display());
-            }
+        let got = rx.recv_timeout(Duration::from_millis(if want.is_some() { 1500 } else { 800 })).ok();
+        let ok = got == want;
+        println!("   {} {name}: ausgelöst {got:?}, Hook-Aufrufe {calls} → {}", if ok { "ok    " } else { "FALSCH" }, hotkeys::hook_calls());
+        if !ok {
+            missing.push(name.to_string());
         }
         std::thread::sleep(Duration::from_millis(200));
+    };
+    for (id, combo) in bindings {
+        fires(combo, Some(id), &combo.display(), &mut missing);
     }
     // Abgeschaltet: darf nicht mehr auslösen.
     hotkeys::apply(&[]);
-    while rx.try_recv().is_ok() {}
-    hotkeys::simulate(bindings[0].1);
-    if rx.recv_timeout(Duration::from_millis(800)).is_ok() {
-        missing.push("nach dem Abmelden ausgelöst".into());
+    fires(bindings[0].1, None, "Strg+Alt+F9 nach dem Abmelden", &mut missing);
+    fires(bindings[4].1, None, "Pos1 nach dem Abmelden", &mut missing);
+
+    // Hat ein anderes Programm das Kürzel: Kombinationen übernimmt der Hook, Tasten zum Tippen bleiben ihm (nicht
+    // registriert, die Einstellungen zeigen „belegt“). Wieder frei → nach dem nächsten Registrieren aktiv.
+    let end = KeyCombo::new(0x23, 0);
+    let ctrl_alt_f10 = KeyCombo::new(0x79, MOD_CONTROL | MOD_ALT);
+    match (hotkeys::occupy(end), hotkeys::occupy(ctrl_alt_f10)) {
+        (Some(held_end), Some(held_combo)) => {
+            let failed = hotkeys::apply(&[(7, end), (8, ctrl_alt_f10)]);
+            let ok = failed == [7];
+            println!("   {} belegt: nicht registriert {failed:?} (erwartet [7] = Ende)", if ok { "ok    " } else { "FALSCH" });
+            if !ok {
+                missing.push("belegtes Ende nicht gemeldet".into());
+            }
+            fires(end, None, "belegtes Ende löst nichts aus", &mut missing);
+            fires(ctrl_alt_f10, Some(8), "belegtes Strg+Alt+F10 über den Hook", &mut missing);
+            drop((held_end, held_combo));
+            let failed = hotkeys::apply(&[(7, end), (8, ctrl_alt_f10)]);
+            if !failed.is_empty() {
+                println!("   FALSCH wieder frei: nicht registriert {failed:?}");
+                missing.push("freies Ende nicht registriert".into());
+            }
+            fires(end, Some(7), "freies Ende", &mut missing);
+            hotkeys::apply(&[]);
+        }
+        _ => missing.push("Ende/Strg+Alt+F10 ließen sich nicht belegen".into()),
     }
 
     // Tastennamen und AltGr je Layout (unabhängig vom Layout des Rechners): Zeichentasten heißen wie ihre

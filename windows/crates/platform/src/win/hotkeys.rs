@@ -1,9 +1,12 @@
 //! Globale Kürzel. Ein eigener Thread mit Nachrichtenschleife:
 //!
-//! - `RegisterHotKey(NULL, …)` wo möglich (WM_HOTKEY in der Schleife),
+//! - `RegisterHotKey(NULL, …)` wo möglich (WM_HOTKEY in der Schleife), auch für einzelne Tasten (Pos1, „A“):
+//!   Windows gibt den Tastendruck dann nicht an die App im Vordergrund weiter, ein Hook ist dafür nicht nötig,
 //! - ein `WH_KEYBOARD_LL`-Hook (derselbe Thread) für alles, was `RegisterHotKey` nicht kann:
 //!   Win-Kombinationen, belegte Kürzel und Druck, solange Windows 11 die Taste dem Snipping Tool gibt.
 //!   Der Hook verschluckt die Taste (Down und Up), damit weder Startmenü noch Snipping Tool reagieren.
+//!   Tasten zum Tippen (`KeyCombo::is_typing_key`), die ein anderes Programm schon hat, nimmt Knips ihm nicht
+//!   per Hook weg — das Kürzel gilt dann als nicht registriert und die Einstellungen zeigen es.
 //!
 //! Hook-Regeln: im Hook nur Atomics, keine Locks,
 //! keine Allokation (sonst läuft er in `LowLevelHooksTimeout` und Windows entfernt ihn STILL);
@@ -25,12 +28,12 @@ use windows::Win32::System::Diagnostics::Debug::MessageBeep;
 use windows::Win32::System::Registry::{RegGetValueW, RegSetKeyValueW, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, REG_DWORD, RRF_RT_REG_DWORD, RRF_RT_REG_SZ};
 use windows::Win32::System::Threading::{GetCurrentThread, GetCurrentThreadId, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL};
 #[cfg(feature = "dev")]
-use windows::Win32::UI::Input::KeyboardAndMouse::{LoadKeyboardLayoutW, UnloadKeyboardLayout, KLF_NOTELLSHELL};
+use windows::Win32::UI::Input::KeyboardAndMouse::{LoadKeyboardLayoutW, UnloadKeyboardLayout, KEYEVENTF_UNICODE, KLF_NOTELLSHELL};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyboardLayout, GetKeyboardLayoutList, MapVirtualKeyExW, RegisterHotKey, SendInput, ToUnicodeEx,
     UnregisterHotKey, HKL, HOT_KEY_MODIFIERS, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
     KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, MAPVK_VK_TO_CHAR, MAPVK_VK_TO_VSC, VIRTUAL_KEY, VK_BACK, VK_CONTROL,
-    VK_DELETE, VK_ESCAPE, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RWIN, VK_SHIFT,
+    VK_ESCAPE, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId, PeekMessageW,
@@ -42,11 +45,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 pub enum RecordResult {
     Combo(KeyCombo),
-    /// Rücktaste/Entf ohne Strg/Alt/Win: Kürzel entfernen.
+    /// Rücktaste ohne Strg/Alt/Win: Kürzel entfernen.
     Remove,
     /// Esc.
     Cancel,
-    /// Taste ohne Strg/Alt/Win, die nicht allein stehen darf (nur „A“, Umschalt+A): die Aufnahme läuft weiter.
+    /// Keine echte Taste (Zeichen per Unicode-Eingabe, Eingabemethode, siehe `KeyCombo::is_valid`): die Aufnahme
+    /// läuft weiter.
     Invalid(KeyCombo),
 }
 
@@ -147,7 +151,8 @@ fn mark_consumed() {
 }
 
 fn extended(vk: u16) -> bool {
-    matches!(vk, v if v == VK_RMENU.0 || v == VK_RCONTROL.0 || v == VK_RWIN.0 || v == VK_LWIN.0)
+    // Rechte Modifier, Win und der Block Einfg/Entf/Pos1/Ende/Bild↑↓/Pfeile (auf echten Tastaturen mit E0-Präfix).
+    matches!(vk, v if v == VK_RMENU.0 || v == VK_RCONTROL.0 || v == VK_RWIN.0 || v == VK_LWIN.0) || matches!(vk, 0x21..=0x28 | 0x2D | 0x2E)
 }
 
 /// Kennung in `dwExtraInfo` für Tasten, die Knips selbst sendet — nur diese ignoriert der Hook.
@@ -210,7 +215,7 @@ fn record_key(vk: u32, down: bool) -> bool {
     if vk == VK_ESCAPE.0 as u32 {
         RECORDING.store(false, Ordering::SeqCst);
         post(WM_RECORDED, 2, 0);
-    } else if (vk == VK_BACK.0 as u32 || vk == VK_DELETE.0 as u32) && mods & (MOD_CONTROL | MOD_ALT | MOD_WIN) == 0 {
+    } else if vk == VK_BACK.0 as u32 && mods & (MOD_CONTROL | MOD_ALT | MOD_WIN) == 0 {
         RECORDING.store(false, Ordering::SeqCst);
         post(WM_RECORDED, 1, 0);
     } else if KeyCombo::new(vk, mods).is_valid() {
@@ -380,6 +385,11 @@ fn apply_bindings(st: &mut State, bindings: Vec<(u32, KeyCombo)>) -> Vec<u32> {
             if ok {
                 st.registered.push((next_reg, *id));
                 next_reg += 1;
+                continue;
+            }
+            if combo.is_typing_key() {
+                // Pos1, „A“ … hat ein anderes Programm: Der Hook würde die Taste ihm und jeder App wegnehmen.
+                failed.push(*id);
                 continue;
             }
         }
@@ -605,8 +615,8 @@ fn send_cmd(cmd: Cmd) -> bool {
     unsafe { PostThreadMessageW(tid, WM_CMD, WPARAM(0), LPARAM(0)) }.is_ok()
 }
 
-/// Ersetzt alle Kürzel. `RegisterHotKey`, wo möglich; Win-Kombinationen, belegte Kürzel und
-/// Druck (solange Windows sie dem Bildschirmausschnitt gibt) über den Tastatur-Hook, der die
+/// Ersetzt alle Kürzel. `RegisterHotKey`, wo möglich; Win-Kombinationen, belegte Kürzel (außer Tasten zum
+/// Tippen) und Druck (solange Windows sie dem Bildschirmausschnitt gibt) über den Tastatur-Hook, der die
 /// Taste dann verschluckt. Liefert die IDs, die gar nicht funktionieren.
 pub fn apply(bindings: &[(u32, KeyCombo)]) -> Vec<u32> {
     let all: Vec<u32> = bindings.iter().map(|(id, _)| *id).collect();
@@ -892,6 +902,77 @@ pub fn simulate(combo: KeyCombo) {
     // SAFETY: inputs ist ein gültiges Feld von INPUT-Strukturen.
     unsafe {
         SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    }
+}
+
+/// Ein Zeichen per Unicode-Eingabe senden, wie Bildschirmtastatur oder Passwortmanager (Selbsttest
+/// `hotkeyrecord`): Der Hook sieht dabei VK_PACKET statt einer Taste.
+#[cfg(feature = "dev")]
+pub fn simulate_char(c: char) {
+    let mut buf = [0u16; 2];
+    let inputs: Vec<INPUT> = c
+        .encode_utf16(&mut buf)
+        .iter()
+        .flat_map(|unit| {
+            [false, true].map(|up| INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VIRTUAL_KEY(0),
+                        wScan: *unit,
+                        dwFlags: if up { KEYEVENTF_UNICODE | KEYEVENTF_KEYUP } else { KEYEVENTF_UNICODE },
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            })
+        })
+        .collect();
+    // SAFETY: inputs ist ein gültiges Feld von INPUT-Strukturen.
+    unsafe {
+        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    }
+}
+
+/// Selbsttest: `combo` belegen wie ein anderes Programm (`RegisterHotKey` in einem eigenen Thread), solange der
+/// Rückgabewert lebt. `None`, wenn die Kombination schon jemand hat.
+#[cfg(feature = "dev")]
+pub fn occupy(combo: KeyCombo) -> Option<Occupied> {
+    let (ready_tx, ready_rx) = channel();
+    let (stop_tx, stop_rx) = channel::<()>();
+    let thread = std::thread::spawn(move || {
+        // SAFETY: Registrierung für diesen Thread (hwnd = NULL); er hält sie, bis `Occupied` fällt.
+        let ok = unsafe { RegisterHotKey(None, 1, HOT_KEY_MODIFIERS(combo.mods | MOD_NOREPEAT), combo.vk) }.is_ok();
+        let _ = ready_tx.send(ok);
+        if ok {
+            let _ = stop_rx.recv();
+            // SAFETY: Registrierung stammt von diesem Thread.
+            unsafe {
+                let _ = UnregisterHotKey(None, 1);
+            }
+        }
+    });
+    if ready_rx.recv_timeout(Duration::from_secs(3)).unwrap_or(false) {
+        Some(Occupied { stop: stop_tx, thread: Some(thread) })
+    } else {
+        None
+    }
+}
+
+/// Von `occupy` belegtes Kürzel; wird beim Fallenlassen wieder frei.
+#[cfg(feature = "dev")]
+pub struct Occupied {
+    stop: Sender<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(feature = "dev")]
+impl Drop for Occupied {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
     }
 }
 

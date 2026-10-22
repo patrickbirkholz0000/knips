@@ -317,9 +317,21 @@ html[data-view="settings"] body {
   gap: 7px;
   color: var(--k-ink-muted);
 }
+/* Hinweis unter einem Kürzel, das eine Taste zum Tippen allein belegt: nur Info, kein Fehler. */
+.st-note {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: var(--k-ink-soft);
+}
+.st-note svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--k-accent);
+}
 
-/* Hinweis unter dem Kürzel, solange Knips auf die neue Kombination wartet; darüber die Rückmeldung zu einer
-   ungültigen Taste. Tastennamen in Mono. */
+/* Hinweis unter dem Kürzel, solange Knips auf die neue Taste wartet; darüber die Rückmeldung zu einer
+   Eingabe, die keine Taste ist. Tastennamen in Mono. */
 .st-rechint {
   display: flex;
   flex-direction: column;

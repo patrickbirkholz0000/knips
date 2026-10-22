@@ -121,11 +121,11 @@ export function KeyCap({ children, size, tone }: { children: ReactNode; size?: "
   return <kbd className={cx("k-key", size === "lg" && "k-key--lg", tone === "dark" && "k-key--dark")}>{children}</kbd>;
 }
 
-/** „Strg+Umschalt+Druck“ → ["Strg", "Umschalt", "Druck"]; die Plus-Taste selbst bleibt erhalten („Strg++“). */
+/** „Strg+Umschalt+Druck“ → ["Strg", "Umschalt", "Druck"]; Plus-Tasten bleiben erhalten („Strg++“, „Num +“). */
 export function comboParts(label: string): string[] {
-  if (label === "+") return ["+"];
-  if (label.endsWith("++")) return [...label.slice(0, -2).split("+").filter(Boolean), "+"];
-  return label.split("+").filter(Boolean);
+  const key = label.endsWith("Num +") ? "Num +" : label.endsWith("+") ? "+" : null;
+  if (!key) return label.split("+").filter(Boolean);
+  return [...label.slice(0, -key.length).split("+").filter(Boolean), key];
 }
 
 /** Kürzel als Tastenkappen mit leisem „+“ dazwischen („Strg+Druck“ → [Strg] + [Druck]). */

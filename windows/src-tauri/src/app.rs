@@ -64,6 +64,8 @@ pub struct Bootstrap {
     pub settings: Settings,
     pub hotkey_labels: BTreeMap<HotkeyAction, String>,
     pub hotkey_failures: Vec<HotkeyAction>,
+    /// Hinweis je Kürzel, das eine Taste zum Tippen allein belegt (`hotkeys::typing_note`).
+    pub hotkey_notes: BTreeMap<HotkeyAction, String>,
     pub snipping_key_enabled: bool,
     pub paths: BootPaths,
     pub platform: &'static str,
@@ -92,9 +94,11 @@ impl Knips {
     pub fn bootstrap(&self) -> Bootstrap {
         let settings = self.settings.get();
         let hotkey_labels = settings.hotkeys.iter().map(|(a, c)| (*a, hotkeys::label(c))).collect();
+        let hotkey_notes = settings.hotkeys.iter().filter_map(|(a, c)| Some((*a, hotkeys::typing_note(c)?))).collect();
         Bootstrap {
             hotkey_labels,
             hotkey_failures: self.hotkey_failures.lock().clone(),
+            hotkey_notes,
             snipping_key_enabled: knips_platform::hotkeys::snipping_key_enabled(),
             paths: BootPaths {
                 items_dir: paths::items_dir().to_string_lossy().into_owned(),

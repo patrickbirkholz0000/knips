@@ -69,8 +69,8 @@ im Fenster.
   Windows-Dialoge (`tauri_plugin_dialog`).
 - Im Browser prüfen: `pnpm dev`, `node scripts/shot.mjs "/settings/start" …`; Attrappen-Schalter in der Adresse:
   `?fehlt` (Bereit-Check mit offenen Schritten), `?bereit` (alles erledigt), `nomedia`, `nohevc`, im Verlauf `?leer`,
-  in den Tastaturkürzeln `?aufnahme` (wartet ohne Ende) und `?ungueltig` (meldet Umschalt+A als ungültig), jeweils mit
-  `--click='[data-hotkey=captureFullscreen]'`. Dunkel: Systemmodus des Browsers (die Attrappe steht auf „System“), in
+  in den Tastaturkürzeln `?aufnahme` (wartet ohne Ende), `?ungueltig` (meldet eine Eingabe, die keine Taste ist) und
+  `?einzeltaste` (nimmt Pos1 auf, mit Hinweis), jeweils mit `--click='[data-hotkey=captureFullscreen]'`. Dunkel: Systemmodus des Browsers (die Attrappe steht auf „System“), in
   `shot.mjs` mit `--dark`.
 
 ## Selbsttests
@@ -89,8 +89,8 @@ Alle zusammen: `scripts/selftest.ps1` (macht die CI). Nur einige in der CI, ohne
 | `track` | mitlaufender Balken in scrollendem Testvideo deckt zu jedem Zeitpunkt ab |
 | `video` | MP4-Export mit Kürzen + Balken, GIF-Export, Auto-Zensur im Video; Quelle mit variabler Bildrate (wie eine Aufnahme, Ø 9 fps): wirksam ≈ 30 fps, Export ≥ 24 fps, jedes Exportbild zeigt das Quellbild seiner Zeit |
 | `perf` | Zeiten: Standbild, 1×+PNG, Texterkennung |
-| `hotkeys` | Kürzel über RegisterHotKey und Tastatur-Hook mit simulierten Tastendrücken (auch Druck, Win-Kombination); Tastennamen und AltGr-Erkennung auf dem deutschen und US-Layout (`probe_layout` lädt sie kurz) |
-| `hotkeyrecord` | Kürzel ändern wie ein Nutzer: Einstellungen → Tastaturkürzel, Knopf anklicken (im Fenster und einmal mit simulierter Maus), Tasten per `SendInput` als fremde Eingabe (nicht `OWN_INJECT`). Strg+Umschalt+K/L und Umschalt+F7: Ereignis `hotkey-recorded`, Einstellung, Anzeige, das neue Kürzel löst aus, das alte nicht mehr; nur „A“ und Umschalt+A → `invalid` mit Hinweis unter dem Kürzel, die Aufnahme läuft weiter; Esc bricht ab, Rücktaste entfernt, zweiter Klick beendet; Fokus weg oder Fenster zu beendet die Aufnahme; Druck (Hook-Kürzel) löst aus, während die Einstellungen vorn sind. Jede Taste mit Zahl der Hook-Aufrufe im Log. Ausführen ist durch eine Liste ersetzt, nimmt nie auf. Bilder `kuerzel-*.png` (auch dunkel) |
+| `hotkeys` | Kürzel über RegisterHotKey und Tastatur-Hook mit simulierten Tastendrücken (auch Druck, Win-Kombination, einzelne Tasten Pos1 und F8); hat ein anderes Programm das Kürzel (`hotkeys::occupy`), übernimmt der Hook Strg+Alt+F10, Ende bleibt nicht registriert und löst nichts aus, wieder frei löst es aus; Tastennamen und AltGr-Erkennung auf dem deutschen und US-Layout (`probe_layout` lädt sie kurz) |
+| `hotkeyrecord` | Kürzel ändern wie ein Nutzer: Einstellungen → Tastaturkürzel, Knopf anklicken (im Fenster und einmal mit simulierter Maus), Tasten per `SendInput` als fremde Eingabe (nicht `OWN_INJECT`). Nur „A“, Umschalt+A, Pos1, Strg+Umschalt+K/L, Umschalt+F7 und Entf: Ereignis `hotkey-recorded`, Einstellung, Anzeige, das neue Kürzel löst aus, das alte nicht mehr; einzelne Tasten zum Tippen mit Hinweis „… wirkt jetzt überall“ (`data-hotkey-note`), Kombinationen und F-Tasten ohne; Pos1 kommt in der Seite im Vordergrund nicht an, eine freie Taste schon; Ende, das ein anderes Programm hat (`hotkeys::occupy`), steht als „Von einer anderen App belegt“ da, wieder frei löst es aus; ein Zeichen per Unicode-Eingabe (VK_PACKET, keine Taste) → `invalid` mit Rückmeldung unter dem Kürzel, die Aufnahme läuft weiter; Esc bricht ab, Rücktaste entfernt, zweiter Klick beendet; Fokus weg oder Fenster zu beendet die Aufnahme; Druck (Hook-Kürzel) löst aus, während die Einstellungen vorn sind. Jede Taste mit Zahl der Hook-Aufrufe im Log. Ausführen ist durch eine Liste ersetzt, nimmt nie auf. Bilder `kuerzel-*.png` (auch dunkel) |
 | `overlay` | das echte Auswahl-Overlay mit simulierter Maus/Tastatur: Ziehen, Umschalt-Quadrat, Esc, Eingabe, Leertaste + Fensterklick — nur auf Rechnern ohne Nutzer (CI) |
 | `clipboard` | echte Zwischenablage: Bild verzögert anbieten (PNG/JPEG) und zurücklesen; privates Kopieren (nach der Aufnahme) vom Verlauf/Cloud ausgeschlossen und trotzdem einfügbar — nur für die CI |
 | `telemetry` | Nutzungsstatistik gegen einen lokalen Server (127.0.0.1): in Sandbox/CI aus, ohne Zustimmung nichts, Zustimmung → Ereignisse → Senden (Nutzlast, Erlaubt-Liste, Deckel 10000) → Zähler zurückgesetzt, Fehler behält Zähler, Widerruf löscht Kennung + Zähler; Nutzlast als `telemetry-payload.json` |
@@ -200,13 +200,27 @@ mit fremdem Fenster vorn oder ohne die Anmeldung 6 von 6. Bis 1.0.0 nahm deshalb
 Tastatur-Hook frisch ein (einen still entfernten hielte `HOOK` sonst für aktiv), erneuert ihn während der Aufnahme
 alle 2 s und schluckt bis zum Ergebnis jede Taste, in allen Apps. Im Hook-Thread läuft nichts, was hängen kann
 (Signalton und Rückmeldung in eigenem Thread), sonst hängt Windows den Hook nach einer Zeitüberschreitung still aus.
-Unter dem Kürzel steht solange der Hinweis „Kombination mit Strg, Alt oder Win drücken – oder eine F-Taste/Druck.
-Esc bricht ab, Rücktaste entfernt.“ Gültig: mit Strg/Alt/Win oder Druck, Pause, Rollen, Einfg,
-F1–F24 allein (`KeyCombo::is_valid`), Umschalt darf dazu. Eine ungültige Taste (nur „A“, Umschalt+A) piept, meldet
-`hotkey-recorded` mit `result: "invalid"` („Umschalt+A geht nicht – braucht Strg, Alt oder Win.“, Zeile mit rotem Punkt,
-der Knopf zuckt kurz) und die Aufnahme läuft weiter. Verliert das Einstellungsfenster den Fokus oder wird es
+Unter dem Kürzel steht solange der Hinweis „Taste oder Kombination drücken. Esc bricht ab, Rücktaste entfernt.“
+Gültig ist jede Taste außer reinen Modifiern, mit und ohne Strg/Alt/Win/Umschalt (`KeyCombo::is_valid`): auch Pos1,
+„A“, Umschalt+A, Entf. Nur Esc (bricht ab) und Rücktaste ohne Strg/Alt/Win (entfernt) lassen sich so nicht allein
+belegen. Was keine Taste ist (Zeichen per Unicode-Eingabe von Bildschirmtastatur oder Passwortmanager = VK_PACKET,
+Eingabemethoden), piept, meldet `hotkey-recorded` mit `result: "invalid"` („Keine Taste erkannt – …“, Zeile mit rotem
+Punkt, der Knopf zuckt kurz) und die Aufnahme läuft weiter. Verliert das Einstellungsfenster den Fokus oder wird es
 geschlossen, endet die Aufnahme (`blur` in `panes.tsx`, `app::on_window_destroyed`) — sonst schluckte der Hook weiter
 Tasten in anderen Apps.
+
+**Einzelne Tasten** (Pos1, „A“, Umschalt+A, F8) registriert Knips wie Kombinationen per `RegisterHotKey` (Modifier 0 bzw.
+Umschalt, `MOD_NOREPEAT`). Den Hook brauchen sie nicht: Windows gibt den Tastendruck eines registrierten Kürzels nicht an
+die App im Vordergrund weiter (in der CI geprüft: Pos1 kommt in der Seite nicht an, eine freie Taste schon), auch über
+eigenen Fenstern, und `RegisterHotKey` hängt nicht wie der Hook an Zeitlimits. Nur das Loslassen kommt an, das bei
+diesen Tasten nichts auslöst. Liegt eine Taste zum Tippen oder Navigieren allein auf einem Kürzel
+(`KeyCombo::is_typing_key`: Buchstaben, Ziffern, Zeichen, Leertaste, Eingabe, Tab, Pos1, Ende, Bild↑/↓, Pfeile, Entf,
+Ziffernblock; ohne Strg/Alt/Win, auch mit Umschalt), steht unter dem Kürzel als Hinweis (Info-Symbol in Königsblau, kein
+Fehler) „Pos1 wirkt jetzt überall – in anderen Apps geht Pos1 dann nicht mehr.“ (`hotkeys::typing_note`, Bootstrap
+`hotkeyNotes`). Hat ein anderes Programm eine solche Taste schon registriert, nimmt Knips sie ihm nicht per Hook weg (das
+täte es in jeder App): Das Kürzel landet in `hotkey_failures`, darunter steht „Von einer anderen App belegt – wähl ein
+anderes Kürzel.“, der Start-Bereich zählt es als offenen Schritt. Belegte Kombinationen, Druck und F-Tasten übernimmt
+der Hook wie bisher.
 
 Druck = Bereich (Leertaste: Fenster) · Alt+Druck = Fenster · Strg+Druck = Bildschirm · Umschalt+Druck =
 Video starten/stoppen. „Mac-Belegung“ in den Einstellungen: Win+Umschalt+4/2/3/5. Windows 11 gibt Druck
@@ -304,6 +318,10 @@ erstes Bild leer sein kann (Desktop Duplication, Overlay, siehe „Windows-Eigen
 simuliert. Bildschirmbild wie Discord/OBS zeigt jetzt die Knips-Fenster, eigene Standbilder nicht.
 Noch am Gerät zu testen: Discord/Teams/OBS mit und ohne „In Bildschirmübertragungen verbergen“, erstes Standbild
 nach dem Start auf echter Grafikkarte (HDR, mehrere Monitore).
+CI 22.10.2026 (einzelne Tasten als Kürzel): alle 21 Selbsttests grün. „A“, Umschalt+A, Pos1, Ende, Entf und F8 lösen
+über `RegisterHotKey` aus, Pos1 kommt in der Seite im Vordergrund nicht an (eine freie Taste schon), ein von einem
+anderen Programm belegtes Ende steht als „belegt“ da und löst nichts aus, ein belegtes Strg+Alt+F10 übernimmt der Hook.
+Noch am Gerät zu testen: Einzeltasten neben Tools, die dieselbe Taste registrieren (AutoHotkey, Hersteller-Tools).
 
 ## Windows-Ausgaben und ältere Versionen
 

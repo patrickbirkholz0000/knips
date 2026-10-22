@@ -10,6 +10,7 @@ import {
   EyeOff,
   Film,
   Folder,
+  Info,
   Keyboard,
   ScanText,
   ShieldCheck,
@@ -106,7 +107,7 @@ const GROUPS: [string, HotkeyAction[]][] = [
   ["Sonstiges", ["pinClipboard"]],
 ];
 
-/** Unter dem Kürzel, solange Knips auf die neue Kombination wartet. */
+/** Unter dem Kürzel, solange Knips auf die neue Taste wartet. */
 function RecordHint({ action, invalid }: { action: HotkeyAction; invalid?: string }) {
   return (
     <span className="st-rechint" data-hotkey-hint={action} role="status" aria-live="polite">
@@ -117,15 +118,14 @@ function RecordHint({ action, invalid }: { action: HotkeyAction; invalid?: strin
         </span>
       )}
       <span>
-        Kombination mit <kbd>Strg</kbd>, <kbd>Alt</kbd> oder <kbd>Win</kbd> drücken – oder <span className="st-nowrap">eine F-Taste/<kbd>Druck</kbd></span>.{" "}
-        <kbd>Esc</kbd> bricht ab, <kbd>Rücktaste</kbd> entfernt.
+        Taste oder Kombination drücken. <kbd>Esc</kbd> bricht ab, <kbd>Rücktaste</kbd> entfernt.
       </span>
     </span>
   );
 }
 
 export function Shortcuts({ boot }: { boot: Bootstrap }) {
-  const { settings: s, hotkeyLabels, hotkeyFailures } = boot;
+  const { settings: s, hotkeyLabels, hotkeyFailures, hotkeyNotes } = boot;
   const [recording, setRecordingState] = useState<HotkeyAction | null>(null);
   const [rejected, setRejected] = useState<string | null>(null);
   // Letzte ungültige Taste der laufenden Aufnahme; `n` zählt mit, damit jeder Druck sichtbar antwortet.
@@ -147,7 +147,7 @@ export function Shortcuts({ boot }: { boot: Bootstrap }) {
       if (r.result === "invalid") {
         // Die Aufnahme läuft weiter. Eine verspätete Meldung nach dem Ende zeigt nichts mehr an.
         if (recordingRef.current === r.action) {
-          setInvalid((prev) => ({ action: r.action, message: r.message ?? "Braucht Strg, Alt oder Win.", n: (prev?.n ?? 0) + 1 }));
+          setInvalid((prev) => ({ action: r.action, message: r.message ?? "Diese Taste geht nicht.", n: (prev?.n ?? 0) + 1 }));
         }
         return;
       }
@@ -220,6 +220,7 @@ export function Shortcuts({ boot }: { boot: Bootstrap }) {
             const combo = s.hotkeys[a];
             const on = active(a);
             const failed = on && hotkeyFailures.includes(a);
+            const note = on ? hotkeyNotes[a] : undefined;
             const rec = recording === a;
             const bad = rec && invalid?.action === a ? invalid : null;
             return (
@@ -233,7 +234,12 @@ export function Shortcuts({ boot }: { boot: Bootstrap }) {
                   ) : failed ? (
                     <span className="st-fail">
                       <Dot tone="missing" />
-                      Von einer anderen App belegt – wähl eine andere Kombination.
+                      Von einer anderen App belegt – wähl ein anderes Kürzel.
+                    </span>
+                  ) : note ? (
+                    <span className="st-note" data-hotkey-note={a}>
+                      <Info size={14} strokeWidth={2.2} aria-hidden="true" />
+                      {note}
                     </span>
                   ) : undefined
                 }
@@ -247,7 +253,7 @@ export function Shortcuts({ boot }: { boot: Bootstrap }) {
       ))}
       <Section
         title="Belegung"
-        footer="Kürzel anklicken und die neue Kombination drücken. Rücktaste entfernt, Esc bricht ab. Windows-Belegung: Druck Bereich (Leertaste: Fenster), Alt+Druck Fenster, Strg+Druck Bildschirm, Umschalt+Druck Video. Mac-Belegung: Win+Umschalt+4/2/3/5 – mit Mac-Tastatur am PC dieselben Griffe wie am Mac."
+        footer="Kürzel anklicken und die neue Taste oder Kombination drücken. Rücktaste entfernt, Esc bricht ab. Windows-Belegung: Druck Bereich (Leertaste: Fenster), Alt+Druck Fenster, Strg+Druck Bildschirm, Umschalt+Druck Video. Mac-Belegung: Win+Umschalt+4/2/3/5 – mit Mac-Tastatur am PC dieselben Griffe wie am Mac."
       >
         <Row title="Vorlage" description="Setzt alle Kürzel auf einmal.">
           <Button onClick={() => api.hotkeysResetDefaults()}>Windows-Belegung</Button>

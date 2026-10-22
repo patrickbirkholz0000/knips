@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import SwiftUI
 
 /// Kleine Vorschaubilder für die Stil-Auswahl, mit dem echten Renderer erzeugt.
@@ -67,11 +68,18 @@ extension SensitiveDetector.Kind {
 @MainActor final class HotkeyRecorderState: ObservableObject {
     static let shared = HotkeyRecorderState()
     @Published var recording: HotkeyAction?
-    /// Letzte Taste der laufenden Aufnahme, die ohne ⌘/⌥/⌃ nicht taugt (nur „A“, ⇧A) — die Aufnahme läuft weiter.
-    @Published var invalid: KeyCombo?
-    /// Zählt ungültige Tasten mit, damit jeder Druck sichtbar antwortet.
-    @Published var invalidCount = 0
     private var monitor: Any?
+
+    enum Outcome: Equatable {
+        case cancel, remove, combo(KeyCombo)
+    }
+
+    /// Esc bricht ab, ⌫ ohne ⌘/⌥/⌃ entfernt; jede andere Taste wird das Kürzel, auch allein (↖, „A“, ⇧A, ⌦).
+    static func outcome(of event: NSEvent) -> Outcome {
+        if event.keyCode == UInt16(kVK_Escape) { return .cancel }
+        if event.keyCode == UInt16(kVK_Delete), event.modifierFlags.intersection([.command, .option, .control]).isEmpty { return .remove }
+        return .combo(KeyCombo(event: event))
+    }
 
     /// Liefert die neue Kombination, `keyCode == UInt32.max` für „entfernen“, oder nil bei Abbruch.
     func start(_ action: HotkeyAction, onCombo: @escaping (KeyCombo?) -> Void) {
@@ -81,20 +89,13 @@ extension SensitiveDetector.Kind {
         HotkeyManager.shared.unregisterAll()
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
-            if event.keyCode == 53 { self.finish(); onCombo(nil); return nil }
-            if event.keyCode == 51 || event.keyCode == 117, event.modifierFlags.intersection([.command, .option, .control]).isEmpty {
-                self.finish()
-                onCombo(KeyCombo(keyCode: UInt32.max, modifiers: 0))
-                return nil
-            }
-            guard let combo = KeyCombo(event: event) else {
-                NSSound.beep()
-                self.invalid = KeyCombo(pressed: event)
-                self.invalidCount += 1
-                return nil
-            }
+            let outcome = Self.outcome(of: event)
             self.finish()
-            onCombo(combo)
+            switch outcome {
+            case .cancel: onCombo(nil)
+            case .remove: onCombo(KeyCombo(keyCode: UInt32.max, modifiers: 0))
+            case .combo(let combo): onCombo(combo)
+            }
             return nil
         }
     }
@@ -107,7 +108,6 @@ extension SensitiveDetector.Kind {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
         recording = nil
-        invalid = nil
         HotkeyManager.shared.apply(AppSettings.shared.activeHotkeys)
     }
 }

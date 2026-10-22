@@ -747,7 +747,7 @@ private struct ShortcutsPane: View {
                     }
                     .buttonStyle(BrandButtonStyle(kind: .quiet))
                 }
-                (Text("Kürzel anklicken und die neue Kombination drücken. ") + Text(Image(systemName: "delete.left"))
+                (Text("Kürzel anklicken und die neue Taste oder Kombination drücken. ") + Text(Image(systemName: "delete.left"))
                  + Text(" entfernt, ") + Text("Esc").font(Brand.mono(12)) + Text(" bricht ab. Standard wie bei macOS: ")
                  + defaultKeys(.captureFullscreen) + Text(" Bildschirm, ") + defaultKeys(.captureArea)
                  + Text(" Bereich (Leertaste: Fenster), ") + defaultKeys(.toggleRecording) + Text(" Video."))
@@ -790,7 +790,6 @@ private struct ShortcutRow: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject private var recorder = HotkeyRecorderState.shared
     @State private var hovering = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var combo: KeyCombo? { settings.hotkeys[action] }
     private var isRecording: Bool { recorder.recording == action }
@@ -817,12 +816,14 @@ private struct ShortcutRow: View {
                     .font(Brand.font(14, .medium))
                     .foregroundStyle(Color.brand(enabled.wrappedValue ? Brand.ink : Brand.inkSoft))
                 if isRecording {
-                    ShortcutRecordHint(invalid: recorder.invalid)
+                    ShortcutRecordHint()
                 } else if let warning {
                     Label(warning, systemImage: "exclamationmark.triangle.fill")
                         .font(Brand.font(12))
                         .foregroundStyle(Color.brand(Brand.warn))
                         .labelStyle(.titleAndIcon)
+                } else if let combo, enabled.wrappedValue, combo.isTypingKey {
+                    ShortcutTypingNote(combo: combo)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -849,11 +850,8 @@ private struct ShortcutRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            // Jede ungültige Taste lässt den Knopf kurz zucken (nur in der Zeile, die gerade aufnimmt).
-            .modifier(Nudge(animatableData: CGFloat(recorder.invalidCount)))
-            .animation(isRecording && !reduceMotion ? .easeOut(duration: 0.26) : nil, value: recorder.invalidCount)
             .onHover { hovering = $0 }
-            .help("Klicken und neue Tastenkombination drücken")
+            .help("Klicken und neue Taste oder Kombination drücken")
             BrandToggle(isOn: enabled, label: action.title).disabled(combo == nil)
         }
         .padding(.vertical, 12)
@@ -878,46 +876,33 @@ private struct ShortcutRow: View {
     }
 }
 
-/// Unter dem Kürzel, solange Knips auf die neue Kombination wartet; darüber die Rückmeldung zu einer Taste
-/// ohne ⌘/⌥/⌃ (die Aufnahme läuft weiter).
+/// Unter dem Kürzel, solange Knips auf die neue Taste wartet.
 private struct ShortcutRecordHint: View {
-    let invalid: KeyCombo?
-
-    private static func symbol(_ name: String) -> Text {
-        Text(Image(systemName: name)).font(.system(size: 11, weight: .semibold))
+    var body: some View {
+        (Text("Taste oder Kombination drücken. ") + Text("Esc").font(Brand.mono(11.5))
+         + Text(" bricht ab, ") + Text(Image(systemName: "delete.left")) + Text(" entfernt."))
+            .font(Brand.font(12))
+            .foregroundStyle(Color.brand(Brand.inkSoft))
+            .fixedSize(horizontal: false, vertical: true)
     }
+}
 
-    /// „⌘, ⌥ oder ⌃“ als Symbole wie auf den Tastenkappen.
-    private static var modifiers: Text {
-        symbol("command") + Text(", ") + symbol("option") + Text(" oder ") + symbol("control")
-    }
+/// Unter einem Kürzel, das eine Taste zum Tippen allein belegt (↖, „A“, ⇧A): nur ein Hinweis, kein Fehler.
+private struct ShortcutTypingNote: View {
+    let combo: KeyCombo
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            if let invalid {
-                HStack(spacing: 7) {
-                    Circle().fill(Color.brand(Brand.record)).frame(width: 7, height: 7)
-                    (invalid.inlineText(size: 12) + Text(" geht nicht – braucht ") + Self.modifiers + Text("."))
-                        .font(Brand.font(12, .medium))
-                        .foregroundStyle(Color.brand(Brand.ink))
-                }
-            }
-            (Text("Kombination mit ") + Self.modifiers + Text(" drücken. ") + Text("Esc").font(Brand.mono(11.5))
-             + Text(" bricht ab, ") + Text(Image(systemName: "delete.left")) + Text(" entfernt."))
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(Color.brand(Brand.accent))
+            (combo.inlineText(size: 12) + Text(" wirkt jetzt überall – in anderen Apps geht ") + combo.inlineText(size: 12)
+             + Text(" dann nicht mehr."))
                 .font(Brand.font(12))
                 .foregroundStyle(Color.brand(Brand.inkSoft))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .combine)
-    }
-}
-
-/// Kurzes Zucken: Jede ganze Zahl ist die Ruhelage, dazwischen schwingt es kurz hin und her.
-private struct Nudge: GeometryEffect {
-    var animatableData: CGFloat
-
-    func effectValue(size: CGSize) -> ProjectionTransform {
-        ProjectionTransform(CGAffineTransform(translationX: 4 * sin(animatableData * .pi * 3), y: 0))
     }
 }
 

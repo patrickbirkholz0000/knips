@@ -11,15 +11,9 @@ struct KeyCombo: Codable, Equatable, Hashable {
         self.modifiers = modifiers
     }
 
-    init?(event: NSEvent) {
-        let pressed = KeyCombo(pressed: event)
-        // Ohne ⌘/⌥/⌃ wäre die Taste beim normalen Tippen belegt.
-        guard pressed.modifiers & UInt32(cmdKey | optionKey | controlKey) != 0 else { return nil }
-        self = pressed
-    }
-
-    /// Was gedrückt wurde, auch wenn es als Kürzel nicht taugt (für die Rückmeldung beim Festlegen).
-    init(pressed event: NSEvent) {
+    /// Was gedrückt wurde. Jede Taste taugt als Kürzel, auch allein (↖, „A“, ⇧A) — Carbon registriert sie mit
+    /// Modifiern 0 genauso; macOS gibt den Tastendruck dann nicht an die App im Vordergrund weiter.
+    init(event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         var mods: UInt32 = 0
         if flags.contains(.command) { mods |= UInt32(cmdKey) }
@@ -27,6 +21,24 @@ struct KeyCombo: Codable, Equatable, Hashable {
         if flags.contains(.option) { mods |= UInt32(optionKey) }
         if flags.contains(.control) { mods |= UInt32(controlKey) }
         self.init(keyCode: UInt32(event.keyCode), modifiers: mods)
+    }
+
+    /// Taste, die beim Tippen oder Navigieren gebraucht wird (Buchstaben, Ziffern, Zeichen, Leertaste, ↩, ⇥, ↖, ↘,
+    /// ⇞, ⇟, Pfeile, ⌦, Ziffernblock), ohne ⌘/⌥/⌃ — als Kürzel fehlt sie dann in allen anderen Apps. Die
+    /// Einstellungen sagen das dazu.
+    var isTypingKey: Bool {
+        guard modifiers & UInt32(cmdKey | optionKey | controlKey) == 0 else { return false }
+        switch Int(keyCode) {
+        case 0x00...0x32,                                        // Buchstaben, Ziffern, Zeichen, ↩, ⇥, Leertaste
+             0x41, 0x43, 0x45, 0x47, 0x4B, 0x4C, 0x4E, 0x51,     // Ziffernblock: , * + Clear / Enter - =
+             0x52...0x59, 0x5B, 0x5C,                            // Ziffernblock 0–9
+             0x5D...0x5F,                                        // JIS: ¥ _ Komma
+             kVK_Home, kVK_End, kVK_PageUp, kVK_PageDown, kVK_ForwardDelete,
+             kVK_LeftArrow, kVK_RightArrow, kVK_DownArrow, kVK_UpArrow:
+            return true
+        default:
+            return false
+        }
     }
 
     var cocoaModifiers: NSEvent.ModifierFlags {

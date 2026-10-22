@@ -210,13 +210,20 @@ ditto "$APP" "$STAGE/Knips.app"
 ln -s /Applications "$STAGE/Applications"
 cp "$README_FILE" "$STAGE/"
 if [[ -f "$LICENSE_FILE" ]]; then cp "$LICENSE_FILE" "$STAGE/LICENSE.txt"; fi
-hdiutil create -volname "Knips $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null
+# hdiutil liefert unter macOS 27 gelegentlich ein Image mit falscher Prüfsumme („Defektes Image“), das notarytool
+# dann nicht als DMG erkennt. Deshalb nach dem Erzeugen und nach dem Signieren prüfen und notfalls neu bauen.
+dmg_ok() { hdiutil verify "$1" >/dev/null 2>&1; }
+for attempt in 1 2 3; do
+  hdiutil create -volname "Knips $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null
+  if [[ -n "$SHA" ]] && dmg_ok "$DMG"; then
+    if [[ "$NAME" == "Developer ID Application: "* ]]; then TS=(--timestamp); else TS=(--timestamp=none); fi
+    codesign --force "${TS[@]}" --sign "$SHA" "$DMG"
+  fi
+  dmg_ok "$DMG" && break
+  [[ $attempt -lt 3 ]] || die "$DMG ist nach drei Versuchen beschädigt (hdiutil verify)."
+  echo "   DMG beschädigt (hdiutil verify) — baue es neu (Versuch $((attempt + 1)) von 3)…"
+done
 rm -rf "$STAGE"
-
-if [[ -n "$SHA" ]]; then
-  if [[ "$NAME" == "Developer ID Application: "* ]]; then TS=(--timestamp); else TS=(--timestamp=none); fi
-  codesign --force "${TS[@]}" --sign "$SHA" "$DMG"
-fi
 
 if [[ "$NOTARIZE" != "0" ]]; then
   notarize "$DMG" "$(basename "$DMG")"

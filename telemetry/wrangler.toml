@@ -7,7 +7,11 @@ compatibility_date = "2026-10-01"
 # Nur über die eigene Domain erreichbar, nicht über workers.dev.
 workers_dev = false
 preview_urls = false
-routes = [{ pattern = "knips.velno.ai", custom_domain = true }]
+# Bewusst eine Route, KEINE Custom Domain: Die Custom Domain lässt Cloudflare ein eigenes Zertifikat
+# ausstellen, das die übrigen Hostnamen der Zone stört (403 auf anderen Subdomains).
+# Die Route braucht einen proxied DNS-Eintrag knips.velno.ai (AAAA 100::), der in der Zone liegt.
+# Die Zone ermittelt wrangler aus dem Hostnamen.
+routes = ["knips.velno.ai/*"]
 
 [[d1_databases]]
 binding = "DB"

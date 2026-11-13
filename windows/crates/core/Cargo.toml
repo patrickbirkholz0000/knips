@@ -17,4 +17,6 @@ log.workspace = true
 regex.workspace = true
 gif.workspace = true
 color_quant.workspace = true
+imagequant.workspace = true
+png.workspace = true
 chrono.workspace = true

@@ -1434,12 +1434,12 @@ import Vision
         editor.save(close: false)
         await store.waitUntilWritten(item.id)
         let saved = store.item(with: item.id)!
-        // Rahmen: 48 pt Abstand → bei 1× Ausgabe 1400+96 × 880+96
+        // Rahmen: 48 pt Abstand → in voller Auflösung (Ausgabe „Automatisch“) 2800+192 × 1760+192
         editor.model.setFrame(FrameStyle(gradient: 0, padding: 48, cornerRadius: 12, shadow: true))
         editor.save(close: false)
         await store.waitUntilWritten(item.id)
         if let framed = ImageIOHelper.load(store.item(with: item.id)!.fileURL) {
-            print("Mit Rahmen: \(framed.width)×\(framed.height) (erwartet 1496×976)")
+            print("Mit Rahmen: \(framed.width)×\(framed.height) (erwartet 2992×1952)")
             try write(framed, out.appendingPathComponent("ausgabe-rahmen.png"))
         }
         editor.window?.setContentSize(NSSize(width: 1180, height: 700))
@@ -1507,10 +1507,14 @@ import Vision
             throw CheckFailed(message: "Aufnahme nicht angelegt")
         }
         await store.waitUntilWritten(shot.id)
-        // Balken über der E-Mail-Zeile; die Zwischenablage hat Bildschirmgröße (1×), also halbe Koordinaten.
+        // Balken über der E-Mail-Zeile. Die Zwischenablage hat die Größe der Ausgabe (volle Auflösung bei
+        // „Automatisch“, halbe bei Bildschirmgröße) — die Stelle entsprechend umrechnen.
         let emailBar = CGRect(x: 760, y: 470, width: 1300, height: 100)
-        let inPaste = CGRect(x: emailBar.minX / 2 + 10, y: emailBar.minY / 2 + 10, width: emailBar.width / 2 - 20, height: emailBar.height / 2 - 20)
-        let light = pasted().map { brightness($0, inPaste) } ?? -1
+        func inPaste(_ pasted: CGImage) -> CGRect {
+            let f = CGFloat(pasted.width) / CGFloat(image.width)
+            return CGRect(x: (emailBar.minX + 20) * f, y: (emailBar.minY + 20) * f, width: (emailBar.width - 40) * f, height: (emailBar.height - 40) * f)
+        }
+        let light = pasted().map { brightness($0, inPaste($0)) } ?? -1
         check(light > 0.5, "Aufnahme liegt in der Zwischenablage (Helligkeit E-Mail-Zeile \(String(format: "%.2f", light)))")
         let shotEditor = EditorWindowController(item: shot, base: image, document: ImageDocument(), tool: .redact)
         var emailRedaction = Annotation(kind: .redact, start: emailBar.origin, end: CGPoint(x: emailBar.maxX, y: emailBar.maxY))
@@ -1518,7 +1522,7 @@ import Vision
         shotEditor.model.checkpoint()
         shotEditor.model.annotations = [emailRedaction]
         shotEditor.save(close: true)
-        let dark = pasted().map { brightness($0, inPaste) } ?? -1
+        let dark = pasted().map { brightness($0, inPaste($0)) } ?? -1
         check(dark >= 0 && dark < 0.1, "nach Zensieren + „Fertig“: zensierte Fassung in der Zwischenablage (\(String(format: "%.2f", dark)))")
         board.clearContents()
         board.setString("fremd", forType: .string)
@@ -1546,8 +1550,149 @@ import Vision
         check(Clipboard.image()?.image.width == image.width, "Bilddatei wird geladen")
 
         try outputPixels(image, board: board, check: check)
+        try await outputAutomatic(image, check: check)
         try editorSteps(image, check: check)
         if !failed.isEmpty { throw CheckFailed(message: "Ausgabe falsch: \(failed.joined(separator: "; "))") }
+    }
+
+    /// Ausgabe „Automatisch“: Retina-Bilder in voller Auflösung mit Farbtabelle (höchstens 256 Farben), wenn man keinen
+    /// Unterschied sieht — sonst Bildschirmgröße in allen Farben. Das Original bleibt immer verlustfrei.
+    @MainActor private static func outputAutomatic(_ image: CGImage, check: (Bool, String) -> Void) async throws {
+        print("Ausgabe „Automatisch“:")
+        let settings = AppSettings.shared, store = CaptureStore.shared
+        let wasSize = settings.exportSize, wasFormat = settings.imageFormat
+        defer { settings.exportSize = wasSize; settings.imageFormat = wasFormat }
+        settings.exportSize = .auto
+        settings.imageFormat = .png
+
+        /// RGBA-Bytes (vormultipliziert) in sRGB.
+        func bytes(_ image: CGImage) -> [UInt8] {
+            var buffer = [UInt8](repeating: 0, count: image.width * image.height * 4)
+            buffer.withUnsafeMutableBytes { raw in
+                let ctx = CGContext(data: raw.baseAddress, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                                    space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                ctx?.setBlendMode(.copy)
+                ctx?.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            }
+            return buffer
+        }
+        /// Abstand zweier gleich großer Bilder in dB (höher = ähnlicher).
+        func psnr(_ a: CGImage, _ b: CGImage) -> Double {
+            let x = bytes(a), y = bytes(b)
+            guard x.count == y.count, !x.isEmpty else { return 0 }
+            var sum = 0.0
+            for i in 0..<x.count where i % 4 != 3 { let d = Double(Int(x[i]) - Int(y[i])); sum += d * d }
+            let mse = sum / Double(x.count / 4 * 3)
+            return mse == 0 ? 99 : 10 * log10(255 * 255 / mse)
+        }
+        /// Kopf einer PNG-Datei: Farbtyp (2 = RGB, 3 = Farbtabelle, 6 = RGBA) und Auflösung in dpi.
+        func describe(_ data: Data?) -> (image: CGImage, colorType: Int, dpi: Double)? {
+            guard let data, data.count > 26, let src = CGImageSourceCreateWithData(data as CFData, nil),
+                  let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
+            let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any]
+            return (image, Int(data[25]), (props?[kCGImagePropertyDPIWidth] as? NSNumber)?.doubleValue ?? 72)
+        }
+        /// Wie ein Foto: weiche Verläufe in allen Farben mit Rauschen — mit 256 Farben nicht darstellbar.
+        func photo(_ w: Int, _ h: Int) -> CGImage {
+            var px = [UInt8](repeating: 255, count: w * h * 4)
+            var seed: UInt32 = 12345
+            for y in 0..<h {
+                for x in 0..<w {
+                    seed = seed &* 1_664_525 &+ 1_013_904_223
+                    let noise = Int(seed >> 24) % 40
+                    let i = (y * w + x) * 4
+                    px[i] = UInt8(min(255, x * 255 / w + noise / 2))
+                    px[i + 1] = UInt8(min(255, y * 255 / h + noise / 3))
+                    px[i + 2] = UInt8(min(255, ((x + y) * 255 / (w + h)) ^ (noise * 3)))
+                }
+            }
+            let data = Data(px)
+            return CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                           bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue), provider: CGDataProvider(data: data as CFData)!,
+                           decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+        }
+
+        // Oberfläche mit Schrift: volle Auflösung, Farbtabelle, 144 dpi, praktisch gleich dem Original.
+        let started = Date()
+        let ui = settings.outputPromise(sourceScale: 2) { image }
+        let uiFile = describe(ui.data)
+        let seconds = Date().timeIntervalSince(started)
+        check(ui.adaptive && uiFile?.colorType == 3 && uiFile?.image.width == image.width && uiFile?.image.height == image.height,
+              "Schrift und Flächen: volle Auflösung \(uiFile.map { "\($0.image.width)×\($0.image.height)" } ?? "?") mit Farbtabelle (Farbtyp \(uiFile?.colorType ?? -1))")
+        check(uiFile?.dpi == 144 && ui.pointScale == 2, "Farbtabellen-PNG trägt 144 dpi")
+        let closeness = uiFile.map { psnr($0.image, image) } ?? 0
+        check(closeness >= 40, "Abstand zum Original \(String(format: "%.1f", closeness)) dB (mindestens 40)")
+        settings.exportSize = .screen
+        let classic = settings.outputPromise(sourceScale: 2) { image }
+        settings.exportSize = .full
+        let lossless = settings.outputPromise(sourceScale: 2) { image }
+        settings.exportSize = .auto
+        let kb = { (p: ImagePromise) in (p.data?.count ?? 0) / 1024 }
+        print("  Größen: Automatisch \(kb(ui)) KB (\(Int(seconds * 1000)) ms) · Bildschirmgröße \(kb(classic)) KB · Retina verlustfrei \(kb(lossless)) KB")
+        check(kb(ui) * 2 < kb(lossless), "Automatisch ist weniger als halb so groß wie Retina verlustfrei")
+
+        // Foto: 256 Farben reichen nicht → Bildschirmgröße in allen Farben, ohne Auflösungsangabe.
+        let picture = photo(1200, 800)
+        let fallback = settings.outputPromise(sourceScale: 2) { picture }
+        let fallbackFile = describe(fallback.data)
+        check(fallbackFile?.colorType == 2 && fallbackFile?.image.width == 600 && fallbackFile?.dpi == 72 && fallback.pointScale == 1,
+              "Foto: Rückfall auf Bildschirmgröße in allen Farben (\(fallbackFile.map { "\($0.image.width)×\($0.image.height), Farbtyp \($0.colorType)" } ?? "?"))")
+        check(PalettePNG.quantize(picture) == nil && PalettePNG.quantize(picture, minQuality: 0) != nil, "Foto scheitert an der Mindestgüte, nicht an einem Fehler")
+
+        // Durchsicht (runde Fensterecken) bleibt in der Farbtabelle erhalten.
+        let cw = 400, ch = 240
+        if let ctx = CGContext(data: nil, width: cw, height: ch, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                               bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) {
+            ctx.addPath(CGPath(roundedRect: CGRect(x: 0, y: 0, width: cw, height: ch), cornerWidth: 40, cornerHeight: 40, transform: nil))
+            ctx.setFillColor(CGColor(srgbRed: 0.1, green: 0.3, blue: 0.8, alpha: 1))
+            ctx.fillPath()
+            if let rounded = ctx.makeImage() {
+                let file = describe(settings.outputPromise(sourceScale: 2) { rounded }.data)
+                let px = file.map { bytes($0.image) } ?? []
+                let corner = px.isEmpty ? -1 : Int(px[3]), middle = px.isEmpty ? -1 : Int(px[(ch / 2 * cw + cw / 2) * 4 + 3])
+                check(file?.colorType == 3 && corner == 0 && middle == 255, "durchsichtige Ecken bleiben durchsichtig (Deckkraft Ecke \(corner), Mitte \(middle))")
+            }
+        }
+
+        // Wo nichts zu gewinnen ist, bleibt alles beim Alten: 1×-Bildschirm verlustfrei, JPEG in Bildschirmgröße.
+        let plain = settings.outputPromise(sourceScale: 1) { image }
+        check(!plain.adaptive && describe(plain.data)?.colorType == 2 && plain.image?.width == image.width, "1×-Bildschirm: verlustfrei, unverändert groß")
+        let jpeg = settings.outputPromise(sourceScale: 2, format: .jpeg) { image }
+        check(!jpeg.adaptive && jpeg.image?.width == image.width / 2, "JPEG: Bildschirmgröße")
+
+        // Ablage: Das Original bleibt verlustfrei; die Maße des Eintrags stimmen mit der Datei überein — auch nach dem Rückfall.
+        let item = try store.addImage(image, scale: 2)
+        await store.waitUntilWritten(item.id)
+        let saved = store.item(with: item.id)
+        let originalData = try? Data(contentsOf: store.originalURL(for: item))
+        let original = describe(originalData)
+        check(original?.colorType == 2 && original.map { bytes($0.image) == bytes(image) } == true, "Original bleibt verlustfrei und unverändert")
+        let file = describe(try? Data(contentsOf: item.fileURL))
+        check(file?.colorType == 3 && saved?.pixelWidth == image.width && saved?.outputScale == 2 && saved?.displayScale == 2,
+              "Ablage: Datei mit Farbtabelle, Eintrag \(saved?.pixelWidth ?? 0)×\(saved?.pixelHeight ?? 0), Faktor \(saved?.outputScale ?? 0)")
+        let photoItem = try store.addImage(picture, scale: 2)
+        await store.waitUntilWritten(photoItem.id)
+        _ = await until(2) { store.item(with: photoItem.id)?.pixelWidth == 600 }
+        let settled = store.item(with: photoItem.id)
+        check(settled?.pixelWidth == 600 && settled?.pixelHeight == 400 && settled?.outputScale == 1,
+              "Ablage nach Rückfall: Eintrag nachgezogen auf \(settled?.pixelWidth ?? 0)×\(settled?.pixelHeight ?? 0), Faktor \(settled?.outputScale ?? 0)")
+
+        // Editor: Zensur + Speichern bleibt bei voller Auflösung, der Balken ist in der Datei.
+        let editor = EditorWindowController(item: item, base: image, document: ImageDocument(), tool: .redact)
+        defer { editor.window?.orderOut(nil) }
+        var bar = Annotation(kind: .redact, start: CGPoint(x: 760, y: 470), end: CGPoint(x: 2060, y: 570))
+        bar.redactStyle = .solid
+        editor.model.checkpoint()
+        editor.model.annotations = [bar]
+        editor.save(close: false)
+        await store.waitUntilWritten(item.id)
+        if let edited = describe(try? Data(contentsOf: item.fileURL)) {
+            let dark = brightness(edited.image, CGRect(x: 780, y: 490, width: 1260, height: 60))
+            check(edited.colorType == 3 && edited.image.width == image.width && dark < 0.1,
+                  "Editor: gespeichert in voller Auflösung mit Farbtabelle, Balken deckt (Helligkeit \(String(format: "%.2f", dark)))")
+        } else {
+            check(false, "Editor: gespeicherte Datei lesbar")
+        }
     }
 
     /// „Widerrufen“ ohne leere Schritte und gehaltene Tasten im Bild-Editor (nur Modell und Ansicht, kein Fenster auf
@@ -1680,11 +1825,11 @@ import Vision
         }
         // Auflösung: Retina-Ausgabe trägt 144 dpi, 1× keine Angabe.
         let settings = AppSettings.shared
-        let wasScreenSize = settings.exportAtScreenSize
-        defer { settings.exportAtScreenSize = wasScreenSize }
-        settings.exportAtScreenSize = true
+        let wasSize = settings.exportSize
+        defer { settings.exportSize = wasSize }
+        settings.exportSize = .screen
         let one = settings.outputPromise(sourceScale: 2, format: .png) { image }
-        settings.exportAtScreenSize = false
+        settings.exportSize = .full
         let retina = settings.outputPromise(sourceScale: 2, format: .png) { image }, retinaJPEG = settings.outputPromise(sourceScale: 2, format: .jpeg) { image }
         check(dpi(one.data) == 72 && one.image?.width == image.width / 2, "1×-Ausgabe: halbe Größe, keine Auflösung in der Datei")
         check(dpi(retina.data) == 144 && retina.image?.width == image.width, "Retina-Ausgabe PNG: volle Größe, 144 dpi")

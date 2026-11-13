@@ -319,27 +319,108 @@ fn describe(path: &Path) -> String {
     format!("{ext} {dims}, {} KB", size / 1024)
 }
 
+/// Ausgabe „Automatisch“: volle Auflösung mit Farbtabelle (höchstens 256 Farben), wenn man keinen Unterschied sieht;
+/// sonst verlustfrei — bei 200 % in Bildschirmgröße, bei krummer Skalierung in voller Auflösung. Das Original bleibt
+/// immer verlustfrei, die Maße des Eintrags stimmen mit der Datei überein.
+fn output_automatic(settings: &Arc<SettingsStore>, store: &Arc<Store>, image: &RgbaImage, failures: &mut Vec<String>) -> Result<()> {
+    use knips_core::settings::ExportSize;
+    println!("Ausgabe „Automatisch“:");
+    let mut check = |ok: bool, name: String| {
+        println!("   {} {name}", if ok { "ok    " } else { "FALSCH" });
+        if !ok {
+            failures.push(name);
+        }
+    };
+    // Farbtyp im Kopf der PNG-Datei: 2 = RGB, 3 = Farbtabelle, 6 = RGBA.
+    let color_type = |path: &Path| std::fs::read(path).ok().and_then(|d| d.get(25).copied()).unwrap_or(0);
+    // Wie ein Foto: Verläufe in allen Farben mit Rauschen — mit 256 Farben nicht darstellbar.
+    let photo = {
+        let (w, h) = (1200u32, 800u32);
+        let mut seed = 12345u32;
+        RgbaImage::from_fn(w, h, |x, y| {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let noise = (seed >> 24) % 40;
+            image::Rgba([(x * 255 / w + noise / 2).min(255) as u8, (y * 255 / h + noise / 3).min(255) as u8, (((x + y) * 255 / (w + h)) ^ (noise * 3)).min(255) as u8, 255])
+        })
+    };
+    let add = |img: &RgbaImage, scale: f64| -> Result<(knips_core::model::CaptureItem, PathBuf)> {
+        let item = store.add_image(img.clone(), scale, None, None)?;
+        store.wait_until_written(item.id);
+        let item = store.item(item.id).unwrap_or(item);
+        let file = PathBuf::from(&item.file_path);
+        Ok((item, file))
+    };
+
+    // Oberfläche bei 200 %: volle Auflösung mit Farbtabelle; Original verlustfrei und unverändert.
+    let (item, file) = add(image, 2.0)?;
+    let saved = imageops::load(&file)?;
+    check(
+        color_type(&file) == 3 && saved.dimensions() == image.dimensions() && item.pixel_width == image.width() && item.output_scale == Some(2.0),
+        format!("Schrift und Flächen bei 200 %: {} mit Farbtabelle (Farbtyp {}), Eintrag {}×{}, Faktor {:?}", describe(&file), color_type(&file), item.pixel_width, item.pixel_height, item.output_scale),
+    );
+    let original = store.original_path(&item);
+    check(color_type(&original) == 2 && imageops::load(&original)?.as_raw() == image.as_raw(), "Original bleibt verlustfrei und unverändert".into());
+    let auto_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
+    // Foto bei 200 %: 256 Farben reichen nicht → Bildschirmgröße in allen Farben, Eintrag nachgezogen.
+    let (item, file) = add(&photo, 2.0)?;
+    let saved = imageops::load(&file)?;
+    check(
+        color_type(&file) == 2 && saved.dimensions() == (600, 400) && (item.pixel_width, item.pixel_height) == (600, 400) && item.output_scale == Some(1.0),
+        format!("Foto bei 200 %: Rückfall auf {} (Farbtyp {}), Eintrag {}×{}, Faktor {:?}", describe(&file), color_type(&file), item.pixel_width, item.pixel_height, item.output_scale),
+    );
+    // Foto bei 150 %: volle Auflösung in allen Farben — nie um einen krummen Faktor umrechnen.
+    let (item, file) = add(&photo, 1.5)?;
+    let saved = imageops::load(&file)?;
+    check(
+        color_type(&file) == 2 && saved.dimensions() == (1200, 800) && saved.as_raw() == photo.as_raw() && item.output_scale == Some(1.5),
+        format!("Foto bei 150 %: unverändert {} (Farbtyp {}), Faktor {:?}", describe(&file), color_type(&file), item.output_scale),
+    );
+    // Oberfläche bei 150 %: volle Auflösung mit Farbtabelle.
+    let (item, file) = add(image, 1.5)?;
+    check(color_type(&file) == 3 && imageops::load(&file)?.dimensions() == image.dimensions() && item.output_scale == Some(1.5), format!("Schrift und Flächen bei 150 %: {} mit Farbtabelle", describe(&file)));
+    // 100 %: nichts zu gewinnen, verlustfrei wie bisher.
+    let (_, file) = add(image, 1.0)?;
+    check(color_type(&file) == 2 && imageops::load(&file)?.as_raw() == image.as_raw(), "100 %: verlustfrei, unverändert".into());
+
+    // Ausdrücklich gewählt: Bildschirmgröße und volle Auflösung wie bisher.
+    settings.update(|s| s.export_size = ExportSize::Screen);
+    let (item, file) = add(image, 2.0)?;
+    let screen_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+    check(color_type(&file) == 2 && imageops::load(&file)?.dimensions() == (1400, 880) && item.output_scale == Some(1.0), format!("„Bildschirmgröße“: {}", describe(&file)));
+    settings.update(|s| s.export_size = ExportSize::Full);
+    let (_, file) = add(image, 2.0)?;
+    let full_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+    check(color_type(&file) == 2 && imageops::load(&file)?.as_raw() == image.as_raw(), format!("„Volle Auflösung“: {}", describe(&file)));
+    settings.update(|s| s.export_size = ExportSize::Auto);
+    println!("  Größen: Automatisch {} KB · Bildschirmgröße {} KB · volle Auflösung verlustfrei {} KB", auto_bytes / 1024, screen_bytes / 1024, full_bytes / 1024);
+    check(auto_bytes < full_bytes, "Automatisch ist kleiner als die volle Auflösung verlustfrei".into());
+    Ok(())
+}
+
 fn output(out: &Path) -> Result<()> {
     let settings = Arc::new(SettingsStore::load());
     let store = Arc::new(Store::new(settings.clone()));
     // „Retina“-Screenshot: 2 px pro Punkt, Schrift in 4 px pro Punkt gezeichnet wie auf dem Mac.
     let image = sample::sample_image(2800, 1760, 4.0);
     let mut failures = vec![];
-    for format in [ImageFormat::Png, ImageFormat::Jpeg] {
+    // Standard „Automatisch“ bei 200 %: PNG in voller Auflösung mit Farbtabelle, JPEG in Bildschirmgröße.
+    for (format, want) in [(ImageFormat::Png, (2800, 1760)), (ImageFormat::Jpeg, (1400, 880))] {
         settings.update(|s| s.image_format = format);
-        let factor = settings.get().output_factor(2.0);
         let src = image.clone();
-        let promise = output_promise(factor, format, move || Some(src));
+        let promise = output_promise(&settings.get(), 2.0, format, move || Some(src));
         let item = store.add_image(image.clone(), 2.0, Some(promise), None)?;
         store.wait_until_written(item.id);
+        let item = store.item(item.id).unwrap_or(item);
         let file = PathBuf::from(&item.file_path);
         println!("{format:?}: Ablage {} · Original {} · Anzeige-Faktor {}", describe(&file), describe(&store.original_path(&item)), item.display_scale());
         let saved = imageops::load(&file)?;
-        if (saved.width(), saved.height()) != (1400, 880) {
-            failures.push(format!("{format:?}: {}×{} statt 1400×880", saved.width(), saved.height()));
+        if (saved.width(), saved.height()) != want {
+            failures.push(format!("{format:?}: {}×{} statt {}×{}", saved.width(), saved.height(), want.0, want.1));
         }
     }
     settings.update(|s| s.image_format = ImageFormat::Png);
+    output_automatic(&settings, &store, &image, &mut failures)?;
 
     // Editor-Weg: Zensur über die E-Mail, Speichern verkleinert (1×), Text kopieren ohne E-Mail.
     let item = store.add_image(image.clone(), 2.0, None, None)?;
@@ -349,9 +430,9 @@ fn output(out: &Path) -> Result<()> {
     let doc = ImageDocument { annotations: vec![bar.clone()], ..Default::default() };
     let mut rendered = image.clone();
     knips_core::redact::apply(&mut rendered, &[(bar.rect(), RedactStyle::Solid)], 2.0);
-    let factor = settings.get().output_factor(2.0);
+    let factor = settings.get().output_factor(2.0, ImageFormat::Png);
     let size = ((rendered.width() as f64 * factor).round() as u32, (rendered.height() as f64 * factor).round() as u32);
-    let promise = output_promise(factor, ImageFormat::Png, move || Some(rendered.clone()));
+    let promise = output_promise(&settings.get(), 2.0, ImageFormat::Png, move || Some(rendered.clone()));
     let (saved, written) = store.save_image(promise, &doc, &item, size, 2.0 * factor);
     if let Err(err) = written.wait() {
         failures.push(format!("Editor-Speichern meldet Fehler: {err}"));
@@ -409,7 +490,7 @@ fn output(out: &Path) -> Result<()> {
             std::fs::rename(&file, file.with_extension("bak"))?;
             std::fs::create_dir(&file)?;
         };
-        let promise = output_promise(factor, ImageFormat::Png, move || Some(image.clone()));
+        let promise = output_promise(&settings.get(), 2.0, ImageFormat::Png, move || Some(image.clone()));
         let (_, written) = store.save_image(promise, &ImageDocument::default(), &saved, size, 2.0 * factor);
         written.wait()
     };

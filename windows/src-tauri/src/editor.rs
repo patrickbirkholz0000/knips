@@ -104,15 +104,16 @@ impl Editors {
         }
         let document = self.entries.lock().get(&id).and_then(|e| e.staged.clone()).unwrap_or_else(|| k.store.load_image_document(id));
         let settings = k.settings.get();
-        let factor = settings.output_factor(scale);
         // Das Format folgt der vorhandenen Datei, damit Endung und Inhalt zusammenpassen.
         let format = std::path::Path::new(&item.file_path)
             .extension()
             .and_then(|e| e.to_str())
             .and_then(ImageFormat::from_extension)
             .unwrap_or(settings.image_format);
+        // Erwartete Größe; bei „Automatisch“ zieht der Store sie nach, falls 256 Farben nicht reichen.
+        let factor = settings.output_factor(scale, format);
         let size = (((image.width() as f64) * factor).round() as u32, ((image.height() as f64) * factor).round() as u32);
-        let promise = output_promise(factor, format, move || Some(image));
+        let promise = output_promise(&settings, scale, format, move || Some(image));
         let (updated, written) = k.store.save_image(promise.clone(), &document, &item, size, scale * factor);
         if action == "copy" {
             let _ = knips_platform::clipboard::set_image(Arc::new(promise));

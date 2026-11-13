@@ -37,6 +37,9 @@ impl SettingsStore {
         let path = dir.join("settings.json");
         let raw = std::fs::read(&path).ok().and_then(|data| serde_json::from_slice::<Value>(&data).ok());
         let mut value = raw.clone().and_then(|v| serde_json::from_value::<Settings>(v).ok()).unwrap_or_default();
+        if let Some(raw) = &raw {
+            value.migrate_export_size(raw);
+        }
         value.sanitize();
         let mut telemetry = raw.and_then(|v| serde_json::from_value::<TelemetryState>(v).ok()).unwrap_or_default();
         telemetry.sanitize();

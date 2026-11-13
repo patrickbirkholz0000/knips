@@ -1043,21 +1043,35 @@ private struct ExportPane: View {
     @ObservedObject var settings: AppSettings
 
     private var sizeHint: String {
-        switch (settings.exportAtScreenSize, settings.imageFormat) {
-        case (true, .png): "ca. 0,7–2 MB"
-        case (true, .jpeg): "ca. 0,25–0,6 MB"
-        case (false, .png): "ca. 2–7 MB"
-        case (false, .jpeg): "ca. 0,6–1,6 MB"
+        switch (settings.exportSize, settings.imageFormat) {
+        case (.auto, .png): "ca. 0,5–1,7 MB"
+        case (.screen, .png): "ca. 0,5–1,5 MB"
+        case (.full, .png): "ca. 2–6 MB"
+        case (.auto, .jpeg), (.screen, .jpeg): "ca. 0,25–0,6 MB"
+        case (.full, .jpeg): "ca. 0,6–1,6 MB"
+        }
+    }
+
+    /// Was die gewählte Größe bedeutet — in einem Absatz unter der Karte.
+    private var sizeFooter: String {
+        let original = "Das Original bleibt für spätere Bearbeitung in voller Auflösung und allen Farben."
+        switch (settings.exportSize, settings.imageFormat) {
+        case (.auto, .png):
+            return "Automatisch: Retina-scharf bei kleiner Datei. Volle Auflösung mit höchstens 256 Farben, wenn man keinen Unterschied sieht – bei Fotos und Videobildern Bildschirmgröße in allen Farben. " + original
+        case (.auto, .jpeg):
+            return "Automatisch gilt für PNG. JPEG wird in Bildschirmgröße gespeichert. " + original
+        case (.screen, _):
+            return "Bildschirmgröße: so groß wie auf dem Bildschirm, beim Einfügen nicht doppelt so groß. " + original
+        case (.full, _):
+            return "Retina: volle Auflösung in allen Farben – die größten Dateien. " + original
         }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 30) {
-            BrandSection(title: "Screenshots",
-                         footer: "Bildschirmgröße: so groß wie auf dem Bildschirm, beim Einfügen nicht doppelt so groß. Das Original bleibt für spätere Bearbeitung in voller Auflösung.") {
+            BrandSection(title: "Screenshots", footer: sizeFooter) {
                 BrandRow(title: "Größe") {
-                    BrandSelect(selection: $settings.exportAtScreenSize,
-                                options: [(true, "Bildschirmgröße (1×)"), (false, "Retina (2×)")], minWidth: 220)
+                    BrandSelect(selection: $settings.exportSize, options: ExportSize.allCases.map { ($0, $0.title) }, minWidth: 220)
                 }
                 BrandRowDivider()
                 BrandRow(title: "Format") {
@@ -1265,6 +1279,13 @@ struct AboutPane: View {
                 .padding(.vertical, 30)
             }
             UpdatesSection(updates: updates)
+            BrandSection(title: "Bildausgabe") {
+                BrandRow(title: "libimagequant", detail: "Wählt die 256 Farben der Ausgabe „Automatisch“ · GPL v3 oder neuer") {
+                    Button("Lizenz") { Self.openLicense("libimagequant-LICENSE", subdirectory: nil) }
+                        .buttonStyle(BrandButtonStyle(kind: .secondary, compact: true))
+                        .help("libimagequant-LICENSE.txt")
+                }
+            }
             BrandSection(title: "Schriften", detail: "Beide stehen unter der SIL Open Font License 1.1 und liegen der App bei.") {
                 fontRow("Outfit", "Text und Titel", file: "OFL-Outfit")
                 BrandRowDivider()

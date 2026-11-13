@@ -82,7 +82,7 @@ Alle zusammen: `scripts/selftest.ps1` (macht die CI). Nur einige in der CI, ohne
 | Test | prüft |
 |---|---|
 | `detect` | Texterkennung + Auto-Zensur am Testbild (E-Mail, IBAN, Telefon, Schlüssel); dazu ein hohes (1×6) und ein breites (4×1) Bild aus Kopien des Testbilds: jede Kopie muss alle vier Arten liefern, keine doppelten Funde (Kacheln statt Verkleinern, `detect-hoch/breit-funde.png`) |
-| `output` | Ausgabe 1× PNG/JPEG, Original in voller Auflösung, Editor-Speichern, „Text kopieren“ ohne Zensiertes (Karte) und ohne Zensiertes/Weggeschnittenes (Editor-Regel `visible_text`); Speichern in eine blockierte Datei meldet einen Fehler und lässt sie unverändert |
+| `output` | Ausgabe „Automatisch“ (Schrift und Flächen bei 200 % und 150 % in voller Auflösung mit Farbtabelle, Foto bei 200 % → Bildschirmgröße und bei 150 % unverändert, 100 % verlustfrei, Eintrag nachgezogen, Original verlustfrei) sowie „Bildschirmgröße“ und „Volle Auflösung“; PNG/JPEG, Editor-Speichern, „Text kopieren“ ohne Zensiertes (Karte) und ohne Zensiertes/Weggeschnittenes (Editor-Regel `visible_text`); Speichern in eine blockierte Datei meldet einen Fehler und lässt sie unverändert |
 | `selection` | Auswahl-Overlay offscreen (Bereich, Fenstermodus, Aufnahme, Text, Scroll, kleine Auswahl) und Aufnahmerahmen (`render_frame_offscreen`: Video Aufnahme-Rot, Scroll Königsblau hell); Pixelprüfung der Farben aus `overlay/brand.rs` (einzige Stelle für Overlay-Farben in Rust, Werte wie `tokens.css`) |
 | `capture` | echte Standbilder aller Monitore, Fensterliste, Fensteraufnahme, Bereichsaufnahme (nur Maße) |
 | `record [s]` | echte Bildschirmaufnahme mit kreisender Maus, Dauer und Größe; Export der Aufnahme ≥ 24 fps (Datei wird gelöscht) |
@@ -284,7 +284,22 @@ aus `knips_core::settings::key_name`.
 
 ## Ablage, Datenschutz, Deinstallation
 
-Wie auf dem Mac: Ablage `Bilder\Knips` (immer die gerenderte, zensierte Fassung, standardmäßig 1×).
+Wie auf dem Mac: Ablage `Bilder\Knips` (immer die gerenderte, zensierte Fassung). Größe nach Einstellungen → Export
+(`ExportSize` in knips-core, Regeln mit Kern-Tests in `settings.rs`), Standard **„Automatisch“**:
+
+- Über 100 % Skalierung bleibt die volle Auflösung, die Farben werden auf höchstens 256 reduziert und als PNG mit
+  Farbtabelle geschrieben (`imageops::encode_palette`: Rust-Paket `imagequant`, GPL-3.0-or-later, ohne `threads`;
+  `png` direkt für Farbtabelle und Durchsicht).
+- Reichen 256 Farben nicht, ohne dass man es sähe (`PALETTE_MIN_QUALITY` 85: Fotos, Videobilder), oder ist das Bild
+  größer als 40 MP: verlustfrei — bei ganzzahliger Skalierung (200 %) in Bildschirmgröße, bei krummer (125 %, 150 %)
+  in voller Auflösung (`Settings::fallback_factor`). „Automatisch“ rechnet nie um 0,8 oder 0,667 um: Das mischt
+  Nachbarpixel und macht Schrift weich. Dasselbe gilt für JPEG.
+- Bei 100 % ändert sich nichts. „Bildschirmgröße (1×)“ und „Volle Auflösung“ arbeiten wie bisher, verlustfrei.
+- Was es wurde, steht erst nach dem Kodieren fest (`ImagePromise::adaptive`); die Maße des Eintrags zieht
+  `Store::settle_output` nach. Das Original bleibt immer verlustfrei.
+- Einstellungen bis 1.0.2 (`exportAtScreenSize`): ausgeschaltet → „Volle Auflösung“, sonst „Automatisch“
+  (`Settings::migrate_export_size`).
+
 Die Datei im Ablageordner wird dichter gepackt als Original und Vorschaubild (`imageops::encode_compact`,
 `ImagePromise::compact`): gleiche Pixel, rund 30 % kleiner (gemessen 13.11.2026 an 40 Aufnahmen: 54,6 → 38,0 MB),
 dafür im Schnitt 0,14 s statt 0,01 s im Hintergrund.

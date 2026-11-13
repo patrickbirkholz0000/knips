@@ -53,7 +53,8 @@ impl Scroll {
 
     pub fn state(&self) -> ScrollState {
         let inner = self.inner.lock();
-        let factor = knips().settings.get().output_factor(if inner.scale > 0.0 { inner.scale } else { 1.0 });
+        let settings = knips().settings.get();
+        let factor = settings.output_factor(if inner.scale > 0.0 { inner.scale } else { 1.0 }, settings.image_format);
         // Höhe so, wie sie in der gespeicherten Datei herauskommt (1× oder volle Auflösung).
         ScrollState { active: inner.session.is_active(), sections: inner.sections, output_height: (inner.height as f64 * factor) as u32 }
     }

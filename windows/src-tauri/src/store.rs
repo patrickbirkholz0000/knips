@@ -148,12 +148,12 @@ impl Store {
     /// in voller Auflösung, die Datei im Ablageordner kommt aus `output` (ggf. verkleinert).
     pub fn add_image(self: &Arc<Self>, image: RgbaImage, scale: f64, output: Option<ImagePromise>, name: Option<String>) -> Result<CaptureItem> {
         let settings = self.settings.get();
-        let factor = settings.output_factor(scale);
         let image = Arc::new(image);
         let promise = output.unwrap_or_else(|| {
             let src = image.clone();
-            output_promise(factor, settings.image_format, move || Some(src.as_ref().clone()))
+            output_promise(&settings, scale, settings.image_format, move || Some(src.as_ref().clone()))
         });
+        let factor = settings.output_factor(scale, promise.format);
         let base = name.unwrap_or_else(|| format!("Knips {}", knips_core::format::file_date_now()));
         let output_path = self.unique_output_path(&base, promise.format.extension())?;
         let id = Uuid::new_v4();
@@ -178,8 +178,9 @@ impl Store {
             inner.items.insert(0, item.clone());
             remember(&mut inner, id, image.clone());
         }
-        // Original verlustfrei in voller Auflösung; bei gleicher Ausgabe dieselben Daten wiederverwenden.
-        let same = factor >= 0.999 && promise.format == ImageFormat::Png;
+        // Original verlustfrei in voller Auflösung; bei gleicher Ausgabe dieselben Daten wiederverwenden. Nie die
+        // Ausgabe „Automatisch“: Sie reduziert die Farben oder verkleinert.
+        let same = factor >= 0.999 && promise.format == ImageFormat::Png && !promise.adaptive;
         let original = if same { promise.clone() } else { ImagePromise::of(image.as_ref().clone(), ImageFormat::Png) };
         let original_path = self.original_path(&item);
         let done = self.begin_write(id);
@@ -200,6 +201,7 @@ impl Store {
             };
             errors.extend(output_error.clone());
             this.inner.lock().reserved.remove(&output_path);
+            this.settle_output(id, &promise);
             this.end_write(id, &done, output_error);
             if !errors.is_empty() {
                 this.report("Aufnahme nicht gespeichert", format!("Die Aufnahme wurde nicht vollständig gespeichert.\n\n{}", errors.join("\n")));
@@ -368,6 +370,7 @@ impl Store {
                 Some(data) => write_atomic(&output, &data).err(),
                 None => Some(format!("„{}“ konnte nicht kodiert werden.", display_name(&output))),
             };
+            this.settle_output(id, &promise);
             if error.is_none() {
                 if let Some(rendered) = promise.image() {
                     write_thumbnail(&rendered, &thumb_path);
@@ -499,6 +502,28 @@ impl Store {
         };
         self.persist(&updated);
         Some(updated)
+    }
+
+    /// Ausgabe „Automatisch“: Ob die Datei die volle Auflösung hat (256 Farben) oder verkleinert wurde, steht erst
+    /// nach dem Kodieren fest. Weicht sie von der Annahme ab, die Maße des Eintrags nachziehen.
+    fn settle_output(&self, id: Id, promise: &ImagePromise) {
+        if !promise.adaptive {
+            return;
+        }
+        let Some(image) = promise.image() else { return };
+        let (w, h) = image.dimensions();
+        let differs = self.item(id).is_some_and(|i| i.pixel_width != w || i.pixel_height != h);
+        if differs {
+            self.bump(id, |i| {
+                // Pixel pro Punkt der Datei: im selben Verhältnis kleiner wie die Breite.
+                if let (Some(scale), true) = (i.output_scale, i.pixel_width > 0) {
+                    i.output_scale = Some(scale * w as f64 / i.pixel_width as f64);
+                }
+                i.pixel_width = w;
+                i.pixel_height = h;
+            });
+            self.changed();
+        }
     }
 
     fn persist(&self, item: &CaptureItem) {

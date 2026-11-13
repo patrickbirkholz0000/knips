@@ -207,6 +207,20 @@ pub enum Appearance {
     Dark,
 }
 
+/// Größe der gespeicherten Bildschirmfotos (Einstellungen → Export).
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ExportSize {
+    /// Volle Auflösung mit höchstens 256 Farben, wenn man keinen Unterschied sieht — sonst wie „Bildschirmgröße“
+    /// (bei 200 %) bzw. volle Auflösung in allen Farben (bei 125 %, 150 %: nie um einen krummen Faktor umrechnen).
+    #[default]
+    Auto,
+    /// Bildschirmgröße (1×), verlustfrei.
+    Screen,
+    /// Volle Auflösung, verlustfrei.
+    Full,
+}
+
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -232,8 +246,9 @@ pub struct Settings {
     pub gif_fps: u32,
     pub gif_width: u32,
     pub redact_style: RedactStyle,
-    /// Bildschirmgröße (1×) statt voller Auflösung.
-    pub export_at_screen_size: bool,
+    /// „Automatisch“ (Standard), Bildschirmgröße (1×) oder volle Auflösung. Bis 1.0.2 der Schalter
+    /// `exportAtScreenSize` (`migrate_export_size`).
+    pub export_size: ExportSize,
     pub image_format: ImageFormat,
     /// Auto-Zensur-Knopf in den Editoren anbieten (standardmäßig aus).
     pub show_auto_redact: bool,
@@ -289,7 +304,7 @@ pub const SETTINGS_WINDOW_FIELDS: [&str; 28] = [
     "gifFps",
     "gifWidth",
     "redactStyle",
-    "exportAtScreenSize",
+    "exportSize",
     "imageFormat",
     "showAutoRedact",
     "autoRedactKinds",
@@ -417,9 +432,39 @@ impl Settings {
         }
     }
 
-    /// Verkleinerungsfaktor für die Ausgabe eines Bildes mit `scale` Pixeln pro Punkt.
-    pub fn output_factor(&self, source_scale: f64) -> f64 {
-        if self.export_at_screen_size && source_scale > 1.0 {
+    /// Einstellungen bis 1.0.2 kannten nur den Schalter `exportAtScreenSize`. Wer ihn ausgeschaltet hatte (volle
+    /// Auflösung), behält das; alle anderen bekommen „Automatisch“. `raw`: die gelesene Datei.
+    pub fn migrate_export_size(&mut self, raw: &serde_json::Value) {
+        if raw.get("exportSize").is_none() && raw.get("exportAtScreenSize").and_then(|v| v.as_bool()) == Some(false) {
+            self.export_size = ExportSize::Full;
+        }
+    }
+
+    /// Nimmt „Automatisch“ für ein Bild mit `source_scale` Pixeln pro Punkt die volle Auflösung mit 256 Farben? Nur
+    /// bei PNG und nur über 100 % Skalierung — sonst gäbe es nichts zu gewinnen, und die Ausgabe bleibt verlustfrei.
+    pub fn reduces_colors(&self, source_scale: f64, format: ImageFormat) -> bool {
+        self.export_size == ExportSize::Auto && format == ImageFormat::Png && source_scale > 1.0
+    }
+
+    /// Verkleinerungsfaktor für die Ausgabe eines Bildes mit `scale` Pixeln pro Punkt. Bei „Automatisch“ der
+    /// erwartete: volle Auflösung; reichen 256 Farben nicht, gilt `fallback_factor`.
+    pub fn output_factor(&self, source_scale: f64, format: ImageFormat) -> f64 {
+        if source_scale <= 1.0 {
+            return 1.0;
+        }
+        match self.export_size {
+            ExportSize::Full => 1.0,
+            ExportSize::Screen => 1.0 / source_scale,
+            ExportSize::Auto if self.reduces_colors(source_scale, format) => 1.0,
+            ExportSize::Auto => Self::fallback_factor(source_scale),
+        }
+    }
+
+    /// „Automatisch“ ohne Farbreduktion (Foto, JPEG): Bei ganzzahliger Skalierung (200 %) Bildschirmgröße — jedes
+    /// Pixel ist dann das genaue Mittel seiner 2×2. Bei krummer Skalierung (125 %, 150 %) volle Auflösung: Ein
+    /// Umrechnen um 0,8 oder 0,667 mischt Nachbarpixel und macht Schrift weich.
+    pub fn fallback_factor(source_scale: f64) -> f64 {
+        if source_scale > 1.0 && (source_scale - source_scale.round()).abs() < 0.01 {
             1.0 / source_scale
         } else {
             1.0
@@ -458,7 +503,7 @@ impl Default for Settings {
             gif_fps: 15,
             gif_width: 960,
             redact_style: RedactStyle::Solid,
-            export_at_screen_size: true,
+            export_size: ExportSize::Auto,
             image_format: ImageFormat::Png,
             show_auto_redact: false,
             auto_redact_kinds: SensitiveKind::ALL.into_iter().collect(),
@@ -483,6 +528,52 @@ impl Default for Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Größe der Ausgabe: „Automatisch“ reduziert Farben nur bei PNG über 100 %, rechnet nie um krumme Faktoren um;
+    /// der alte Schalter wird übernommen.
+    #[test]
+    fn export_size_rules() {
+        let mut s = Settings::default();
+        assert_eq!(s.export_size, ExportSize::Auto);
+        // Automatisch + PNG: volle Auflösung erwartet (256 Farben), sonst nichts zu gewinnen bei 100 %.
+        assert!(s.reduces_colors(2.0, ImageFormat::Png) && s.reduces_colors(1.25, ImageFormat::Png));
+        assert!(!s.reduces_colors(1.0, ImageFormat::Png) && !s.reduces_colors(2.0, ImageFormat::Jpeg));
+        assert_eq!(s.output_factor(2.0, ImageFormat::Png), 1.0);
+        assert_eq!(s.output_factor(1.0, ImageFormat::Png), 1.0);
+        // Automatisch + JPEG: 200 % → Bildschirmgröße, 125 %/150 % → volle Auflösung (nie um 0,8 oder 0,667 umrechnen).
+        assert_eq!(s.output_factor(2.0, ImageFormat::Jpeg), 0.5);
+        assert_eq!(s.output_factor(1.5, ImageFormat::Jpeg), 1.0);
+        assert_eq!(s.output_factor(1.25, ImageFormat::Jpeg), 1.0);
+        // Rückfall, wenn 256 Farben nicht reichen.
+        assert_eq!(Settings::fallback_factor(2.0), 0.5);
+        assert_eq!(Settings::fallback_factor(3.0), 1.0 / 3.0);
+        assert_eq!(Settings::fallback_factor(1.5), 1.0);
+        assert_eq!(Settings::fallback_factor(1.0), 1.0);
+        // Ausdrücklich gewählt: wie bisher.
+        s.export_size = ExportSize::Screen;
+        assert!(!s.reduces_colors(2.0, ImageFormat::Png));
+        assert_eq!(s.output_factor(2.0, ImageFormat::Png), 0.5);
+        assert_eq!(s.output_factor(1.25, ImageFormat::Png), 0.8);
+        s.export_size = ExportSize::Full;
+        assert_eq!(s.output_factor(2.0, ImageFormat::Png), 1.0);
+
+        // Einstellungen bis 1.0.2: ausgeschalteter Schalter = volle Auflösung, eingeschalteter = neuer Standard.
+        let load = |json: &str| {
+            let raw: serde_json::Value = serde_json::from_str(json).unwrap();
+            let mut s: Settings = serde_json::from_value(raw.clone()).unwrap();
+            s.migrate_export_size(&raw);
+            s.export_size
+        };
+        assert_eq!(load(r#"{"exportAtScreenSize":false}"#), ExportSize::Full);
+        assert_eq!(load(r#"{"exportAtScreenSize":true}"#), ExportSize::Auto);
+        assert_eq!(load(r#"{}"#), ExportSize::Auto);
+        assert_eq!(load(r#"{"exportAtScreenSize":false,"exportSize":"screen"}"#), ExportSize::Screen);
+        assert_eq!(serde_json::to_value(Settings::default()).unwrap()["exportSize"], "auto");
+        // Die Oberfläche darf die neue Einstellung ändern, mit ungültigem Wert nicht.
+        let d = Settings::default();
+        assert_eq!(d.patched(&serde_json::json!({"exportSize": "full"}), &SETTINGS_WINDOW_FIELDS).unwrap().export_size, ExportSize::Full);
+        assert!(d.patched(&serde_json::json!({"exportSize": "riesig"}), &SETTINGS_WINDOW_FIELDS).is_err());
+    }
 
     #[test]
     fn defaults_and_display() {

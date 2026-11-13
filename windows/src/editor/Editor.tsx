@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CircleCheck, Minus, Plus } from "lucide-react";
 import { api, events, fileUrl, inTauri, itemTitle } from "../shared/ipc";
 import { useBootstrap } from "../shared/hooks";
-import type { EditorSession, EditorTool, Settings } from "../shared/types";
+import { outputFactor, type EditorSession, type EditorTool, type Settings } from "../shared/types";
 import { CanvasController } from "./canvas";
 import "./controls.css";
 import "./editor.css";
@@ -264,11 +264,11 @@ function EditorView({ model, settings }: { model: EditorModel; settings: Setting
   }, [model, item.id, persist]);
 
   const c = controller.current;
-  // Maße des Ergebnisses (wie `render`: Zuschnitt plus Rahmen), in Bildschirmgröße (1×, Standard) oder voller Auflösung.
+  // Maße des Ergebnisses (wie `render`: Zuschnitt plus Rahmen), in der Größe der Ausgabe. Das Format folgt der Datei.
   const vp = model.crop ?? model.fullRect;
   const pad = model.frame ? Math.trunc(2 * model.frame.padding * model.scale) : 0;
-  const k = settings.exportAtScreenSize ? model.scale : 1;
-  const outW = Math.round((Math.floor(vp.width) + pad) / k), outH = Math.round((Math.floor(vp.height) + pad) / k);
+  const k = outputFactor(settings.exportSize, model.scale, /\.jpe?g$/i.test(item.filePath) ? "jpeg" : "png");
+  const outW = Math.round((Math.floor(vp.width) + pad) * k), outH = Math.round((Math.floor(vp.height) + pad) * k);
   const redactHint = (model.selected?.kind ?? TOOL_KIND[model.tool]) === "redact" && model.tool !== "crop";
   return (
     <div className="kc-root ed-root" onContextMenu={(e) => e.preventDefault()}>
@@ -298,7 +298,7 @@ function EditorView({ model, settings }: { model: EditorModel; settings: Setting
         </div>
         {model.zoom === null && <span className="ed-fit">Eingepasst</span>}
         <span className="ed-dot" />
-        <span className="kc-mono ed-dims" title={settings.exportAtScreenSize ? "Größe beim Speichern (Bildschirmgröße)" : "Größe beim Speichern"}>
+        <span className="kc-mono ed-dims" title={k < 1 ? "Größe beim Speichern (Bildschirmgröße)" : "Größe beim Speichern"}>
           {outW} × {outH}
         </span>
         <div className="ed-spacer" />

@@ -38,6 +38,25 @@ enum RedactStyle: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// Größe der gespeicherten Bildschirmfotos (Einstellungen → Export).
+enum ExportSize: String, CaseIterable, Identifiable {
+    /// Volle Auflösung mit höchstens 256 Farben, wenn man keinen Unterschied sieht — sonst Bildschirmgröße.
+    case auto
+    /// Bildschirmgröße (1×), verlustfrei.
+    case screen
+    /// Volle Auflösung (Retina 2×), verlustfrei.
+    case full
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .auto: "Automatisch"
+        case .screen: "Bildschirmgröße (1×)"
+        case .full: "Retina (2×)"
+        }
+    }
+}
+
 /// Darstellung der Fenster (docs/design.md, „Hell und Dunkel“). Menü-Panel, Pillen und Seitenleiste bleiben immer dunkel.
 enum AppearanceMode: String, CaseIterable, Identifiable {
     case system, light, dark
@@ -93,8 +112,9 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
     @Published var gifFPS: Int { didSet { d.set(gifFPS, forKey: "gifFPS") } }
     @Published var gifWidth: Int { didSet { d.set(gifWidth, forKey: "gifWidth") } }
     @Published var redactStyle: RedactStyle { didSet { d.set(redactStyle.rawValue, forKey: "redactStyle") } }
-    /// Bildschirmgröße (1×) statt Retina (2×): Dateien ~⅓ so groß, beim Einfügen so groß wie auf dem Bildschirm.
-    @Published var exportAtScreenSize: Bool { didSet { d.set(exportAtScreenSize, forKey: "exportAtScreenSize") } }
+    /// „Automatisch“ (Standard): Retina-scharf bei kleiner Datei — volle Auflösung mit 256 Farben, wenn man keinen
+    /// Unterschied sieht, sonst Bildschirmgröße. Daneben wie bisher Bildschirmgröße (1×) oder Retina (2×), verlustfrei.
+    @Published var exportSize: ExportSize { didSet { d.set(exportSize.rawValue, forKey: "exportSize") } }
     @Published var imageFormat: ImageFormat { didSet { d.set(imageFormat.rawValue, forKey: "imageFormat") } }
     /// Auto-Zensur-Knopf in den Editoren anbieten (standardmäßig aus — Zensur wird von Hand gezogen).
     @Published var showAutoRedact: Bool { didSet { d.set(showAutoRedact, forKey: "showAutoRedact") } }
@@ -154,7 +174,15 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
         gifWidth = d.object(forKey: "gifWidth") as? Int ?? 960
         redactStyle = RedactStyle(rawValue: d.string(forKey: "redactStyle") ?? "") ?? .solid
         showAutoRedact = d.object(forKey: "showAutoRedact") as? Bool ?? false
-        exportAtScreenSize = d.object(forKey: "exportAtScreenSize") as? Bool ?? true
+        // Bis 1.0.2 ein Schalter „Bildschirmgröße (1×)“. Wer ihn selbst gestellt hat, behält seine Wahl; alle anderen
+        // bekommen „Automatisch“.
+        if let raw = d.string(forKey: "exportSize"), let size = ExportSize(rawValue: raw) {
+            exportSize = size
+        } else if let atScreenSize = d.object(forKey: "exportAtScreenSize") as? Bool {
+            exportSize = atScreenSize ? .screen : .full
+        } else {
+            exportSize = .auto
+        }
         imageFormat = ImageFormat(rawValue: d.string(forKey: "imageFormat") ?? "") ?? .png
         if let raw = d.stringArray(forKey: "autoRedactKinds") {
             autoRedactKinds = Set(raw.compactMap(SensitiveDetector.Kind.init(rawValue:)))
@@ -220,15 +248,38 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
         return keys
     }
 
-    /// Verkleinerungsfaktor für die Ausgabe eines Bildes mit `scale` Pixeln pro Punkt.
-    func outputFactor(sourceScale: CGFloat) -> CGFloat {
-        exportAtScreenSize && sourceScale > 1 ? 1 / sourceScale : 1
+    /// Nimmt „Automatisch“ für ein Bild mit `sourceScale` Pixeln pro Punkt die volle Auflösung mit 256 Farben? Nur
+    /// bei PNG und nur, wo sonst verkleinert würde (Retina) — auf 1×-Bildschirmen bleibt die Ausgabe verlustfrei.
+    func reducesColors(sourceScale: CGFloat, format: ImageFormat? = nil) -> Bool {
+        exportSize == .auto && (format ?? imageFormat) == .png && sourceScale > 1
+    }
+
+    /// Verkleinerungsfaktor für die Ausgabe eines Bildes mit `scale` Pixeln pro Punkt. Bei „Automatisch“ der
+    /// erwartete: volle Auflösung; reichen 256 Farben nicht, wird es doch Bildschirmgröße (`outputPromise`).
+    func outputFactor(sourceScale: CGFloat, format: ImageFormat? = nil) -> CGFloat {
+        guard sourceScale > 1 else { return 1 }
+        switch exportSize {
+        case .full: return 1
+        case .screen: return 1 / sourceScale
+        case .auto: return reducesColors(sourceScale: sourceScale, format: format) ? 1 : 1 / sourceScale
+        }
     }
 
     /// Ausgabe (Datei + Zwischenablage): ggf. verkleinert, im gewählten Format — im Hintergrund.
     func outputPromise(sourceScale: CGFloat, format: ImageFormat? = nil, render: @escaping @Sendable () -> CGImage?) -> ImagePromise {
-        let factor = outputFactor(sourceScale: sourceScale)
-        return ImagePromise(format: format ?? imageFormat, pointScale: sourceScale * factor) {
+        let format = format ?? imageFormat
+        if reducesColors(sourceScale: sourceScale, format: format) {
+            // „Automatisch“: volle Auflösung mit höchstens 256 Farben. Reichen sie nicht, ohne dass man es sähe
+            // (Fotos, Videobilder), oder ist das Bild zu groß: Bildschirmgröße, verlustfrei wie bisher.
+            return ImagePromise(format: .png, adaptive: {
+                guard let full = render() else { return nil }
+                if let data = PalettePNG.encode(full, pointScale: sourceScale) { return (full, data, sourceScale) }
+                let small = ImageIOHelper.scaled(full, by: 1 / sourceScale)
+                return (small, small.pngData(), 1)
+            })
+        }
+        let factor = outputFactor(sourceScale: sourceScale, format: format)
+        return ImagePromise(format: format, pointScale: sourceScale * factor) {
             render().map { ImageIOHelper.scaled($0, by: factor) }
         }
     }

@@ -54,7 +54,10 @@ Die Oberfläche ist auf Deutsch. [English version below](#english).
   im Editor zensierst und speicherst, ersetzt Knips sie dort durch die zensierte Fassung (macOS).
 - Das Original bleibt mit dem Bearbeitungsstand getrennt erhalten (Standard: 30 Tage), damit sich eine
   Zensur später noch ändern lässt.
-- PNG oder JPEG, standardmäßig in Bildschirmgröße (1×), auf Wunsch in voller Auflösung.
+- PNG oder JPEG. Standard ist „Automatisch“: auf Retina-Bildschirmen (unter Windows über 100 % Skalierung) die volle
+  Auflösung mit höchstens 256 Farben, wenn man keinen Unterschied sieht. Die Datei ist dann etwa so groß wie in
+  Bildschirmgröße, aber scharf. Bei Fotos und Videobildern bleibt es bei allen Farben. Auf Wunsch immer
+  Bildschirmgröße (1×) oder volle Auflösung, verlustfrei.
 
 ## Systemvoraussetzungen
 
@@ -282,6 +285,11 @@ Die Mac-App enthält [Sparkle](https://sparkle-project.org) für die automatisch
 Lizenztext liegt der App bei (Einstellungen → Über Knips) und steht in
 [Resources/Sparkle-LICENSE.txt](Resources/Sparkle-LICENSE.txt).
 
+Die 256 Farben der Ausgabe „Automatisch“ wählt [libimagequant](https://github.com/ImageOptim/libimagequant)
+(GPL v3 oder neuer): auf dem Mac die Fassung 2.18.0 in [Sources/CImageQuant](Sources/CImageQuant), unter Windows
+das Rust-Paket `imagequant`. Der Lizenztext liegt der Mac-App bei und steht in
+[Resources/libimagequant-LICENSE.txt](Resources/libimagequant-LICENSE.txt).
+
 ---
 
 <img src="design/app-icon-1024.png" width="88" height="88" alt="Knips icon: four selection corners around a censor bar">
@@ -420,3 +428,8 @@ of the License, or (at your option) any later version. Knips is distributed with
 
 The Mac app includes [Sparkle](https://sparkle-project.org) for automatic updates (MIT license); its license text
 ships with the app (settings → Über Knips) and is in [Resources/Sparkle-LICENSE.txt](Resources/Sparkle-LICENSE.txt).
+
+The 256 colours of the “Automatisch” output are chosen by [libimagequant](https://github.com/ImageOptim/libimagequant)
+(GPL v3 or later): version 2.18.0 in [Sources/CImageQuant](Sources/CImageQuant) on the Mac, the Rust crate `imagequant`
+on Windows. Its license text ships with the Mac app and is in
+[Resources/libimagequant-LICENSE.txt](Resources/libimagequant-LICENSE.txt).

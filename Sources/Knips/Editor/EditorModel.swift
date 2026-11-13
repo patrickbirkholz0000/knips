@@ -418,7 +418,10 @@ enum EditorTool: String, CaseIterable, Identifiable {
         return ImagePromise(format: .png) { Renderer.render(base: base, document: doc, scale: scale, effects: effects) }
     }
 
-    var outputFactor: CGFloat { AppSettings.shared.outputFactor(sourceScale: scale) }
+    /// Erwarteter Faktor der Ausgabe; das Format folgt der vorhandenen Datei (wie `renderPromise`).
+    var outputFactor: CGFloat {
+        AppSettings.shared.outputFactor(sourceScale: scale, format: ImageFormat(fileExtension: item.fileURL.pathExtension))
+    }
 
     var outputSize: CGSize {
         var s = (crop ?? fullRect).integral.intersection(fullRect).size

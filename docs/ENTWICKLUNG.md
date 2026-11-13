@@ -13,6 +13,7 @@ für Beiträge: `CONTRIBUTING.md`, für Releases: `RELEASING.md`.
 scripts/install.sh          # baut, ersetzt /Applications/Knips.app, startet sie
 scripts/build.sh            # nur build/Knips.app (Release, signiert)
 swift build                 # nur kompilieren (Debug)
+swift build -Xswiftc -DKNIPS_DEV   # dasselbe mit den Selbsttests (so baut `build.sh` eigene Builds)
 swift scripts/make-icon.swift   # Icon neu erzeugen
 ```
 
@@ -27,6 +28,10 @@ und den Defaults).
 **Signatur:** `build.sh` nimmt die jüngste gültige „Apple Development“-Identität (dafür muss Apples
 Zwischenzertifikat WWDR G3 im Schlüsselbund liegen). Damit bleibt die Freigabe „Bildschirm- &
 Systemaudioaufnahme“ über Updates hinweg erhalten. Ad hoc signiert müsste sie nach jedem Build neu erteilt werden.
+
+**libimagequant** (Farbreduktion der Ausgabe „Automatisch“, GPL v3 oder neuer): Fassung 2.18.0 liegt unverändert in
+`Sources/CImageQuant` (eigenes Ziel in `Package.swift`, statisch eingebunden; Quelle und Prüfsumme in der dortigen
+`README.md`). `build.sh` legt `Resources/libimagequant-LICENSE.txt` ins Bundle, „Über Knips“ zeigt sie.
 
 **Sparkle** (automatische Updates, MIT, `Package.swift` mit fester Version): `build.sh` legt `Sparkle.framework` aus
 dem SwiftPM-Build nach `Contents/Frameworks` (rpath `@executable_path/../Frameworks` in `Package.swift`), ohne
@@ -53,7 +58,7 @@ Domäne `de.birkgroup.knips.sandbox` (`UserDefaults.knips`), die jeder Test zu B
 | `update [<feed-ordner>]` | Automatische Updates: Sperren (Selbsttest, Sandbox, CI, eigener Build ohne `KNIPS_UPDATE_FEED`; im Release wirkt `KNIPS_UPDATE_FEED` nicht), Zeitplan (erste Prüfung nach 5 min, höchstens alle 24 h), Einstellung bleibt gespeichert, Info.plist (Feed, `SUPublicEDKey`, Prüfung vor dem Entpacken, keine ATS-Ausnahme), Sparkle im Bundle ohne XPC-Dienste, alle Delegate-Methoden vorhanden, Texte. Ende zu Ende nur über `scripts/update-test.sh` (siehe „Updates“) |
 | `update-installed <ordner> <app> <build>` | Beobachter für `scripts/update-test.sh`: keine Fenster der Testkopie und ihrer Helfer, Build N+1 nach dem Beenden an derselben Stelle, Installer beendet, kein Neustart, Code-Signatur streng gültig |
 | `telemetry [live]` | Nutzungsstatistik: Sperren (Selbsttest/Sandbox/CI/Entwickler-Build), Payload (genau die Vertragsfelder, Allowlist, Deckel), Zustimmung → Zählen → Senden an lokalen Server (127.0.0.1) → Abmelden; Zähler bleiben nach Fehlern. `live` schickt zusätzlich einen echten Ping (nur mit `KNIPS_TELEMETRY=1`, Kanal `dev`) |
-| `output` | Ausgabe 1× + PNG/JPEG, Rahmen, Speichern aus dem Editor, „Text kopieren“ ohne Zensiertes (Karte; Editor mit Zuschnitt und angeschnittenem Schlüssel), Zwischenablage nach Zensieren + „Fertig“ = zensierte Fassung, fremder Inhalt bleibt, Link-Aufnahme ohne Zwischenablage, `knips://pin` lädt keine http-Adresse (private `NSPasteboard` über `Clipboard.testPasteboard`); Pixel der Ausgabe: Retina → 1× ist genau das Mittel aus 2×2 Pixeln, deckende Bilder ohne Alphakanal (Pixel unverändert), durchsichtige Ecken bleiben bzw. werden im JPEG weiß, Retina-Ausgabe mit 144 dpi, Anpinnen aus der Zwischenablage in der gemeinten Größe; Bild-Editor: „Widerrufen“ ohne leere Schritte, verirrter Klick lässt „Wiederholen“ stehen, gehaltenes Esc |
+| `output` | Ausgabe 1× + PNG/JPEG, Rahmen, Speichern aus dem Editor, „Text kopieren“ ohne Zensiertes (Karte; Editor mit Zuschnitt und angeschnittenem Schlüssel), Zwischenablage nach Zensieren + „Fertig“ = zensierte Fassung, fremder Inhalt bleibt, Link-Aufnahme ohne Zwischenablage, `knips://pin` lädt keine http-Adresse (private `NSPasteboard` über `Clipboard.testPasteboard`); Ausgabe „Automatisch“: Schrift und Flächen in voller Auflösung mit Farbtabelle und 144 dpi (Abstand zum Original ≥ 40 dB), Foto → Rückfall auf Bildschirmgröße, durchsichtige Ecken bleiben, 1×-Bildschirm und JPEG unverändert, Original bleibt verlustfrei, Eintrag nach dem Rückfall nachgezogen, Speichern aus dem Editor; Pixel der Ausgabe: Retina → 1× ist genau das Mittel aus 2×2 Pixeln, deckende Bilder ohne Alphakanal (Pixel unverändert), durchsichtige Ecken bleiben bzw. werden im JPEG weiß, Retina-Ausgabe mit 144 dpi, Anpinnen aus der Zwischenablage in der gemeinten Größe; Bild-Editor: „Widerrufen“ ohne leere Schritte, verirrter Klick lässt „Wiederholen“ stehen, gehaltenes Esc |
 | `track` | Mitlaufender Zensurbalken in scrollendem Video (Texterkennung prüft jeden Zeitpunkt) |
 | `stitch` | Scroll-Screenshot: Ausschnitte → exakt das Originalbild (Pixelvergleich); nur neue Zeilen im Speicher, Obergrenze, Anhängen und Zusammensetzen gleichzeitig, Nachzügler einer beendeten Aufnahme landen nie in der nächsten |
 | `robust` | Ablage und Abläufe ohne Bildschirm: JPEG über 65 535 px → PNG, Ausweichordner bei nicht erreichbarer Ablage, Schreibfehler werden gemeldet, Aufräumen (Frist, `$TMPDIR/Knips`), Beenden wartet auf Schreibvorgänge; Aufnahme-Zustände mit einer Attrappe (belegt ab dem Start, Abbruch während Start/Countdown, Writer-Fehler, Beenden während der Aufnahme); zwei Auslöser kurz nacheinander für „Bildschirm“ und „Letzter Bereich“ ergeben eine Aufnahme (Standbild aus dem Speicher, `CaptureCoordinator.debugStill`) |
@@ -83,8 +88,19 @@ Seit macOS 14 clippen NSViews nicht mehr: eigene `draw(_:)` immer auf `bounds` b
 
 ## Ablage
 
-Ausgabe standardmäßig in **Bildschirmgröße (1×)** als PNG (Einstellungen → Export, auch JPEG / Retina 2×).
-Gemessen an echten 4K-Screenshots: Retina-PNG 2–6,7 MB → 1×-PNG 0,7–2,2 MB → 1×-JPEG 0,24–0,63 MB.
+Ausgabe standardmäßig **„Automatisch“** als PNG (Einstellungen → Export; daneben Bildschirmgröße 1× und Retina 2×,
+beide verlustfrei, und JPEG). „Automatisch“ (`ExportSize.auto`, `AppSettings.outputPromise`): Auf Retina-Bildschirmen
+bleibt die volle Auflösung, die Farben werden auf höchstens 256 reduziert und als PNG mit Farbtabelle geschrieben
+(`Support/PalettePNG.swift`: libimagequant 2.18.0 aus `Sources/CImageQuant`, eigener PNG-Schreiber mit zlib,
+Farbraum, 144 dpi und Durchsicht). Reichen 256 Farben nicht, ohne dass man es sähe (`PalettePNG.minQuality` 85:
+Fotos, Videobilder), oder ist das Bild größer als 40 MP, wird es Bildschirmgröße in allen Farben wie bisher. Was es
+wurde, steht erst nach dem Kodieren fest — `ImagePromise.adaptive`; die Maße des Eintrags zieht
+`CaptureStore.settleOutput` nach. Auf 1×-Bildschirmen und für JPEG ändert sich nichts. Wer den früheren Schalter
+selbst gestellt hatte, behält seine Wahl (`exportAtScreenSize` → `exportSize`).
+
+Gemessen 13.11.2026 an 80 echten Aufnahmen (M4): 76 in voller Auflösung, 4 Rückfall. Zusammen 32,5 MB — die
+1×-Ausgabe bis 1.0.2 brauchte 39,6 MB, Retina verlustfrei 93,1 MB. Abstand zum Original im Mittel 56 dB, nie unter
+40 dB. Zeit im Hintergrund: Ausschnitt im Mittel 0,15 s, 4K-Vollbild 0,5–0,8 s.
 Das Original in `items/<uuid>/original.png` bleibt immer in voller Auflösung; der Editor arbeitet darauf
 und schreibt beim Speichern wieder die verkleinerte Fassung (`AppSettings.outputPromise`).
 

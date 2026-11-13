@@ -26,6 +26,20 @@ export type AnnotationKind = "arrow" | "line" | "rectangle" | "ellipse" | "text"
 export type StrokeSize = "small" | "medium" | "large";
 export type RedactStyle = "pixelate" | "blur" | "solid";
 export type ImageFormat = "png" | "jpeg";
+/** Größe der gespeicherten Bildschirmfotos: „Automatisch“ (volle Auflösung mit höchstens 256 Farben, wenn man keinen
+ * Unterschied sieht), Bildschirmgröße (1×) oder volle Auflösung — `ExportSize` in knips-core. */
+export type ExportSize = "auto" | "screen" | "full";
+
+/** Erwarteter Verkleinerungsfaktor der Ausgabe eines Bildes mit `scale` Pixeln pro Punkt (wie
+ * `Settings::output_factor` in knips-core). Bei „Automatisch“ und PNG die volle Auflösung; reichen 256 Farben
+ * nicht (Fotos), wird die Datei bei 200 % doch Bildschirmgröße. */
+export function outputFactor(size: ExportSize, scale: number, format: ImageFormat): number {
+  if (scale <= 1 || size === "full") return 1;
+  if (size === "screen") return 1 / scale;
+  if (format === "png") return 1;
+  // Nie um einen krummen Faktor umrechnen (125 %, 150 %): Das machte Schrift weich.
+  return Math.abs(scale - Math.round(scale)) < 0.01 ? 1 / scale : 1;
+}
 export type CaptureKind = "image" | "video" | "gif";
 export type SensitiveKind = "email" | "iban" | "phone" | "card" | "secret" | "ip";
 export type HotkeyAction =
@@ -165,7 +179,7 @@ export interface Settings {
   gifFps: number;
   gifWidth: number;
   redactStyle: RedactStyle;
-  exportAtScreenSize: boolean;
+  exportSize: ExportSize;
   imageFormat: ImageFormat;
   showAutoRedact: boolean;
   autoRedactKinds: SensitiveKind[];

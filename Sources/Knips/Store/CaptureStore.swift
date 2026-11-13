@@ -138,12 +138,14 @@ struct VideoDocument: Codable {
         let id = UUID()
         let settings = AppSettings.shared
         var promise = outputPromise ?? settings.outputPromise(sourceScale: scale) { image }
-        let factor = settings.outputFactor(sourceScale: scale)
+        let factor = settings.outputFactor(sourceScale: scale, format: promise.format)
         let width = Int((CGFloat(image.width) * factor).rounded()), height = Int((CGFloat(image.height) * factor).rounded())
         if Self.format(promise.format, width: width, height: height) != promise.format {
             // Zu lang für JPEG (z. B. Scroll-Screenshot): als PNG speichern statt still gar nicht.
             let rendered = promise
-            promise = ImagePromise(format: .png, pointScale: rendered.pointScale) { rendered.image }
+            promise = ImagePromise(format: .png, adaptive: {
+                rendered.image.map { ($0, $0.pngData(pointScale: rendered.pointScale), rendered.pointScale) }
+            })
         }
         let output = try uniqueOutputURL(base: name ?? "Knips \(Format.fileDate.string(from: Date()))", ext: promise.format.fileExtension)
         reservedNames.insert(output.path)
@@ -156,8 +158,9 @@ struct VideoDocument: Codable {
         items.insert(item, at: 0)
         remember(image, for: id)
         ThumbnailCache.shared.seed(item, image: image)
-        // Original verlustfrei in voller Auflösung; bei gleicher Ausgabe dieselben Daten wiederverwenden.
-        let original = factor < 1 || promise.format != .png ? ImagePromise(image) : promise
+        // Original verlustfrei in voller Auflösung; bei gleicher Ausgabe dieselben Daten wiederverwenden. Nie die
+        // Ausgabe „Automatisch“: Sie reduziert die Farben oder verkleinert.
+        let original = factor < 1 || promise.format != .png || promise.adaptive ? ImagePromise(image) : promise
         let originalURL = originalURL(for: item), thumbURL = thumbnailURL(for: item)
         let snapshot = item
         beginWrite(id)
@@ -169,6 +172,7 @@ struct VideoDocument: Codable {
             await MainActor.run {
                 ThumbnailCache.shared.seed(snapshot, image: thumb)
                 self.reservedNames.remove(output.path)
+                self.settleOutput(id, promise)
                 self.endWrite(id)
                 if let failure { self.reportWriteFailure(failure, "Aufnahme konnte nicht gespeichert werden") }
             }
@@ -346,6 +350,7 @@ struct VideoDocument: Codable {
             }
             await MainActor.run {
                 if let thumb { ThumbnailCache.shared.seed(updated, image: thumb) }
+                self.settleOutput(id, promise)
                 self.endWrite(id)
                 if let failure { self.reportWriteFailure(failure, "Änderungen konnten nicht gespeichert werden") }
             }
@@ -418,6 +423,19 @@ struct VideoDocument: Codable {
         persist(updated)
         if let i = items.firstIndex(where: { $0.id == item.id }) { items[i] = updated }
         return updated
+    }
+
+    /// Ausgabe „Automatisch“: Ob die Datei volle Auflösung (256 Farben) oder Bildschirmgröße hat, steht erst nach dem
+    /// Kodieren fest. Weicht sie von der Annahme ab, die Maße des Eintrags nachziehen.
+    private func settleOutput(_ id: UUID, _ promise: ImagePromise) {
+        guard promise.adaptive, let item = item(with: id), let image = promise.image else { return }
+        let scale = Double(promise.pointScale)
+        guard item.pixelWidth != image.width || item.pixelHeight != image.height || item.outputScale != scale else { return }
+        _ = bump(item) {
+            $0.pixelWidth = image.width
+            $0.pixelHeight = image.height
+            $0.outputScale = scale
+        }
     }
 
     private func persist(_ item: CaptureItem) {

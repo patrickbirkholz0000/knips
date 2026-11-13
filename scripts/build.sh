@@ -115,6 +115,8 @@ mkdir -p "$APP/Contents/Frameworks"
 ditto "$SPARKLE_SRC" "$FW"
 for part in XPCServices Headers PrivateHeaders Modules; do rm -rf "${FW:?}/$part" "${FW:?}/Versions/B/$part"; done
 cp Resources/Sparkle-LICENSE.txt "$APP/Contents/Resources/Sparkle-LICENSE.txt"
+# libimagequant (Farbreduktion der Ausgabe „Automatisch“, statisch eingebunden): Lizenz liegt der App bei.
+cp Resources/libimagequant-LICENSE.txt "$APP/Contents/Resources/libimagequant-LICENSE.txt"
 
 # Weitergabe-Build: Debug-Symbole entfernen (wie Xcode bei Release-Archiven).
 if [[ "${RELEASE:-0}" == "1" ]]; then strip "$APP/Contents/MacOS/Knips"; fi

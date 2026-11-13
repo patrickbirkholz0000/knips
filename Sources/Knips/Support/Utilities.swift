@@ -205,7 +205,7 @@ enum ImageIOHelper {
 enum ImageFormat: String, CaseIterable, Identifiable, Codable {
     case png, jpeg
     var id: String { rawValue }
-    var title: String { self == .png ? "PNG (verlustfrei)" : "JPEG (kleiner)" }
+    var title: String { self == .png ? "PNG" : "JPEG (kleiner)" }
     var fileExtension: String { self == .png ? "png" : "jpg" }
     var utType: UTType { self == .png ? .png : .jpeg }
     var pasteboardType: NSPasteboard.PasteboardType { self == .png ? .png : NSPasteboard.PasteboardType(UTType.jpeg.identifier) }
@@ -239,8 +239,17 @@ extension CGImage {
 /// Overlay noch die Karte aufhalten. `data`/`image` warten, falls die Arbeit noch läuft.
 final class ImagePromise: @unchecked Sendable {
     let format: ImageFormat
-    /// Pixel pro Punkt des fertigen Bildes (2 = Retina-Ausgabe): steht als Auflösung in der Datei.
-    let pointScale: CGFloat
+    /// Ausgabe „Automatisch“: Auflösung und Farbtiefe stehen erst nach dem Kodieren fest (volle Auflösung mit 256
+    /// Farben oder Bildschirmgröße). Solche Daten taugen nicht als Original, und die Maße des Eintrags zieht der
+    /// Store nach (`CaptureStore.settleOutput`).
+    let adaptive: Bool
+    private var scale: CGFloat
+    /// Pixel pro Punkt des fertigen Bildes (2 = Retina-Ausgabe): steht als Auflösung in der Datei. Wartet, falls
+    /// die Arbeit noch läuft.
+    var pointScale: CGFloat {
+        group.wait()
+        return scale
+    }
     private let group = DispatchGroup()
     private var renderedImage: CGImage?
     private var result: Data?
@@ -253,7 +262,8 @@ final class ImagePromise: @unchecked Sendable {
     /// Rendert (z. B. Editor-Fassung mit Zensur, ggf. verkleinert) und kodiert anschließend.
     init(format: ImageFormat, pointScale: CGFloat = 1, render: @escaping @Sendable () -> CGImage?) {
         self.format = format
-        self.pointScale = pointScale
+        adaptive = false
+        scale = pointScale
         group.enter()
         Self.queue.async { [self] in
             renderedImage = render()
@@ -262,10 +272,27 @@ final class ImagePromise: @unchecked Sendable {
         }
     }
 
+    /// Rendern und Kodieren in einem Schritt, der selbst über Auflösung und Daten entscheidet („Automatisch“).
+    init(format: ImageFormat, adaptive work: @escaping @Sendable () -> (image: CGImage, data: Data?, pointScale: CGFloat)?) {
+        self.format = format
+        adaptive = true
+        scale = 1
+        group.enter()
+        Self.queue.async { [self] in
+            if let done = work() {
+                renderedImage = done.image
+                result = done.data
+                scale = done.pointScale
+            }
+            group.leave()
+        }
+    }
+
     /// Bereits kodierte Daten (z. B. aus einer Datei) — keine erneute Kodierung.
     init(image: CGImage, data: Data, format: ImageFormat, pointScale: CGFloat = 1) {
         self.format = format
-        self.pointScale = pointScale
+        adaptive = false
+        scale = pointScale
         renderedImage = image
         result = data
     }

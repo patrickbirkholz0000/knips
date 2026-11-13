@@ -22,7 +22,7 @@ export const mockSettings: Settings = {
   gifFps: 15,
   gifWidth: 960,
   redactStyle: "solid",
-  exportAtScreenSize: true,
+  exportSize: "auto",
   imageFormat: "png",
   showAutoRedact: false,
   autoRedactKinds: ["email", "iban", "phone", "card", "secret", "ip"],

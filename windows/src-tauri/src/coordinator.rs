@@ -235,10 +235,9 @@ impl Coordinator {
     pub fn finish(&self, image: RgbaImage, scale: f64, monitor: &Monitor) {
         let k = knips();
         let settings = k.settings.get();
-        let factor = settings.output_factor(scale);
         let source = Arc::new(image);
         let for_output = source.clone();
-        let output = output_promise(factor, settings.image_format, move || Some(for_output.as_ref().clone()));
+        let output = output_promise(&settings, scale, settings.image_format, move || Some(for_output.as_ref().clone()));
         let image = Arc::try_unwrap(source).unwrap_or_else(|a| a.as_ref().clone());
         match k.store.add_image(image, scale, Some(output.clone()), None) {
             Ok(item) => {

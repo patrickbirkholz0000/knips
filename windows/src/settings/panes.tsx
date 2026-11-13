@@ -13,6 +13,7 @@ import {
   Folder,
   Info,
   Keyboard,
+  Palette,
   RefreshCw,
   ScanText,
   ShieldCheck,
@@ -34,6 +35,8 @@ const set = (patch: Partial<S>) => void api.setSettings(patch);
 
 const TELEMETRY_INFO_URL = "https://github.com/patrickbirkholz0000/knips#datenschutz";
 const SOURCE_URL = "https://github.com/patrickbirkholz0000/knips";
+/** Lizenztext von libimagequant (Farbreduktion der Ausgabe „Automatisch“), im eigenen Repo. */
+const IMAGEQUANT_LICENSE_URL = "https://github.com/patrickbirkholz0000/knips/blob/main/Resources/libimagequant-LICENSE.txt";
 const FONT_LICENSES: [string, string, string][] = [
   ["Outfit", "© 2021 The Outfit Project Authors", "https://github.com/patrickbirkholz0000/knips/blob/main/windows/public/fonts/OFL-Outfit.txt"],
   ["JetBrains Mono", "© 2020 The JetBrains Mono Project Authors", "https://github.com/patrickbirkholz0000/knips/blob/main/windows/public/fonts/OFL-JetBrainsMono.txt"],
@@ -417,28 +420,33 @@ export function Redaction({ boot: { settings: s } }: { boot: Bootstrap }) {
 // ---------------------------------------------------------------- Export
 
 export function Export({ boot: { settings: s } }: { boot: Bootstrap }) {
-  const hint = s.exportAtScreenSize
-    ? s.imageFormat === "png"
-      ? "ca. 0,7–2 MB"
-      : "ca. 0,25–0,6 MB"
-    : s.imageFormat === "png"
-      ? "ca. 2–7 MB"
-      : "ca. 0,6–1,6 MB";
+  const png = s.imageFormat === "png";
+  const auto = s.exportSize === "auto";
+  const hint =
+    s.exportSize === "full" ? (png ? "ca. 1,5–5 MB" : "ca. 0,6–1,6 MB") : auto && png ? "ca. 0,5–1,7 MB" : png ? "ca. 0,5–1,5 MB" : "ca. 0,25–0,6 MB";
+  // Was die gewählte Größe bedeutet — ein Absatz unter der Karte.
+  const original = "Das Original bleibt für spätere Bearbeitung in voller Auflösung und allen Farben.";
+  const footer =
+    auto && png
+      ? `Automatisch: scharf bei kleiner Datei. Über 100 % Skalierung in voller Auflösung mit höchstens 256 Farben, wenn man keinen Unterschied sieht – bei Fotos und Videobildern in allen Farben. ${original}`
+      : auto
+        ? `Automatisch gilt für PNG. JPEG wird bei 200 % in Bildschirmgröße gespeichert, sonst in voller Auflösung. ${original}`
+        : s.exportSize === "screen"
+          ? `Bildschirmgröße: so groß wie auf dem Bildschirm, beim Einfügen nicht doppelt so groß. ${original}`
+          : `Volle Auflösung in allen Farben – die größten Dateien. ${original}`;
   return (
     <>
-      <Section
-        title="Screenshots"
-        footer="Bildschirmgröße: so groß wie auf dem Bildschirm, beim Einfügen nicht doppelt so groß. Das Original bleibt für spätere Bearbeitung in voller Auflösung."
-      >
+      <Section title="Screenshots" footer={footer}>
         <Row title="Größe">
           <Select
             label="Größe"
-            value={s.exportAtScreenSize}
+            value={s.exportSize}
             options={[
-              [true, "Bildschirmgröße (1×)"],
-              [false, "Volle Auflösung (2×)"],
+              ["auto", "Automatisch"],
+              ["screen", "Bildschirmgröße (1×)"],
+              ["full", "Volle Auflösung"],
             ]}
-            onChange={(v) => set({ exportAtScreenSize: v })}
+            onChange={(v) => set({ exportSize: v })}
           />
         </Row>
         <Row title="Format">
@@ -452,7 +460,7 @@ export function Export({ boot: { settings: s } }: { boot: Bootstrap }) {
             onChange={(v) => set({ imageFormat: v })}
           />
         </Row>
-        <Row title="Vollbild-Screenshot" description={s.imageFormat === "png" ? "PNG ist verlustfrei." : "JPEG ist kleiner."}>
+        <Row title="Vollbild-Screenshot" description={!png ? "JPEG ist kleiner." : auto ? "PNG mit höchstens 256 Farben." : "PNG ist verlustfrei."}>
           <span className="st-val">{hint}</span>
         </Row>
       </Section>
@@ -808,6 +816,21 @@ export function About({ boot }: { boot: Bootstrap }) {
         >
           <Button onClick={() => api.openUrl(SOURCE_URL)}>
             Quellcode <ExternalLink size={14} strokeWidth={2.2} />
+          </Button>
+        </Row>
+      </Section>
+      <Section title="Bildausgabe">
+        <Row
+          lead={
+            <IconTile>
+              <Palette size={17} strokeWidth={2} />
+            </IconTile>
+          }
+          title="libimagequant"
+          description="Wählt die 256 Farben der Ausgabe „Automatisch“ · GPL v3 oder neuer"
+        >
+          <Button onClick={() => api.openUrl(IMAGEQUANT_LICENSE_URL)}>
+            Lizenz <ExternalLink size={14} strokeWidth={2.2} />
           </Button>
         </Row>
       </Section>

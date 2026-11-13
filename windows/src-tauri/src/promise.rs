@@ -26,13 +26,23 @@ pub struct ImagePromise {
 impl ImagePromise {
     /// Rendert (z. B. verkleinert) und kodiert anschließend — im Hintergrund.
     pub fn new(format: ImageFormat, render: impl FnOnce() -> Option<RgbaImage> + Send + 'static) -> Self {
+        Self::spawn(format, false, render)
+    }
+
+    /// Wie `new`, PNG aber dichter gepackt (`imageops::encode_compact`) — für die Datei im Ablageordner.
+    pub fn compact(format: ImageFormat, render: impl FnOnce() -> Option<RgbaImage> + Send + 'static) -> Self {
+        Self::spawn(format, true, render)
+    }
+
+    fn spawn(format: ImageFormat, compact: bool, render: impl FnOnce() -> Option<RgbaImage> + Send + 'static) -> Self {
         let promise = Self { format, inner: Arc::new((Mutex::new(State::default()), Condvar::new())) };
         let inner = promise.inner.clone();
         std::thread::Builder::new()
             .name("knips-encode".into())
             .spawn(move || {
                 let image = render().map(Arc::new);
-                let data = image.as_ref().and_then(|img| match imageops::encode(img, format) {
+                let encode = if compact { imageops::encode_compact } else { imageops::encode };
+                let data = image.as_ref().and_then(|img| match encode(img, format) {
                     Ok(d) => Some(Arc::new(d)),
                     Err(err) => {
                         log::error!("Kodieren fehlgeschlagen: {err:#}");
@@ -93,5 +103,5 @@ impl ImageProvider for ImagePromise {
 
 /// Ausgabe (Datei + Zwischenablage): ggf. verkleinert, im gewählten Format — im Hintergrund.
 pub fn output_promise(factor: f64, format: ImageFormat, render: impl FnOnce() -> Option<RgbaImage> + Send + 'static) -> ImagePromise {
-    ImagePromise::new(format, move || render().map(|img| if factor < 0.999 { imageops::scaled(&img, factor) } else { img }))
+    ImagePromise::compact(format, move || render().map(|img| if factor < 0.999 { imageops::scaled(&img, factor) } else { img }))
 }

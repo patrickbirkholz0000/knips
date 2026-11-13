@@ -103,7 +103,7 @@ function Editor({ model, boot }: { model: VideoModel; boot: NonNullable<ReturnTy
         model.undo();
       } else if (mod && e.key.toLowerCase() === "s") {
         e.preventDefault();
-        void model.save();
+        if (!e.repeat) void model.save();
       } else if (mod && e.key === "Enter") {
         e.preventDefault();
         if (!model.s.busy) void saveAndClose();
@@ -111,10 +111,11 @@ function Editor({ model, boot }: { model: VideoModel; boot: NonNullable<ReturnTy
         return;
       } else if (e.key === " ") {
         e.preventDefault();
-        model.togglePlay();
+        // Gehaltene Leertaste schaltete sonst mit jeder Wiederholung zwischen Abspielen und Anhalten hin und her.
+        if (!e.repeat && !askClose) model.togglePlay();
       } else if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
-        model.deleteSelected();
+        if (!askClose) model.deleteSelected();
       } else if (e.key === "Escape") {
         if (askClose) setAskClose(false);
         else model.select(null);

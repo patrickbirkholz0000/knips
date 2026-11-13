@@ -81,6 +81,8 @@ fn kind_of(p: Purpose) -> Kind {
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 static CANCEL_REQ: AtomicBool = AtomicBool::new(false);
+/// Rechte Maustaste wurde auf dem Overlay gedrückt (Abbruch folgt beim Loslassen).
+static RIGHT_DOWN: AtomicBool = AtomicBool::new(false);
 static THREAD_ID: AtomicU32 = AtomicU32::new(0);
 
 /// Eigene Thread-Nachricht (ohne Fenster) für `cancel()`.
@@ -468,6 +470,7 @@ impl Drop for ActiveGuard {
 
 fn overlay_thread(frozen: Vec<Frozen>, windows: Vec<WindowInfo>, purpose: Purpose, window_mode: bool, on_done: Box<dyn FnOnce(Selection) + Send>) {
     let guard = ActiveGuard(true);
+    RIGHT_DOWN.store(false, Ordering::Release);
     unsafe {
         let _ = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         // Nachrichtenwarteschlange anlegen, bevor die Thread-ID veröffentlicht wird (PostThreadMessage).
@@ -806,11 +809,22 @@ unsafe fn handle(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT
                 }
                 Some(LRESULT(0))
             }
+            // Rechtsklick bricht ab — erst beim Loslassen. Verschwände das Overlay schon beim Drücken, bekäme das
+            // Fenster darunter das Loslassen allein und öffnete sein Kontextmenü.
             WM_RBUTTONDOWN => {
-                finish(Selection::Cancelled);
+                RIGHT_DOWN.store(true, Ordering::Release);
                 Some(LRESULT(0))
             }
-            WM_KEYDOWN => {
+            WM_RBUTTONUP => {
+                if RIGHT_DOWN.swap(false, Ordering::AcqRel) {
+                    finish(Selection::Cancelled);
+                }
+                Some(LRESULT(0))
+            }
+            // Mit gehaltenem Alt (Alt+Druck = Fenster aufnehmen) kommen Tasten als WM_SYSKEYDOWN. Esc, Leertaste und
+            // Eingabe gelten dann genauso; alles andere (Alt+F4 …) bleibt bei Windows.
+            WM_SYSKEYDOWN if !matches!(wp.0 as u16, vk if vk == VK_ESCAPE.0 || vk == VK_SPACE.0 || vk == VK_RETURN.0) => None,
+            WM_KEYDOWN | WM_SYSKEYDOWN => {
                 let repeat = (lp.0 >> 30) & 1 != 0;
                 let cur = cursor_pos();
                 let done = with_ov(|ov| ov.on_key(wp.0 as u16, repeat, cur)).flatten();

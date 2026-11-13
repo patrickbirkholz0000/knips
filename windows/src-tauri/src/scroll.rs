@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use knips_core::geometry::IRect;
-use knips_core::stitch::ScrollStitcher;
+use knips_core::stitch::{Handoff, Returned, ScrollStitcher};
 use knips_platform::capture::RegionCapturer;
 use knips_platform::overlay::{FrameColor, FrameWindow};
 use knips_platform::Monitor;
@@ -30,10 +30,14 @@ pub struct ScrollState {
 
 #[derive(Default)]
 struct Inner {
-    active: bool,
-    stitcher: Option<ScrollStitcher>,
+    /// Stitcher und Monitor der Sitzung. Der Aufnahme-Thread nimmt den Stitcher für jedes Bild heraus —
+    /// `Handoff` sorgt dafür, dass „Fertig“ in genau diesem Moment trotzdem speichert.
+    session: Handoff<ScrollStitcher, Monitor>,
+    /// Stand für die Leiste — auch während der Stitcher unterwegs ist.
+    sections: usize,
+    height: u32,
+    scale: f64,
     frame: Option<FrameWindow>,
-    monitor: Option<Monitor>,
     stop: Option<Arc<AtomicBool>>,
 }
 
@@ -44,16 +48,14 @@ pub struct Scroll {
 
 impl Scroll {
     pub fn is_active(&self) -> bool {
-        self.inner.lock().active
+        self.inner.lock().session.is_active()
     }
 
     pub fn state(&self) -> ScrollState {
         let inner = self.inner.lock();
-        let scale = inner.monitor.as_ref().map(|m| m.scale).unwrap_or(1.0);
-        let factor = knips().settings.get().output_factor(scale);
-        let (sections, height) = inner.stitcher.as_ref().map(|s| (s.sections(), s.height)).unwrap_or((0, 0));
+        let factor = knips().settings.get().output_factor(if inner.scale > 0.0 { inner.scale } else { 1.0 });
         // Höhe so, wie sie in der gespeicherten Datei herauskommt (1× oder volle Auflösung).
-        ScrollState { active: inner.active, sections, output_height: (height as f64 * factor) as u32 }
+        ScrollState { active: inner.session.is_active(), sections: inner.sections, output_height: (inner.height as f64 * factor) as u32 }
     }
 
     fn publish(&self) {
@@ -64,17 +66,16 @@ impl Scroll {
     pub fn begin(&self, monitor: Monitor, rect: IRect) {
         let stop = Arc::new(AtomicBool::new(false));
         let global = wm::global(&monitor, rect);
-        {
+        let session = {
             let mut inner = self.inner.lock();
-            if inner.active {
-                return;
-            }
-            inner.active = true;
-            inner.stitcher = None;
-            inner.monitor = Some(monitor.clone());
+            let Some(session) = inner.session.begin(monitor.clone()) else { return };
+            inner.sections = 0;
+            inner.height = 0;
+            inner.scale = monitor.scale;
             inner.stop = Some(stop.clone());
             inner.frame = FrameWindow::show(global, FrameColor::Scroll).ok();
-        }
+            session
+        };
         // Karten und Menü weg, eigene Fenster aus den Ausschnitten (bis `finish`).
         wm::set_capture_session(wm::Session::Scroll, true);
         self.show_controls(&monitor, global);
@@ -91,24 +92,36 @@ impl Scroll {
             };
             while !stop.load(Ordering::SeqCst) {
                 if let Ok(image) = capturer.grab() {
-                    // Vergleichen und Anhängen (bei 4K-Bereichen ~0,1 s pro Bild) ohne die Sperre lange zu halten.
-                    let mut stitcher = shared.lock().stitcher.take();
-                    match stitcher.as_mut() {
-                        None => stitcher = Some(ScrollStitcher::new(image)),
-                        Some(s) => {
+                    // Vergleichen und Anhängen (bei 4K-Bereichen ~0,1 s pro Bild) ohne die Sperre lange zu halten:
+                    // Der Stitcher ist solange bei diesem Thread.
+                    let Some(taken) = shared.lock().session.take(session) else { return };
+                    let stitcher = match taken {
+                        None => ScrollStitcher::new(image),
+                        Some(mut s) => {
                             s.add(image);
+                            s
                         }
-                    }
-                    let full = stitcher.as_ref().is_some_and(|s| s.is_full());
+                    };
+                    let (full, sections, height) = (stitcher.is_full(), stitcher.sections(), stitcher.height);
                     let mut inner = shared.lock();
-                    let active = inner.active;
-                    if active {
-                        inner.stitcher = stitcher;
+                    match inner.session.give_back(session, stitcher) {
+                        Returned::Kept => {
+                            inner.sections = sections;
+                            inner.height = height;
+                        }
+                        // „Fertig“ kam, während dieses Bild angehängt wurde. Der Stitcher lag nicht dort, wo `finish`
+                        // ihn sucht — bis 1.0.2 ging der ganze Scroll-Screenshot damit still verloren.
+                        Returned::Save(stitcher, monitor) => {
+                            drop(inner);
+                            save(stitcher, monitor);
+                            return;
+                        }
+                        Returned::Dropped => return,
                     }
                     drop(inner);
                     knips().scroll.publish();
                     // Höchstlänge erreicht: von selbst fertig (mehr kann der Editor nicht darstellen).
-                    if full && active {
+                    if full {
                         let k = knips();
                         k.scroll.finish(true);
                         let max = knips_core::stitch::MAX_HEIGHT;
@@ -121,29 +134,25 @@ impl Scroll {
         });
     }
 
-    pub fn finish(&self, save: bool) {
-        let (stitcher, monitor) = {
+    pub fn finish(&self, save_result: bool) {
+        let done = {
             let mut inner = self.inner.lock();
             if let Some(stop) = inner.stop.take() {
                 stop.store(true, Ordering::SeqCst);
             }
-            inner.active = false;
             inner.frame = None;
-            (inner.stitcher.take(), inner.monitor.take())
+            // `None` trotz Speichern: nichts aufgenommen — oder der Aufnahme-Thread hängt gerade ein Bild an und
+            // speichert selbst, sobald er fertig ist.
+            inner.session.finish(save_result)
         };
         if let Some(w) = wm::get(&knips().app, PANEL) {
             let _ = w.hide();
         }
         wm::set_capture_session(wm::Session::Scroll, false);
         self.publish();
-        let (Some(stitcher), Some(monitor), true) = (stitcher, monitor, save) else { return };
-        crate::telemetry::count("capture_scroll");
-        std::thread::spawn(move || {
-            let image = stitcher.into_image();
-            let k = knips();
-            k.shutter();
-            k.coordinator.finish(image, monitor.scale, &monitor);
-        });
+        if let Some((stitcher, monitor)) = done {
+            save(stitcher, monitor);
+        }
     }
 
     fn show_controls(&self, monitor: &Monitor, area: IRect) {
@@ -161,4 +170,15 @@ impl Scroll {
         wm::place(&window, monitor, PANEL_SIZE, (x, y));
         let _ = window.show();
     }
+}
+
+/// Zusammensetzen und als Aufnahme ablegen (eigener Thread: ein langes Bild braucht einen Moment).
+fn save(stitcher: ScrollStitcher, monitor: Monitor) {
+    crate::telemetry::count("capture_scroll");
+    std::thread::spawn(move || {
+        let image = stitcher.into_image();
+        let k = knips();
+        k.shutter();
+        k.coordinator.finish(image, monitor.scale, &monitor);
+    });
 }

@@ -26,6 +26,7 @@ use windows::core::w;
 use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Diagnostics::Debug::MessageBeep;
 use windows::Win32::System::Registry::{RegGetValueW, RegSetKeyValueW, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, REG_DWORD, RRF_RT_REG_DWORD, RRF_RT_REG_SZ};
+use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::System::Threading::{GetCurrentThread, GetCurrentThreadId, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL};
 #[cfg(feature = "dev")]
 use windows::Win32::UI::Input::KeyboardAndMouse::{LoadKeyboardLayoutW, UnloadKeyboardLayout, KEYEVENTF_UNICODE, KLF_NOTELLSHELL};
@@ -68,6 +69,13 @@ static SLOT_MODS: [AtomicU32; SLOTS] = [ZERO32; SLOTS];
 static SLOT_ID: [AtomicU32; SLOTS] = [ZERO32; SLOTS];
 /// Verschluckte Tasten (Down gesehen → Up und Wiederholungen ebenfalls schlucken), je Bit ein VK.
 static SWALLOWED: [AtomicU64; 4] = [ZERO64; 4];
+/// Wann (GetTickCount) eine verschluckte Taste zuletzt als gedrückt gemeldet wurde, je VK. Bleibt ihr Loslassen aus
+/// — Windows hat den Hook nach einer Zeitüberschreitung still ausgehängt, sicherer Desktop, Sperrbildschirm —,
+/// stünde sie sonst für immer als „gehalten“ da: Der nächste echte Druck gälte als Wiederholung, und das Kürzel
+/// reagierte erst beim zweiten Mal.
+static SWALLOWED_AT: [AtomicU32; 256] = [ZERO32; 256];
+/// Länger, als eine Tastenwiederholung auf sich warten lässt (Verzögerung höchstens 1 s, mit Eingabehilfen 2 s).
+const STALE_SWALLOW_MS: u32 = 2_500;
 /// Alt-/Win-Tasten, die an einem ausgelösten Kürzel beteiligt waren: ihr Loslassen wird maskiert.
 /// Bit 0 LWin, 1 RWin, 2 LAlt, 3 RAlt.
 static CONSUMED: AtomicU32 = AtomicU32::new(0);
@@ -95,10 +103,48 @@ fn set_swallowed(vk: u32, on: bool) {
     let vk = (vk & 0xFF) as usize;
     let bit = 1u64 << (vk % 64);
     if on {
+        SWALLOWED_AT[vk].store(tick(), Ordering::Relaxed);
         SWALLOWED[vk / 64].fetch_or(bit, Ordering::Relaxed);
     } else {
         SWALLOWED[vk / 64].fetch_and(!bit, Ordering::Relaxed);
     }
+}
+
+fn tick() -> u32 {
+    // SAFETY: reine Abfrage, blockiert nicht.
+    unsafe { GetTickCount() }
+}
+
+/// Eine verschluckte Taste wird wieder als gedrückt gemeldet: Wiederholung der gehaltenen Taste (`true`) — oder,
+/// nach langer Pause ohne Loslassen, ein neuer Druck (`false`; die Markierung fällt dann).
+fn swallowed_repeat(vk: u32) -> bool {
+    let now = tick();
+    let last = SWALLOWED_AT[(vk & 0xFF) as usize].swap(now, Ordering::Relaxed);
+    if stale(last, now) {
+        set_swallowed(vk, false);
+        return false;
+    }
+    true
+}
+
+/// Selbsttest: `vk` als verschluckt markieren, zuletzt gemeldet vor `age_ms` — wie nach einem Loslassen, das den
+/// Hook nie erreicht hat.
+#[cfg(feature = "dev")]
+pub fn debug_mark_swallowed(vk: u32, age_ms: u32) {
+    set_swallowed(vk, true);
+    SWALLOWED_AT[(vk & 0xFF) as usize].store(tick().wrapping_sub(age_ms), Ordering::Relaxed);
+}
+
+/// Selbsttest: Gilt `vk` gerade als verschluckt (gehalten)?
+#[cfg(feature = "dev")]
+pub fn debug_is_swallowed(vk: u32) -> bool {
+    swallowed(vk)
+}
+
+/// Liegt der letzte gemeldete Druck `last` so lange vor `now`, dass die Taste nicht mehr gehalten sein kann?
+/// (GetTickCount läuft nach 49,7 Tagen über — deshalb `wrapping_sub`.)
+fn stale(last: u32, now: u32) -> bool {
+    now.wrapping_sub(last) > STALE_SWALLOW_MS
 }
 
 fn is_modifier_vk(vk: u32) -> bool {
@@ -206,7 +252,7 @@ fn record_key(vk: u32, down: bool) -> bool {
         }
         return false;
     }
-    if swallowed(vk) {
+    if swallowed(vk) && swallowed_repeat(vk) {
         return true;
     }
     let mods = current_mods();
@@ -254,7 +300,7 @@ fn on_key(vk: u32, down: bool) -> bool {
         }
         return false;
     }
-    if swallowed(vk) {
+    if swallowed(vk) && swallowed_repeat(vk) {
         return true; // Wiederholung eines verschluckten Tastendrucks
     }
     let mut mods = None;
@@ -346,12 +392,13 @@ fn remove_hook() {
     }
 }
 
+/// Hook-Kürzel leeren. Die Markierungen verschluckter Tasten bleiben: Eine Taste, die gerade noch gehalten wird
+/// (beim Festlegen eines Kürzels die eben aufgenommene), löste sonst mit ihrer nächsten Wiederholung das neue Kürzel
+/// sofort aus, und ihr Loslassen käme allein bei der App im Vordergrund an. Sie fallen mit dem Loslassen — oder nach
+/// `STALE_SWALLOW_MS`, wenn es ausbleibt.
 fn clear_slots() {
     for v in &SLOT_VK {
         v.store(0, Ordering::SeqCst);
-    }
-    for w in &SWALLOWED {
-        w.store(0, Ordering::SeqCst);
     }
 }
 

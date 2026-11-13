@@ -72,6 +72,8 @@ function EditorView({ model, settings }: { model: EditorModel; settings: Setting
   const controller = useRef<CanvasController | null>(null);
   const closing = useRef(false);
   const saving = useRef<Promise<unknown>>(Promise.resolve());
+  /** Speichern/Kopieren, die noch nicht bei Rust angekommen und beantwortet sind. Solange darf das Fenster nicht zugehen. */
+  const inFlight = useRef(0);
   const item = model.item;
 
   // Rendern in voller Auflösung → Rust (speichern / kopieren / anpinnen / fertig).
@@ -85,7 +87,10 @@ function EditorView({ model, settings }: { model: EditorModel; settings: Setting
         const data = canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height);
         return api.editorCommit(item.id, action, canvas.width, canvas.height, new Uint8Array(data.data.buffer));
       };
-      const p = saving.current.then(run, run);
+      inFlight.current += 1;
+      const p = saving.current.then(run, run).finally(() => {
+        inFlight.current -= 1;
+      });
       saving.current = p.catch(() => {});
       return p;
     },
@@ -122,9 +127,19 @@ function EditorView({ model, settings }: { model: EditorModel; settings: Setting
     },
     done: () => {
       model.commitPendingEdits();
+      // „Fertig“ läuft schon (Doppelklick, gehaltene Taste): nichts weiter.
+      if (closing.current) return;
       if (model.dirty) {
         closing.current = true;
         void persist("done").catch(() => (closing.current = false));
+      } else if (inFlight.current > 0) {
+        // Ein Speichern oder Kopieren ist noch unterwegs — das Bild wird gerade gerendert oder an Rust geschickt.
+        // Ginge das Fenster jetzt zu, käme es nie an, und die Datei im Ablageordner bliebe ohne die neuen Zensuren.
+        closing.current = true;
+        void saving.current.then(() => {
+          if (model.dirty) closing.current = false; // gescheitert: offen bleiben
+          else return closeWindow();
+        });
       } else void closeWindow();
     },
     copy: () => {
@@ -186,6 +201,16 @@ function EditorView({ model, settings }: { model: EditorModel; settings: Setting
     void import("@tauri-apps/api/window").then(async ({ getCurrentWindow }) => {
       const win = getCurrentWindow();
       off = await win.onCloseRequested(async (e) => {
+        if (inFlight.current > 0) {
+          // Speichern unterwegs: Schließen würde es abbrechen. Abwarten — „Fertig“ schließt danach selbst.
+          e.preventDefault();
+          if (closing.current) return;
+          closing.current = true;
+          await saving.current;
+          if (model.dirty) closing.current = false; // gescheitert oder weiter bearbeitet: offen bleiben
+          else await win.destroy();
+          return;
+        }
         if (closing.current) return;
         model.commitPendingEdits();
         if (!model.dirty) return;
@@ -219,6 +244,11 @@ function EditorView({ model, settings }: { model: EditorModel; settings: Setting
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       const k = e.key.toLowerCase();
       const a = actionsRef.current;
+      // Gehaltene Taste: Widerrufen/Wiederholen dürfen sich wiederholen, Kopieren, Speichern und „Fertig“ nicht.
+      if (e.repeat && k !== "z" && k !== "y") {
+        if (k === "c" || k === "s" || k === "enter" || (k === "e" && e.shiftKey)) e.preventDefault();
+        return;
+      }
       if (k === "z") { e.preventDefault(); e.shiftKey ? model.redo() : model.undo(); }
       else if (k === "y") { e.preventDefault(); model.redo(); }
       else if (k === "c") { e.preventDefault(); a.copy(); }

@@ -89,7 +89,7 @@ Alle zusammen: `scripts/selftest.ps1` (macht die CI). Nur einige in der CI, ohne
 | `track` | mitlaufender Balken in scrollendem Testvideo deckt zu jedem Zeitpunkt ab |
 | `video` | MP4-Export mit Kürzen + Balken, GIF-Export, Auto-Zensur im Video; Quelle mit variabler Bildrate (wie eine Aufnahme, Ø 9 fps): wirksam ≈ 30 fps, Export ≥ 24 fps, jedes Exportbild zeigt das Quellbild seiner Zeit |
 | `perf` | Zeiten: Standbild, 1×+PNG, Texterkennung |
-| `hotkeys` | Kürzel über RegisterHotKey und Tastatur-Hook mit simulierten Tastendrücken (auch Druck, Win-Kombination, einzelne Tasten Pos1 und F8); hat ein anderes Programm das Kürzel (`hotkeys::occupy`), übernimmt der Hook Strg+Alt+F10, Ende bleibt nicht registriert und löst nichts aus, wieder frei löst es aus; Tastennamen und AltGr-Erkennung auf dem deutschen und US-Layout (`probe_layout` lädt sie kurz) |
+| `hotkeys` | Kürzel über RegisterHotKey und Tastatur-Hook mit simulierten Tastendrücken (auch Druck, Win-Kombination, einzelne Tasten Pos1 und F8); ein Loslassen, das den Hook nie erreicht hat, blockiert das Kürzel nicht (nach 2,5 s zählt der nächste Druck wieder, eine eben gemeldete Taste bleibt Wiederholung); hat ein anderes Programm das Kürzel (`hotkeys::occupy`), übernimmt der Hook Strg+Alt+F10, Ende bleibt nicht registriert und löst nichts aus, wieder frei löst es aus; Tastennamen und AltGr-Erkennung auf dem deutschen und US-Layout (`probe_layout` lädt sie kurz) |
 | `hotkeyrecord` | Kürzel ändern wie ein Nutzer: Einstellungen → Tastaturkürzel, Knopf anklicken (im Fenster und einmal mit simulierter Maus), Tasten per `SendInput` als fremde Eingabe (nicht `OWN_INJECT`). Nur „A“, Umschalt+A, Pos1, Strg+Umschalt+K/L, Umschalt+F7 und Entf: Ereignis `hotkey-recorded`, Einstellung, Anzeige, das neue Kürzel löst aus, das alte nicht mehr; einzelne Tasten zum Tippen mit Hinweis „… wirkt jetzt überall“ (`data-hotkey-note`), Kombinationen und F-Tasten ohne; Pos1 kommt in der Seite im Vordergrund nicht an, eine freie Taste schon; Ende, das ein anderes Programm hat (`hotkeys::occupy`), steht als „Von einer anderen App belegt“ da, wieder frei löst es aus; ein Zeichen per Unicode-Eingabe (VK_PACKET, keine Taste) → `invalid` mit Rückmeldung unter dem Kürzel, die Aufnahme läuft weiter; Esc bricht ab, Rücktaste entfernt, zweiter Klick beendet; Fokus weg oder Fenster zu beendet die Aufnahme; Druck (Hook-Kürzel) löst aus, während die Einstellungen vorn sind. Jede Taste mit Zahl der Hook-Aufrufe im Log. Ausführen ist durch eine Liste ersetzt, nimmt nie auf. Bilder `kuerzel-*.png` (auch dunkel) |
 | `overlay` | das echte Auswahl-Overlay mit simulierter Maus/Tastatur: Ziehen, Umschalt-Quadrat, Esc, Eingabe, Leertaste + Fensterklick — nur auf Rechnern ohne Nutzer (CI) |
 | `clipboard` | echte Zwischenablage: Bild verzögert anbieten (PNG/JPEG) und zurücklesen; privates Kopieren (nach der Aufnahme) vom Verlauf/Cloud ausgeschlossen und trotzdem einfügbar — nur für die CI |
@@ -285,6 +285,9 @@ aus `knips_core::settings::key_name`.
 ## Ablage, Datenschutz, Deinstallation
 
 Wie auf dem Mac: Ablage `Bilder\Knips` (immer die gerenderte, zensierte Fassung, standardmäßig 1×).
+Die Datei im Ablageordner wird dichter gepackt als Original und Vorschaubild (`imageops::encode_compact`,
+`ImagePromise::compact`): gleiche Pixel, rund 30 % kleiner (gemessen 13.11.2026 an 40 Aufnahmen: 54,6 → 38,0 MB),
+dafür im Schnitt 0,14 s statt 0,01 s im Hintergrund.
 Alles andere liegt in den Ordnern der App-Kennung (`paths.rs`), nie im Installationsordner
 (`%LOCALAPPDATA%\Knips`): Originale + Bearbeitungsstand in `%LOCALAPPDATA%\de.birkgroup.knips\items\<id>\`,
 daneben `EBWebView\` (WebView2) und `logs\`; Einstellungen in `%APPDATA%\de.birkgroup.knips\settings.json`.
@@ -404,6 +407,28 @@ Proxy- und Firmennetze.
   (`Recorder::warnings`, Knopf `ms-settings:privacy-microphone`).
 - **Abstürze:** Panic-Hook (`crash.rs`) schreibt Thread, Stelle und Rückverfolgung ins Log; Wächter setzen
   „Overlay aktiv“, „Overlay wird vorbereitet“ und den Aufnahme-Zustand auch nach einem Panic zurück.
+
+## Abläufe mit mehreren Threads
+
+- **Scroll-Screenshot:** Der Aufnahme-Thread nimmt den Stitcher für jedes Bild heraus (Vergleichen und Anhängen, bei
+  4K ~0,1 s). Kam „Fertig“ genau dann, fand `finish` nichts und der ganze Screenshot ging still verloren (bis 1.0.2).
+  `knips_core::stitch::Handoff` (Kern-Tests) merkt sich das: Der Aufnahme-Thread bekommt beim Zurückgeben
+  `Returned::Save` und speichert selbst. Sitzungsnummern halten Nachzügler aus der nächsten Sitzung heraus.
+- **Dateinamen:** `Store::unique_output_path` reserviert den Namen unter derselben Sperre, unter der es ihn sucht —
+  zwei Aufnahmen in derselben Sekunde (zwei Threads) bekämen sonst denselben Namen.
+- **Ein Standbild zur Zeit:** „Ganzer Bildschirm“ und „Letzter Bereich“ laufen ohne Overlay; ein zweiter Auslöser
+  während der Aufnahme (Taste prellt, doppelt gedrückt) wird verworfen (`Coordinator::still_in_flight`).
+- **Bild-Editor:** Solange ein Speichern oder Kopieren unterwegs ist (Bild wird gerendert oder an Rust geschickt),
+  geht das Fenster nicht zu — weder über „Fertig“ noch über das Schließen-Kreuz (`inFlight` in `Editor.tsx`). Ein
+  Doppelklick auf „Fertig“ schloss sonst das Fenster, bevor die Pixel bei Rust ankamen; die Datei im Ablageordner blieb
+  ohne die neuen Zensuren.
+- **Gehaltene Tasten:** Wiederholungen zählen nicht, wo eine Taste umschaltet oder beendet — Leertaste im Video-Editor,
+  Esc und Eingabe im Bild-Editor, Strg+C/S/Eingabe. Der Tastatur-Hook hält eine verschluckte Taste höchstens 2,5 s ohne
+  neue Meldung für gehalten (`STALE_SWALLOW_MS`): Bleibt ihr Loslassen aus (Hook von Windows still ausgehängt,
+  Sperrbildschirm), reagierte das Kürzel sonst erst beim zweiten Druck. Neu belegen (`clear_slots`) löscht die
+  Markierungen nicht mehr — die eben aufgenommene, noch gehaltene Taste löste sonst ihr neues Kürzel gleich aus.
+- **Auswahl-Overlay:** Rechtsklick bricht beim Loslassen ab (beim Drücken bekäme das Fenster darunter das Loslassen
+  allein und öffnete sein Kontextmenü); Esc, Leertaste und Eingabe gelten auch mit gehaltenem Alt (`WM_SYSKEYDOWN`).
 
 ## Windows-Eigenheiten (gefunden in der CI)
 

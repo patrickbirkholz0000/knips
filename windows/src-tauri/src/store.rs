@@ -175,7 +175,6 @@ impl Store {
         self.persist(&item);
         {
             let mut inner = self.inner.lock();
-            inner.reserved.insert(output_path.clone());
             inner.items.insert(0, item.clone());
             remember(&mut inner, id, image.clone());
         }
@@ -227,8 +226,10 @@ impl Store {
         };
         paths::ensure(&self.directory(item.id));
         let original = self.original_path(&item);
-        move_file(temp, &original)?;
-        link_or_copy(&original, &output)?;
+        let placed = move_file(temp, &original).and_then(|_| link_or_copy(&original, &output));
+        // Die Datei liegt jetzt da (oder gar nicht): Der Name muss nicht länger reserviert bleiben.
+        self.inner.lock().reserved.remove(&output);
+        placed?;
         match knips_platform::media::thumbnail(&output, 640) {
             Ok(thumb) => write_thumbnail(&thumb, &self.thumbnail_path(item.id)),
             Err(err) => log::warn!("Video-Vorschaubild fehlgeschlagen: {err:#}"),
@@ -565,16 +566,20 @@ impl Store {
         self.inner.lock().items = loaded;
     }
 
+    /// Freier Dateiname im Ablageordner — und sofort reserviert, unter derselben Sperre: Zwei Aufnahmen in derselben
+    /// Sekunde (zwei Threads) bekämen sonst denselben Namen, und die zweite überschriebe die erste. Wer den Namen
+    /// holt, gibt ihn wieder frei, sobald die Datei liegt (`reserved.remove`).
     fn unique_output_path(&self, base: &str, ext: &str) -> Result<PathBuf> {
         let folder = self.settings.save_folder();
         std::fs::create_dir_all(&folder).with_context(|| format!("Ablageordner {} nicht beschreibbar", folder.display()))?;
-        let inner = self.inner.lock();
+        let mut inner = self.inner.lock();
         let mut path = folder.join(format!("{base}.{ext}"));
         let mut n = 2;
         while path.exists() || inner.reserved.contains(&path) {
             path = folder.join(format!("{base} ({n}).{ext}"));
             n += 1;
         }
+        inner.reserved.insert(path.clone());
         Ok(path)
     }
 }

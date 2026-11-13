@@ -896,6 +896,18 @@ fn hotkeys_test() -> Result<()> {
     for (id, combo) in bindings {
         fires(combo, Some(id), &combo.display(), &mut missing);
     }
+    // Loslassen, das den Hook nie erreicht hat (von Windows still ausgehängt, Sperrbildschirm): Die Taste stünde für
+    // immer als gehalten da, und das Kürzel reagierte erst beim zweiten Druck. Nach langer Pause zählt der nächste
+    // Druck wieder; eine eben erst gemeldete Taste bleibt dagegen eine Wiederholung und löst nichts aus.
+    let win_shift_4 = bindings[1].1;
+    hotkeys::debug_mark_swallowed(win_shift_4.vk, 100);
+    fires(win_shift_4, None, "Win+Umschalt+4 als Wiederholung (eben noch gehalten)", &mut missing);
+    hotkeys::debug_mark_swallowed(win_shift_4.vk, 10_000);
+    fires(win_shift_4, Some(2), "Win+Umschalt+4 nach ausgebliebenem Loslassen", &mut missing);
+    if hotkeys::debug_is_swallowed(win_shift_4.vk) {
+        println!("   FALSCH Win+Umschalt+4 gilt nach dem Loslassen noch als gehalten");
+        missing.push("Markierung nach dem Loslassen nicht gefallen".into());
+    }
     // Abgeschaltet: darf nicht mehr auslösen.
     hotkeys::apply(&[]);
     fires(bindings[0].1, None, "Strg+Alt+F9 nach dem Abmelden", &mut missing);

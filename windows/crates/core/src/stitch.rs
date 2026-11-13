@@ -171,6 +171,203 @@ impl ScrollStitcher {
     }
 }
 
+/// Übergabe eines Wertes zwischen einem Arbeits-Thread, der ihn zum Bearbeiten herausnimmt, und „Fertig“ von
+/// außen. Beim Scroll-Screenshot nimmt der Aufnahme-Thread den Stitcher für jedes neue Bild heraus (Vergleichen
+/// und Anhängen dauern bei 4K ~0,1 s) — kommt „Fertig“ genau dann, liegt er nicht dort, wo „Fertig“ ihn sucht.
+/// Die Übergabe merkt sich das: Der Arbeits-Thread bekommt beim Zurückgeben gesagt, dass er jetzt speichern soll.
+/// Jede Sitzung hat eine Nummer; ein Nachzügler einer beendeten Sitzung legt nie etwas in die nächste.
+///
+/// `S`: der Wert (Stitcher), `C`: was zum Speichern dazugehört (Monitor).
+pub struct Handoff<S, C> {
+    active: bool,
+    session: u64,
+    value: Option<S>,
+    context: Option<C>,
+    /// Sitzung, deren Arbeits-Thread den Wert gerade bei sich hat.
+    busy: Option<u64>,
+    /// „Fertig“ kam, während der Wert unterwegs war (je Sitzung).
+    save_when_done: Vec<(u64, C)>,
+}
+
+/// Was beim Zurückgeben geschieht.
+#[derive(Debug, PartialEq)]
+pub enum Returned<S, C> {
+    /// Sitzung läuft weiter, der Wert liegt wieder bereit.
+    Kept,
+    /// „Fertig“ kam inzwischen: jetzt speichern.
+    Save(S, C),
+    /// Abgebrochen oder Nachzügler: verwerfen.
+    Dropped,
+}
+
+impl<S, C> Default for Handoff<S, C> {
+    fn default() -> Self {
+        Self { active: false, session: 0, value: None, context: None, busy: None, save_when_done: Vec::new() }
+    }
+}
+
+impl<S, C> Handoff<S, C> {
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+
+    /// Neue Sitzung; `None`, wenn schon eine läuft.
+    pub fn begin(&mut self, context: C) -> Option<u64> {
+        if self.active {
+            return None;
+        }
+        self.active = true;
+        self.session += 1;
+        self.value = None;
+        self.context = Some(context);
+        Some(self.session)
+    }
+
+    /// Arbeits-Thread: Wert herausnehmen. `None`: Sitzung vorbei, aufhören. `Some(None)`: noch kein Wert (erstes Bild).
+    pub fn take(&mut self, session: u64) -> Option<Option<S>> {
+        if !self.active || self.session != session {
+            return None;
+        }
+        self.busy = Some(session);
+        Some(self.value.take())
+    }
+
+    /// Arbeits-Thread: Wert zurückgeben.
+    pub fn give_back(&mut self, session: u64, value: S) -> Returned<S, C> {
+        if self.busy == Some(session) {
+            self.busy = None;
+        }
+        if self.active && self.session == session {
+            self.value = Some(value);
+            return Returned::Kept;
+        }
+        match self.save_when_done.iter().position(|(s, _)| *s == session) {
+            Some(i) => Returned::Save(value, self.save_when_done.remove(i).1),
+            None => Returned::Dropped,
+        }
+    }
+
+    /// Sitzung beenden. Liefert, was sofort zu speichern ist. `None` mit `save`: nichts aufgenommen — oder der
+    /// Arbeits-Thread hat den Wert gerade bei sich und bekommt beim Zurückgeben `Returned::Save`.
+    pub fn finish(&mut self, save: bool) -> Option<(S, C)> {
+        if !self.active {
+            return None;
+        }
+        self.active = false;
+        let (value, context) = (self.value.take(), self.context.take());
+        if !save {
+            return None;
+        }
+        match (value, context) {
+            (Some(value), Some(context)) => Some((value, context)),
+            (None, Some(context)) if self.busy == Some(self.session) => {
+                self.save_when_done.push((self.session, context));
+                None
+            }
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod handoff_tests {
+    use super::{Handoff, Returned};
+
+    #[test]
+    fn normal_session_saves_on_finish() {
+        let mut h: Handoff<Vec<u8>, &str> = Handoff::default();
+        let s = h.begin("monitor").unwrap();
+        assert_eq!(h.take(s), Some(None)); // erstes Bild
+        assert_eq!(h.give_back(s, vec![1]), Returned::Kept);
+        let mut v = h.take(s).unwrap().unwrap();
+        v.push(2);
+        assert_eq!(h.give_back(s, v), Returned::Kept);
+        assert_eq!(h.finish(true), Some((vec![1, 2], "monitor")));
+        assert!(!h.is_active());
+        assert_eq!(h.take(s), None); // Arbeits-Thread hört auf
+    }
+
+    /// „Fertig“, während der Aufnahme-Thread ein Bild anhängt — bis 1.0.2 ging der Scroll-Screenshot dabei verloren.
+    #[test]
+    fn finish_while_busy_saves_when_returned() {
+        let mut h: Handoff<Vec<u8>, &str> = Handoff::default();
+        let s = h.begin("monitor").unwrap();
+        h.take(s);
+        h.give_back(s, vec![1]);
+        let mut v = h.take(s).unwrap().unwrap(); // Anhängen läuft
+        assert_eq!(h.finish(true), None); // Wert ist unterwegs
+        v.push(2);
+        assert_eq!(h.give_back(s, v), Returned::Save(vec![1, 2], "monitor"));
+        assert_eq!(h.take(s), None);
+    }
+
+    #[test]
+    fn finish_while_first_frame_is_busy_saves_it() {
+        let mut h: Handoff<Vec<u8>, &str> = Handoff::default();
+        let s = h.begin("monitor").unwrap();
+        assert_eq!(h.take(s), Some(None));
+        assert_eq!(h.finish(true), None);
+        assert_eq!(h.give_back(s, vec![7]), Returned::Save(vec![7], "monitor"));
+    }
+
+    #[test]
+    fn cancel_while_busy_drops() {
+        let mut h: Handoff<Vec<u8>, &str> = Handoff::default();
+        let s = h.begin("monitor").unwrap();
+        h.take(s);
+        h.give_back(s, vec![1]);
+        let v = h.take(s).unwrap().unwrap();
+        assert_eq!(h.finish(false), None);
+        assert_eq!(h.give_back(s, v), Returned::Dropped);
+    }
+
+    #[test]
+    fn finish_without_frames_saves_nothing() {
+        let mut h: Handoff<Vec<u8>, &str> = Handoff::default();
+        h.begin("monitor").unwrap();
+        assert_eq!(h.finish(true), None);
+        assert_eq!(h.finish(true), None); // zweites „Fertig“ ohne Sitzung
+    }
+
+    /// Nachzügler: Die alte Sitzung hängt noch an, die nächste hat schon begonnen.
+    #[test]
+    fn late_return_never_lands_in_next_session() {
+        let mut h: Handoff<Vec<u8>, &str> = Handoff::default();
+        let a = h.begin("erster").unwrap();
+        h.take(a);
+        h.give_back(a, vec![1]);
+        let old = h.take(a).unwrap().unwrap(); // Anhängen läuft
+        assert_eq!(h.finish(true), None);
+        let b = h.begin("zweiter").unwrap();
+        assert_ne!(a, b);
+        assert_eq!(h.take(b), Some(None)); // neue Sitzung beginnt leer
+        assert_eq!(h.give_back(a, old), Returned::Save(vec![1], "erster")); // alte wird trotzdem gespeichert
+        assert_eq!(h.give_back(b, vec![9]), Returned::Kept);
+        assert_eq!(h.finish(true), Some((vec![9], "zweiter")));
+    }
+
+    /// Zwei Sitzungen kurz nacheinander beendet, beide Male war der Wert unterwegs: beide werden gespeichert.
+    #[test]
+    fn two_pending_saves_are_both_kept() {
+        let mut h: Handoff<Vec<u8>, &str> = Handoff::default();
+        let a = h.begin("erster").unwrap();
+        assert_eq!(h.take(a), Some(None));
+        assert_eq!(h.finish(true), None);
+        let b = h.begin("zweiter").unwrap();
+        assert_eq!(h.take(b), Some(None));
+        assert_eq!(h.finish(true), None);
+        assert_eq!(h.give_back(a, vec![1]), Returned::Save(vec![1], "erster"));
+        assert_eq!(h.give_back(b, vec![2]), Returned::Save(vec![2], "zweiter"));
+    }
+
+    #[test]
+    fn second_begin_while_active_is_refused() {
+        let mut h: Handoff<Vec<u8>, &str> = Handoff::default();
+        assert!(h.begin("a").is_some());
+        assert_eq!(h.begin("b"), None);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

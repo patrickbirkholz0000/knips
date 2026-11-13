@@ -25,6 +25,9 @@ pub struct Coordinator {
     last_area: Mutex<Option<(isize, IRect)>>,
     /// Ein Overlay wird gerade vorbereitet (Standbild läuft).
     preparing: AtomicBool,
+    /// Eine Aufnahme ohne Overlay läuft (ganzer Bildschirm, letzter Bereich). Ein zweiter Auslöser in dieser Zeit —
+    /// die Taste prellt oder wird doppelt gedrückt — ergäbe sonst zwei gleiche Aufnahmen in zwei Threads.
+    still_in_flight: AtomicBool,
 }
 
 impl Coordinator {
@@ -99,9 +102,10 @@ impl Coordinator {
     }
 
     pub fn capture_fullscreen(&self) {
-        if overlay::is_active() {
+        if overlay::is_active() || self.still_in_flight.swap(true, Ordering::SeqCst) {
             return;
         }
+        let _in_flight = OnDrop(|| self.still_in_flight.store(false, Ordering::SeqCst));
         let monitor = monitors::at_cursor();
         let conceal = wm::conceal_for_still();
         let frozen = capture::freeze(std::slice::from_ref(&monitor));
@@ -177,6 +181,10 @@ impl Coordinator {
             self.capture_interactive(false);
             return;
         };
+        if self.still_in_flight.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let _in_flight = OnDrop(|| self.still_in_flight.store(false, Ordering::SeqCst));
         let conceal = wm::conceal_for_still();
         let frozen = capture::freeze(std::slice::from_ref(&monitor));
         drop(conceal);

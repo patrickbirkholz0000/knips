@@ -146,15 +146,26 @@ pub fn downscale(img: &RgbaImage, max_pixel: u32) -> RgbaImage {
     resample_rgba(img, w, h)
 }
 
-/// PNG verlustfrei; JPEG mit Qualität 85 (Schrift bleibt scharf), Transparenz auf Weiß.
+/// PNG verlustfrei; JPEG mit Qualität 85 (Schrift bleibt scharf), Transparenz auf Weiß. PNG mit schneller
+/// Kompression: Original und Vorschaubild dürfen weder Karte noch Overlay aufhalten.
 pub fn encode(img: &RgbaImage, format: ImageFormat) -> Result<Vec<u8>> {
+    encode_with(img, format, CompressionType::Fast)
+}
+
+/// Wie `encode`, PNG aber dichter gepackt — für die Datei im Ablageordner. Gleiche Pixel, rund 30 % kleiner
+/// (gemessen 13.11.2026 an 40 Aufnahmen: 54,6 → 38,0 MB), dafür im Schnitt 0,14 s statt 0,01 s im Hintergrund.
+/// Noch dichter („Best“) brächte 1 % mehr und dauerte dreimal so lang.
+pub fn encode_compact(img: &RgbaImage, format: ImageFormat) -> Result<Vec<u8>> {
+    encode_with(img, format, CompressionType::Default)
+}
+
+fn encode_with(img: &RgbaImage, format: ImageFormat, compression: CompressionType) -> Result<Vec<u8>> {
     let (w, h) = img.dimensions();
     let opaque = img.as_raw().chunks_exact(4).all(|p| p[3] == 255);
     let mut out = Vec::new();
     match format {
         ImageFormat::Png => {
-            // Schnelle Kompression: ein 4K-PNG darf weder Karte noch Overlay aufhalten.
-            let enc = PngEncoder::new_with_quality(&mut out, CompressionType::Fast, FilterType::Adaptive);
+            let enc = PngEncoder::new_with_quality(&mut out, compression, FilterType::Adaptive);
             if opaque {
                 let rgb: Vec<u8> = img.as_raw().chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
                 enc.write_image(&rgb, w, h, ExtendedColorType::Rgb8)?;
@@ -273,6 +284,30 @@ mod tests {
 
     fn gradient(w: u32, h: u32) -> RgbaImage {
         RgbaImage::from_fn(w, h, |x, y| Rgba([(x * 255 / w.max(1)) as u8, (y * 255 / h.max(1)) as u8, 90, 255]))
+    }
+
+    /// Dichter gepacktes PNG (Datei im Ablageordner): dieselben Pixel, kleiner als die schnelle Fassung.
+    #[test]
+    fn compact_png_is_smaller_and_lossless() {
+        // Wie ein Bildschirmfoto: Flächen, Linien und „Text“ aus wenigen Farben, dazu ein Verlauf.
+        let img = RgbaImage::from_fn(640, 400, |x, y| {
+            if y < 60 {
+                Rgba([(x * 255 / 640) as u8, 120, 200, 255])
+            } else if (y / 14) % 2 == 0 && (x * 7 + y * 3) % 11 < 4 {
+                Rgba([30, 30, 34, 255])
+            } else {
+                Rgba([250, 250, 252, 255])
+            }
+        });
+        let fast = encode(&img, ImageFormat::Png).unwrap();
+        let compact = encode_compact(&img, ImageFormat::Png).unwrap();
+        assert!(compact.len() < fast.len(), "dicht {} ≥ schnell {}", compact.len(), fast.len());
+        assert_eq!(decode(&compact).unwrap().as_raw(), img.as_raw());
+        assert_eq!(decode(&fast).unwrap().as_raw(), img.as_raw());
+        // Mit Durchsicht bleibt der Alphakanal.
+        let mut clear = img.clone();
+        clear.put_pixel(0, 0, Rgba([0, 0, 0, 0]));
+        assert_eq!(decode(&encode_compact(&clear, ImageFormat::Png).unwrap()).unwrap().as_raw(), clear.as_raw());
     }
 
     #[test]

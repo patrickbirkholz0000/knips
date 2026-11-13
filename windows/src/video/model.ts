@@ -275,8 +275,9 @@ export class VideoModel {
       this.checkpoint();
       this.updateRedaction(sel.id, (r) => ({ ...r, rect, track: points }));
       this.showToast(`Balken folgt dem Inhalt (${points.length} Positionen)`);
-    } catch {
+    } catch (e) {
       this.end();
+      if (!this.cancelled) this.showToast(`Verfolgen fehlgeschlagen: ${errorText(e)}`, true);
     }
   }
 
@@ -297,8 +298,9 @@ export class VideoModel {
       this.checkpoint();
       this.set({ redactions: [...this.s.redactions, ...found] });
       this.showToast(`${found.length} Fundstelle${found.length === 1 ? "" : "n"} zensiert — bitte kurz prüfen`);
-    } catch {
+    } catch (e) {
       this.end();
+      if (!this.cancelled) this.showToast(`Auto-Zensur fehlgeschlagen: ${errorText(e)}`, true);
     }
   }
 

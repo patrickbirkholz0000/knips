@@ -69,6 +69,13 @@ export class CanvasController {
     on(canvas, "wheel", (e) => this.wheel(e), { passive: false });
     on(window, "keydown", (e) => this.keyDown(e));
     on(window, "keyup", (e) => this.keyUp(e));
+    // Fenster verliert den Fokus (Alt+Tab): Das Loslassen der Leertaste käme nicht mehr an — „gehalten“ bliebe
+    // stehen, und jeder Klick verschöbe die Ansicht, statt zu zeichnen.
+    on(window, "blur", () => {
+      if (!this.spaceHeld) return;
+      this.spaceHeld = false;
+      if (this.mouse) this.updateCursor(this.mouse);
+    });
     const ro = new ResizeObserver(() => this.resize());
     ro.observe(host);
     this.disposers.push(() => ro.disconnect());
@@ -663,11 +670,15 @@ export class CanvasController {
         m.deleteSelection();
         return;
       case "Escape":
+        // Gehaltenes Esc liefe sonst die ganze Leiter hinunter: Zuschnitt abbrechen → Auswahl aufheben → schließen.
+        if (e.repeat) return;
         if (m.tool === "crop") m.cancelCrop();
         else if (m.selectedID) m.select(null);
         else this.actions.close();
         return;
       case "Enter":
+        // Gehaltene Eingabetaste öffnete einen eben bestätigten Text gleich wieder.
+        if (e.repeat) return;
         if (m.tool === "crop") { m.applyCrop(); return; }
         if (m.selected?.kind === "text") { e.preventDefault(); this.beginTextEditing(m.selected.id); return; }
         break;

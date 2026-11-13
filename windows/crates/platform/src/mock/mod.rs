@@ -377,6 +377,17 @@ pub mod hotkeys {
         let _ = c;
     }
 
+    /// Selbsttest: `vk` als verschluckt markieren, zuletzt gemeldet vor `age_ms`.
+    pub fn debug_mark_swallowed(vk: u32, age_ms: u32) {
+        let _ = (vk, age_ms);
+    }
+
+    /// Selbsttest: Gilt `vk` gerade als verschluckt (gehalten)?
+    pub fn debug_is_swallowed(vk: u32) -> bool {
+        let _ = vk;
+        false
+    }
+
     /// Selbsttest: `combo` belegen wie ein anderes Programm, solange der Rückgabewert lebt.
     pub fn occupy(combo: KeyCombo) -> Option<Occupied> {
         let _ = combo;

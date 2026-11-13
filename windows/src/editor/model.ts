@@ -350,9 +350,13 @@ export class EditorModel {
     let findings: Awaited<ReturnType<typeof api.editorDetect>> = [];
     try {
       findings = (await api.editorDetect(this.item.id, this.settings.autoRedactKinds)) ?? [];
-    } finally {
+    } catch (e) {
+      // Texterkennung fehlt oder scheitert: sagen, statt die Anzeige „Suche …“ stehen zu lassen.
       this.busy = null;
+      this.showToast(`Auto-Zensur nicht möglich: ${e instanceof Error ? e.message : String(e)}`);
+      return;
     }
+    this.busy = null;
     const existing = this.annotations.filter((a) => a.kind === "redact").map(annotationRect);
     const fresh = findings.filter((f) => !existing.some((e) => area(intersection(e, f.rect)) > area(f.rect) * 0.6));
     if (fresh.length === 0) {

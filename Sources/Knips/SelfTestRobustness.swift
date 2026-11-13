@@ -395,10 +395,53 @@ extension SelfTest {
             print("  Beenden: Schreibvorgang lief: \(wasPending), danach geschrieben: \(written), Rückmeldung genau einmal: \(calls == 1)")
 
             try await recordingStates(&problems)
+            try await doubleTrigger(&problems)
         }
 
         if !problems.isEmpty { throw CheckFailed(message: problems.joined(separator: "; ")) }
         print("   ✓ Ablage, Beenden und Aufnahme-Zustände")
+    }
+
+    /// Zwei Auslöser kurz nacheinander (Taste prellt, doppelt gedrückt) ergeben eine Aufnahme, nicht zwei. Das
+    /// Standbild kommt aus dem Speicher — nimmt nie den Bildschirm auf, zeigt keine Karte, spielt keinen Ton.
+    private static func doubleTrigger(_ problems: inout [String]) async throws {
+        guard NSScreen.main != nil else { throw CaptureError.noDisplay }
+        let coordinator = CaptureCoordinator.shared, store = CaptureStore.shared, settings = AppSettings.shared
+        settings.showQuickAccess = false
+        settings.playSound = false
+        settings.openEditorAfterCapture = false
+        var stills = 0
+        coordinator.debugStill = { screen in
+            stills += 1
+            try await Task.sleep(nanoseconds: 150_000_000)   // so lange braucht ein echtes Standbild etwa
+            return FrozenScreen(screen: screen, display: nil, image: sampleImage(width: Int(screen.frame.width) * 2, height: Int(screen.frame.height) * 2, scale: 2))
+        }
+        defer { coordinator.debugStill = nil }
+        func settle() async { _ = await until(3) { !store.hasPendingWrites }; try? await Task.sleep(nanoseconds: 250_000_000) }
+
+        var before = store.items.count
+        coordinator.captureFullscreen()
+        coordinator.captureFullscreen()
+        try await Task.sleep(nanoseconds: 60_000_000)
+        coordinator.captureFullscreen()   // noch während das erste Standbild läuft
+        await settle()
+        let twice = store.items.count - before
+        before = store.items.count
+        coordinator.captureFullscreen()   // danach geht es wieder
+        await settle()
+        let again = store.items.count - before
+        if twice != 1 || again != 1 || stills != 2 {
+            problems.append("Doppelter Auslöser „Bildschirm“: \(twice) Aufnahmen statt 1, danach \(again) statt 1, Standbilder \(stills) statt 2")
+        }
+
+        coordinator.debugSetLastArea(CGRect(x: 40, y: 40, width: 200, height: 120))
+        before = store.items.count
+        coordinator.captureLastArea()
+        coordinator.captureLastArea()
+        await settle()
+        let last = store.items.count - before
+        if last != 1 { problems.append("Doppelter Auslöser „Letzter Bereich“: \(last) Aufnahmen statt 1") }
+        print("  Doppelter Auslöser: Bildschirm \(twice)× (dann wieder \(again)×), letzter Bereich \(last)×")
     }
 
     /// Aufnahme-Ablauf mit einer Attrappe — nimmt nie den Bildschirm auf und zeigt keine Fenster.

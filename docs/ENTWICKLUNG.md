@@ -45,7 +45,7 @@ Domäne `de.birkgroup.knips.sandbox` (`UserDefaults.knips`), die jeder Test zu B
 |---|---|
 | `render` | Renderer: alle Werkzeuge, Zensurstile, Zuschnitt → PNG |
 | `detect` | Auto-Zensur (Vision + Muster) am Testbild; Pflicht: erfundener Stripe-Key und E-Mail in 1× und 2×, außerdem auf hohen (1400×7040, 1400×14080), breiten (7000×880) und 1×-Bildern (4K, Ultrawide) in jedem Fenster an der richtigen Stelle; „Text kopieren“ ohne doppelte Zeilen über Kachelnähte; jede Überschneidung mit Zensur oder gefüllter Form verdeckt |
-| `ui` / `selection` | Karten, Einstellungen, Auswahl-Overlay offscreen; `selection` auch: Overlay vor dem Standbild durchsichtig und nur abgedunkelt (Deckkraft 0,4, nie schwarz), mit Standbild deckend (`ui-auswahl-vor-standbild.png`) |
+| `ui` / `selection` | Karten, Einstellungen, Auswahl-Overlay offscreen; `selection` auch: Overlay vor dem Standbild durchsichtig und nur abgedunkelt (Deckkraft 0,4, nie schwarz), mit Standbild deckend (`ui-auswahl-vor-standbild.png`); gehaltene Leertaste schaltet nur einmal um, Wiederholung von ⏎ nimmt nichts auf, Ziehen mit halben Punkten ergibt einen Bereich auf ganzen Punkten |
 | `cards` | Klicks auf eine Karte als echte Mausereignisse: Fläche öffnet, jeder Knopf nur seine Aktion; Raster mit mehreren Spalten trifft die richtige Karte |
 | `live [hell\|dunkel\|beide]` | Bild- und Video-Editor als echtes Fenster, 1 pt in der Bildschirmecke, per SCK fotografiert — je Darstellung breit, schmal (`EditorChrome.minWidth` 860 pt), Werkzeuge, Rahmen (+ Popover), Zuschneiden; einmal Zoom, schlaue Balken, ⌘⏎/⌘Z genau einmal, Klicks in Höhe der Titelleiste landen in der SwiftUI-Fläche (hitTest) |
 | `settings [bereich,…]` | Einstellungsfenster je Bereich hell und dunkel (`einstellungen-<bereich>[-dunkel].png`), Start mit simuliertem Bereit-Check (`start-offen*.png` drei Schritte offen, `start-bereit*.png`) und Zählung der offenen Schritte, Darstellung System/Hell/Dunkel → `NSApp.appearance`, Kürzel-Eingabe (Hinweis während der Aufnahme; was aus einem Tastendruck wird: ⇧A, A, ↖ (`kVK_Home`), F5, ⌦, ⌘⌫ werden Kürzel, Esc bricht ab, ⌫/⇧⌫ entfernen; ↖, ⇧A und Esc als echte Eingabe über den Tastatur-Monitor, ohne Kürzel in der Sandbox; gespeichert ↖ und ⇧A mit Hinweis, `einstellungen-shortcuts-einzeltaste*.png`), Eintippen der Anzeigedauer, Datenschutz mit Statistik an/aus und „In Bildschirmübertragungen verbergen“ (alle Fenster `sharingType .none`, auch neue; ScreenCaptureKit bekommt das Fenster dann leer; aus → `.readOnly`); Dialoge Zustimmung (⏎ entscheidet nichts), Freigabe, Kürzel-Übernahme (`zustimmung*.png`, `freigabe*.png`, `kuerzel-uebernehmen*.png`, nur gezeigt — übernimmt nie) |
@@ -53,10 +53,10 @@ Domäne `de.birkgroup.knips.sandbox` (`UserDefaults.knips`), die jeder Test zu B
 | `update [<feed-ordner>]` | Automatische Updates: Sperren (Selbsttest, Sandbox, CI, eigener Build ohne `KNIPS_UPDATE_FEED`; im Release wirkt `KNIPS_UPDATE_FEED` nicht), Zeitplan (erste Prüfung nach 5 min, höchstens alle 24 h), Einstellung bleibt gespeichert, Info.plist (Feed, `SUPublicEDKey`, Prüfung vor dem Entpacken, keine ATS-Ausnahme), Sparkle im Bundle ohne XPC-Dienste, alle Delegate-Methoden vorhanden, Texte. Ende zu Ende nur über `scripts/update-test.sh` (siehe „Updates“) |
 | `update-installed <ordner> <app> <build>` | Beobachter für `scripts/update-test.sh`: keine Fenster der Testkopie und ihrer Helfer, Build N+1 nach dem Beenden an derselben Stelle, Installer beendet, kein Neustart, Code-Signatur streng gültig |
 | `telemetry [live]` | Nutzungsstatistik: Sperren (Selbsttest/Sandbox/CI/Entwickler-Build), Payload (genau die Vertragsfelder, Allowlist, Deckel), Zustimmung → Zählen → Senden an lokalen Server (127.0.0.1) → Abmelden; Zähler bleiben nach Fehlern. `live` schickt zusätzlich einen echten Ping (nur mit `KNIPS_TELEMETRY=1`, Kanal `dev`) |
-| `output` | Ausgabe 1× + PNG/JPEG, Rahmen, Speichern aus dem Editor, „Text kopieren“ ohne Zensiertes (Karte; Editor mit Zuschnitt und angeschnittenem Schlüssel), Zwischenablage nach Zensieren + „Fertig“ = zensierte Fassung, fremder Inhalt bleibt, Link-Aufnahme ohne Zwischenablage, `knips://pin` lädt keine http-Adresse (private `NSPasteboard` über `Clipboard.testPasteboard`) |
+| `output` | Ausgabe 1× + PNG/JPEG, Rahmen, Speichern aus dem Editor, „Text kopieren“ ohne Zensiertes (Karte; Editor mit Zuschnitt und angeschnittenem Schlüssel), Zwischenablage nach Zensieren + „Fertig“ = zensierte Fassung, fremder Inhalt bleibt, Link-Aufnahme ohne Zwischenablage, `knips://pin` lädt keine http-Adresse (private `NSPasteboard` über `Clipboard.testPasteboard`); Pixel der Ausgabe: Retina → 1× ist genau das Mittel aus 2×2 Pixeln, deckende Bilder ohne Alphakanal (Pixel unverändert), durchsichtige Ecken bleiben bzw. werden im JPEG weiß, Retina-Ausgabe mit 144 dpi, Anpinnen aus der Zwischenablage in der gemeinten Größe; Bild-Editor: „Widerrufen“ ohne leere Schritte, verirrter Klick lässt „Wiederholen“ stehen, gehaltenes Esc |
 | `track` | Mitlaufender Zensurbalken in scrollendem Video (Texterkennung prüft jeden Zeitpunkt) |
 | `stitch` | Scroll-Screenshot: Ausschnitte → exakt das Originalbild (Pixelvergleich); nur neue Zeilen im Speicher, Obergrenze, Anhängen und Zusammensetzen gleichzeitig, Nachzügler einer beendeten Aufnahme landen nie in der nächsten |
-| `robust` | Ablage und Abläufe ohne Bildschirm: JPEG über 65 535 px → PNG, Ausweichordner bei nicht erreichbarer Ablage, Schreibfehler werden gemeldet, Aufräumen (Frist, `$TMPDIR/Knips`), Beenden wartet auf Schreibvorgänge; Aufnahme-Zustände mit einer Attrappe (belegt ab dem Start, Abbruch während Start/Countdown, Writer-Fehler, Beenden während der Aufnahme) |
+| `robust` | Ablage und Abläufe ohne Bildschirm: JPEG über 65 535 px → PNG, Ausweichordner bei nicht erreichbarer Ablage, Schreibfehler werden gemeldet, Aufräumen (Frist, `$TMPDIR/Knips`), Beenden wartet auf Schreibvorgänge; Aufnahme-Zustände mit einer Attrappe (belegt ab dem Start, Abbruch während Start/Countdown, Writer-Fehler, Beenden während der Aufnahme); zwei Auslöser kurz nacheinander für „Bildschirm“ und „Letzter Bereich“ ergeben eine Aufnahme (Standbild aus dem Speicher, `CaptureCoordinator.debugStill`) |
 | `ocr-bench` | Tempo und Trefferzahl der Texterkennung auf Testbildern im Speicher (4K/5K 2× und 1× textreich, hohe/breite Bilder, ohne Text) |
 | `menu` / `history` | Menü-Panel (auch mit Hinweis auf ein Update: `menu-update.png`, `menu-update-verfuegbar.png`) und Verlauf-Fenster (Verlauf leer und mit Video, Maus über der neuesten Karte, hell und dunkel; leerer Filter) |
 | `chrome` | Schwebeflächen ohne Bildschirm (Aufnahme-Attrappe): Aufnahme-Leiste, Countdown, Scroll-Leiste, Hinweise (HUD), Pin-Steuerung, Rahmen, Hinweiszeilen des Overlays, Menü während eines Videos — je über heller App und dunklem Grund |
@@ -87,6 +87,14 @@ Ausgabe standardmäßig in **Bildschirmgröße (1×)** als PNG (Einstellungen �
 Gemessen an echten 4K-Screenshots: Retina-PNG 2–6,7 MB → 1×-PNG 0,7–2,2 MB → 1×-JPEG 0,24–0,63 MB.
 Das Original in `items/<uuid>/original.png` bleibt immer in voller Auflösung; der Editor arbeitet darauf
 und schreibt beim Speichern wieder die verkleinerte Fassung (`AppSettings.outputPromise`).
+
+Retina → 1× ist genau die Hälfte: Jedes Pixel ist das Mittel seiner 2×2 Pixel (`ImageIOHelper.halved`, wie die
+Windows-Fassung). Die allgemeine Interpolation von Core Graphics („.high“) legte Säume um Schrift und ließ feine Linien
+verlaufen. Deckende Bilder werden als RGB statt RGBA geschrieben (`withoutUnusedAlpha`), Retina-Ausgaben tragen 144 dpi
+(`ImagePromise.pointScale`) — Vorschau, Mail und Pages zeigen sie dann so groß wie auf dem Bildschirm; „Anpinnen“ aus
+der Zwischenablage liest dieselbe Angabe. Gemessen 13.11.2026 an 40 echten Aufnahmen (12 davon 4K-Vollbild): 1×-PNG
+19,6 → 14,2 MB (−27 %) und näher am Original (PSNR gegen das Retina-Bild 28,4 → 29,4 dB), Retina-PNG 52,8 → 45,4 MB.
+Andere Faktoren und ungerade Maße (Fensteraufnahme mit halben Punkten) gehen weiter über die Interpolation.
 
 - Sichtbare Dateien: `~/Pictures/Knips` (einstellbar). Dort liegt immer die **gerenderte** Fassung,
   also bereits zensiert. Herausziehen/Kopieren gibt nie das Original weiter.
@@ -186,7 +194,11 @@ alter Schlüssel `quickAccessAutoClose` wird beim Start übernommen); unter der 
 Ist die Spalte bis zur Bildschirmhöhe voll, stapeln sich neue Karten rechts daneben weiter (`QuickAccessController.grid`,
 `cardOrigin`; 2048×1028-pt-Bildschirm: 6 hoch, 8 Spalten). Erst wenn auch die Breite voll ist, fällt die älteste weg.
 Zensur: Standard „Balken“, Editor startet mit dem Zensur-Werkzeug. Auto-Zensur-Knopf ist standardmäßig aus.
-Im Overlay: Leertaste = Fenstermodus, ⏎ = ganzer Bildschirm, Esc = Abbruch, ⇧ = Quadrat.
+Im Overlay: Leertaste = Fenstermodus, ⏎ = ganzer Bildschirm, Esc = Abbruch, ⇧ = Quadrat. Tastenwiederholungen zählen
+nicht (`handleKey(_:isRepeat:)`): Eine etwas länger gehaltene Leertaste schaltete sonst hin und zurück. Gezogen wird
+auf ganzen Punkten — Rahmen, Größenangabe und Datei stimmen überein, und die 1×-Ausgabe bleibt eine genaue Hälfte.
+„Ganzer Bildschirm“ und „Letzter Bereich“ nehmen einen zweiten Auslöser erst an, wenn die laufende Aufnahme fertig ist.
+In den Editoren gilt dasselbe für gehaltene Tasten: Esc, ⏎ und (im Video-Editor) die Leertaste wirken einmal je Druck.
 URL-Befehle: `knips://area|window|fullscreen|record|last|text|scroll|pin|menu|history|settings` (`App/LinkCommands.swift`).
 Jede App und jede Webseite kann solche Links öffnen. Was sofort aufnimmt — `fullscreen`, `last`, `record` (nur Start) —
 fragt deshalb **immer** erst nach: Fenster „Aufnahme per Link?“ (`LinkConfirmWindowController`, schwebend, Stil wie der

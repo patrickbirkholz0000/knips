@@ -6,6 +6,8 @@ import SwiftUI
 @MainActor enum HUD {
     private static var panel: NSPanel?
     private static var hideWork: DispatchWorkItem?
+    /// Zählt die Hinweise: Das Ende eines Ausblendens gilt nur, wenn seitdem kein neuer erschienen ist.
+    private static var shown = 0
 
     static func show(_ text: String, symbol: String = "checkmark.circle.fill", on screen: NSScreen? = nil) {
         // Selbsttests zeigen nie etwas auf dem Bildschirm (Bilder der Pille macht `--selftest chrome` offscreen).
@@ -20,14 +22,22 @@ import SwiftUI
         let vf = screen.visibleFrame
         let m = HUDView.margin
         p.setFrame(NSRect(x: vf.midX - size.width / 2, y: vf.minY + 64 - m, width: size.width, height: size.height), display: true)
+        // Läuft das Ausblenden des vorigen Hinweises noch, ersetzt das hier dessen Animation — sonst blendete der
+        // neue Hinweis mit aus und verschwand mit dessen Ende.
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0
+            p.animator().alphaValue = 1
+        }
         p.alphaValue = 1
         p.orderFrontRegardless()
         hideWork?.cancel()
+        shown += 1
+        let token = shown
         let work = DispatchWorkItem {
             NSAnimationContext.runAnimationGroup({ ctx in
                 ctx.duration = 0.25
                 p.animator().alphaValue = 0
-            }, completionHandler: { p.orderOut(nil) })
+            }, completionHandler: { onMainActor { if token == shown { p.orderOut(nil) } } })
         }
         hideWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.4, execute: work)

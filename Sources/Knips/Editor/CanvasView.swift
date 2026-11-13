@@ -106,6 +106,7 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
     // MARK: Zoom
 
     private var spaceHeld = false
+    private var resignObserver: NSObjectProtocol?
     private var panning: CGPoint?
 
     func zoomIn() { setZoom(scaleFactor * 1.25, anchor: nil) }
@@ -542,6 +543,8 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
         default:
             break
         }
+        // Klick auf einen Griff ohne Ziehen: kein Schritt für „Widerrufen“.
+        model.settleCheckpoint()
         drag = .none
         rawRedaction = nil
         needsDisplay = true
@@ -573,6 +576,23 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
 
     // MARK: Tastatur
 
+    /// Verliert die Fläche die Tastatur (anderes Fenster, Textfeld), kommt das Loslassen der Leertaste nicht mehr an —
+    /// „Leertaste gehalten“ bliebe stehen und jeder Klick verschöbe die Ansicht, statt zu zeichnen.
+    override func resignFirstResponder() -> Bool {
+        spaceHeld = false
+        return super.resignFirstResponder()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        resignObserver = window.map { window in
+            NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: window, queue: .main) { [weak self] _ in
+                onMainActor { self?.spaceHeld = false }
+            }
+        }
+    }
+
     override func keyUp(with event: NSEvent) {
         if event.keyCode == 49 {
             spaceHeld = false
@@ -594,9 +614,13 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
             model.deleteSelection()
             return
         case 53: // Esc
+            // Gehaltenes Esc liefe sonst die ganze Leiter hinunter: Zuschnitt abbrechen → Auswahl aufheben → schließen.
+            if event.isARepeat { return }
             if model.tool == .crop { model.cancelCrop() } else if model.selectedID != nil { model.selectedID = nil } else { window?.performClose(nil) }
             return
         case 36, 76: // Return
+            // Gehaltenes ⏎ öffnete einen eben bestätigten Text gleich wieder.
+            if event.isARepeat { return }
             if model.tool == .crop { model.applyCrop(); return }
             if let sel = model.selected, sel.kind == .text { beginTextEditing(sel.id); return }
         case 123, 124, 125, 126: // Pfeiltasten verschieben die Auswahl
@@ -697,8 +721,13 @@ final class CanvasView: NSView, NSTextFieldDelegate, NSMenuItemValidation {
         field.delegate = nil
         field.removeFromSuperview()
         if text.isEmpty {
+            // Vorhandenen Text geleert: als eigener Schritt, damit ⌘Z ihn zurückholt. Neuer Text ohne Inhalt: Der
+            // Checkpoint vom Klick wird verworfen, als wäre nichts geschehen.
+            let existed = !(model.annotations.first(where: { $0.id == id })?.text.isEmpty ?? true)
+            if existed { model.checkpoint() }
             model.remove(id)
             model.selectedID = nil
+            if !existed { model.settleCheckpoint() }
         } else {
             if model.annotations.first(where: { $0.id == id })?.text != text, !(model.annotations.first(where: { $0.id == id })?.text.isEmpty ?? true) {
                 model.checkpoint()

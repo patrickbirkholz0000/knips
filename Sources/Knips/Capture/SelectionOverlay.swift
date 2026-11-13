@@ -73,7 +73,7 @@ enum SelectionResult {
         if let target, let view = target.contentView { target.makeFirstResponder(view) }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
-            return self.handleKey(event.keyCode) ? nil : event
+            return self.handleKey(event.keyCode, isRepeat: event.isARepeat) ? nil : event
         }
         NSCursor.crosshair.set()
         refreshAll()
@@ -89,14 +89,16 @@ enum SelectionResult {
 
     var isActive: Bool { completion != nil }
 
-    private func handleKey(_ keyCode: UInt16) -> Bool {
+    /// `isRepeat`: Tastenwiederholung einer gehaltenen Taste. Die Leertaste schaltete damit hin und her (ein etwas
+    /// längerer Druck wirkte wie zwei), und ⏎, das schon vor dem Overlay gehalten wurde, nähme sofort auf.
+    private func handleKey(_ keyCode: UInt16, isRepeat: Bool = false) -> Bool {
         switch keyCode {
         case 53: finish(.cancelled); return true
         case 49:
-            if !isDragging { windowMode.toggle() }
+            if !isRepeat, !isDragging { windowMode.toggle() }
             return true
         case 36, 76:
-            guard armed else { return true }
+            guard armed, !isRepeat else { return true }
             if let screen = screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) ?? screens.first {
                 finish(.fullScreen(screen))
             }
@@ -113,7 +115,7 @@ enum SelectionResult {
 
     #if KNIPS_DEV
     /// Nur für Selbsttests: Taste ohne Ereignis-Monitor.
-    func debugKey(_ keyCode: UInt16) -> Bool { handleKey(keyCode) }
+    func debugKey(_ keyCode: UInt16, isRepeat: Bool = false) -> Bool { handleKey(keyCode, isRepeat: isRepeat) }
     #endif
 
     func refreshAll() { views.forEach { $0.refresh() } }
@@ -371,8 +373,10 @@ final class SelectionView: NSView {
     func debugSelect(_ r: CGRect) { selection = r }
     #endif
 
+    /// Auf den Bildschirm begrenzt und auf ganze Punkte gerundet: Der gezeichnete Rahmen ist genau der Bereich, der
+    /// aufgenommen wird, und die 1×-Ausgabe bleibt eine genaue Hälfte des Standbilds.
     private func clamp(_ p: CGPoint) -> CGPoint {
-        CGPoint(x: max(0, min(p.x, bounds.width)), y: max(0, min(p.y, bounds.height)))
+        CGPoint(x: max(0, min(p.x.rounded(), bounds.width)), y: max(0, min(p.y.rounded(), bounds.height)))
     }
 
     // MARK: Darstellung

@@ -32,7 +32,12 @@ import SwiftUI
 
     /// localRect: Punkte relativ zum Bildschirm, Ursprung unten links.
     func begin(screen: NSScreen, display: SCDisplay, localRect: CGRect, content: SCShareableContent) {
-        guard phase == .idle, localRect.width >= 16, localRect.height >= 16 else { return }
+        guard phase == .idle else { return }
+        guard localRect.width >= 16, localRect.height >= 16 else {
+            // Die Auswahl nimmt schon 4 × 4 pt an — für ein Video zu wenig. Sagen, statt still nichts zu tun.
+            HUD.show("Bereich zu klein für ein Video", symbol: "exclamationmark.circle.fill", on: screen)
+            return
+        }
         let settings = AppSettings.shared
         let global = localRect.offsetBy(dx: screen.frame.minX, dy: screen.frame.minY)
         let isFull = localRect.size == screen.frame.size

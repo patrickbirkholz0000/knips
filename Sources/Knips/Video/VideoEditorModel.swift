@@ -121,7 +121,11 @@ import Combine
     }
 
     func undo() {
-        guard let last = undoStack.popLast() else { return }
+        // Schritte, die nichts verändert haben (Klick auf einen Griff ohne Ziehen), überspringen.
+        while let last = undoStack.last, last.redactions == redactions, last.trimStart == trimStart, last.trimEnd == trimEnd {
+            undoStack.removeLast()
+        }
+        guard let last = undoStack.popLast() else { canUndo = false; return }
         redactions = last.redactions
         trimStart = last.trimStart
         trimEnd = last.trimEnd
@@ -163,7 +167,7 @@ import Combine
     func setStyle(_ s: RedactStyle) {
         style = s
         AppSettings.shared.redactStyle = s
-        guard let id = selectedID else { return }
+        guard let id = selectedID, redactions.first(where: { $0.id == id })?.style != s else { return }
         checkpoint()
         updateRedaction(id) { $0.style = s }
     }
@@ -253,6 +257,8 @@ import Combine
     // MARK: Speichern / Export
 
     func save() async -> Bool {
+        // Schon ein Vorgang unterwegs (⌘S zweimal, Taste gehalten): kein zweiter Export auf dieselbe Datei.
+        guard busy == nil else { return false }
         busy = "Video wird gespeichert …"
         progress = 0
         defer { busy = nil; progress = nil }

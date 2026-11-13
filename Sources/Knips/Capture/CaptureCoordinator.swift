@@ -9,6 +9,23 @@ import ScreenCaptureKit
     private var lastArea: (displayID: CGDirectDisplayID, rect: CGRect)?
     /// Quelle des laufenden Scroll-Screenshots — `ScrollCaptureController` meldet sein Ergebnis ohne Quelle.
     private var scrollSource: CaptureSource = .user
+    /// Läuft gerade eine Aufnahme ohne Overlay (ganzer Bildschirm, letzter Bereich)? Ein zweiter Auslöser in dieser
+    /// Zeit — die Taste prellt oder wird doppelt gedrückt — ergäbe sonst zwei gleiche Aufnahmen.
+    private var stillInFlight = false
+
+    #if KNIPS_DEV
+    /// Nur Selbsttests: Standbild aus dem Speicher statt vom Bildschirm (ohne Freigabe, ohne Aufnahme).
+    var debugStill: (@MainActor (NSScreen) async throws -> FrozenScreen?)?
+    #endif
+
+    /// Standbild eines Bildschirms für Aufnahmen ohne Overlay.
+    private func still(of screen: NSScreen) async throws -> FrozenScreen? {
+        #if KNIPS_DEV
+        if let debugStill { return try await debugStill(screen) }
+        #endif
+        let content = try await ScreenCapture.content()
+        return try await ScreenCapture.freeze([screen], content: content).first
+    }
 
     /// `source`: `.link` für knips://-Links (`LinkCommands`) — dann nimmt das Overlay ⏎ und Klicks erst nach der
     /// Schutzzeit an, und die Aufnahme landet nicht von selbst in der Zwischenablage.
@@ -70,13 +87,14 @@ import ScreenCaptureKit
     }
 
     func captureFullscreen(source: CaptureSource = .user) {
-        guard overlay == nil else { return }
+        guard overlay == nil, !stillInFlight else { return }
         guard ensurePermission() else { return }
         let screen = NSScreen.withMouse
+        stillInFlight = true
         Task {
+            defer { stillInFlight = false }
             do {
-                let content = try await ScreenCapture.content()
-                guard let frozen = try await ScreenCapture.freeze([screen], content: content).first else { return }
+                guard let frozen = try await still(of: screen) else { return }
                 Sounds.playShutter()
                 Telemetry.count(.captureFullscreen)
                 finish(image: frozen.image, scale: frozen.scale, screen: screen, source: source)
@@ -130,16 +148,17 @@ import ScreenCaptureKit
 
     /// Gleicher Ausschnitt wie beim letzten Mal — ohne Overlay.
     func captureLastArea(source: CaptureSource = .user) {
-        guard overlay == nil, ensurePermission() else { return }
+        guard overlay == nil, !stillInFlight, ensurePermission() else { return }
         guard let last = lastArea, let screen = NSScreen.screens.first(where: { $0.displayID == last.displayID }) else {
             HUD.show("Noch kein Bereich aufgenommen", symbol: "rectangle.dashed")
             captureInteractive(windowMode: false, source: source)
             return
         }
+        stillInFlight = true
         Task {
+            defer { stillInFlight = false }
             do {
-                let content = try await ScreenCapture.content()
-                guard let frozen = try await ScreenCapture.freeze([screen], content: content).first,
+                guard let frozen = try await still(of: screen),
                       let image = ScreenCapture.crop(frozen, localRect: last.rect) else { return }
                 Sounds.playShutter()
                 Telemetry.count(.captureLastArea)
@@ -264,11 +283,13 @@ import ScreenCaptureKit
     // MARK: Sonstiges
 
     func pinClipboard() {
-        guard let image = Clipboard.image() else {
+        guard let (image, scale) = Clipboard.image() else {
             HUD.show("Kein Bild in der Zwischenablage", symbol: "exclamationmark.circle.fill")
             return
         }
-        PinWindowController.pin(image, scale: NSScreen.withMouse.backingScaleFactor)
+        // So groß wie das Bild gemeint ist: Eine 1×-Aufnahme von Knips wäre mit dem Faktor des Bildschirms
+        // (Retina: 2) nur halb so groß wie der aufgenommene Bereich.
+        PinWindowController.pin(image, scale: scale)
     }
 
     func openImageFile() {
@@ -292,6 +313,9 @@ import ScreenCaptureKit
     }
 
     private func ensurePermission() -> Bool {
+        #if KNIPS_DEV
+        if debugStill != nil { return true }
+        #endif
         if ScreenCapture.hasPermission { return true }
         PermissionWindowController.show()
         return false

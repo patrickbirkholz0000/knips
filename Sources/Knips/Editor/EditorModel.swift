@@ -110,9 +110,12 @@ enum EditorTool: String, CaseIterable, Identifiable {
     private var textWaiters: [CheckedContinuation<Void, Never>] = []
     @Published private(set) var canRedo = false
 
-    private struct Snapshot { var annotations: [Annotation]; var crop: CGRect?; var frame: FrameStyle? }
+    private struct Snapshot: Equatable { var annotations: [Annotation]; var crop: CGRect?; var frame: FrameStyle? }
     private var undoStack: [Snapshot] = []
     private var redoStack: [Snapshot] = []
+    /// Stand vor dem letzten Checkpoint — kommt zurück, wenn die Aktion doch nichts verändert hat.
+    private var beforeCheckpoint: (redo: [Snapshot], dirty: Bool)?   // gehört immer zum obersten Eintrag von `undoStack`
+    private var current: Snapshot { Snapshot(annotations: annotations, crop: crop, frame: frame) }
     private var toastWork: DispatchWorkItem?
     private var toolBeforeCrop: EditorTool = .arrow
 
@@ -206,22 +209,38 @@ enum EditorTool: String, CaseIterable, Identifiable {
     // MARK: Undo
 
     func checkpoint() {
-        undoStack.append(Snapshot(annotations: annotations, crop: crop, frame: frame))
+        beforeCheckpoint = (redoStack, dirty)
+        undoStack.append(current)
         if undoStack.count > 300 { undoStack.removeFirst() }
         redoStack.removeAll()
         dirty = true
         refreshUndoState()
     }
 
-    /// Verwirft den letzten Checkpoint, wenn die Aktion doch nichts verändert hat (z. B. Klick ohne Ziehen).
+    /// Verwirft den letzten Checkpoint, wenn die Aktion doch nichts verändert hat (z. B. Klick ohne Ziehen) — samt
+    /// „Wiederholen“ und „ungespeichert“ von davor, als hätte es den Klick nicht gegeben.
     func dropCheckpoint() {
         _ = undoStack.popLast()
+        if let before = beforeCheckpoint {
+            redoStack = before.redo
+            dirty = before.dirty
+        }
+        beforeCheckpoint = nil
         refreshUndoState()
     }
 
+    /// Am Ende einer Geste: Hat sie nichts verändert (Klick auf einen Griff ohne Ziehen, leerer Text), den
+    /// Checkpoint wieder verwerfen. Sonst täte das erste ⌘Z danach scheinbar nichts.
+    func settleCheckpoint() {
+        if let last = undoStack.last, last == current { dropCheckpoint() }
+    }
+
     func undo() {
-        guard let snap = undoStack.popLast() else { return }
-        redoStack.append(Snapshot(annotations: annotations, crop: crop, frame: frame))
+        // Schritte, die nichts verändert haben, überspringen — ⌘Z tut immer etwas Sichtbares.
+        while let last = undoStack.last, last == current { undoStack.removeLast() }
+        guard let snap = undoStack.popLast() else { refreshUndoState(); return }
+        beforeCheckpoint = nil
+        redoStack.append(current)
         annotations = snap.annotations
         crop = snap.crop
         frame = snap.frame
@@ -232,7 +251,8 @@ enum EditorTool: String, CaseIterable, Identifiable {
 
     func redo() {
         guard let snap = redoStack.popLast() else { return }
-        undoStack.append(Snapshot(annotations: annotations, crop: crop, frame: frame))
+        beforeCheckpoint = nil
+        undoStack.append(current)
         annotations = snap.annotations
         crop = snap.crop
         frame = snap.frame
@@ -286,7 +306,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
     func setColor(_ c: RGBA) {
         color = c
         if let data = try? JSONEncoder().encode(c) { UserDefaults.knips.set(data, forKey: "editorColor") }
-        guard let sel = selected, sel.kind != .redact else { return }
+        guard let sel = selected, sel.kind != .redact, sel.color != c else { return }
         checkpoint()
         update(sel.id) { $0.color = c }
     }
@@ -294,7 +314,7 @@ enum EditorTool: String, CaseIterable, Identifiable {
     func setSize(_ s: StrokeSize) {
         size = s
         UserDefaults.knips.set(s.rawValue, forKey: "editorSize")
-        guard let sel = selected, sel.kind != .redact, sel.kind != .highlight else { return }
+        guard let sel = selected, sel.kind != .redact, sel.kind != .highlight, sel.size != s else { return }
         checkpoint()
         update(sel.id) { $0.size = s }
     }
@@ -302,14 +322,14 @@ enum EditorTool: String, CaseIterable, Identifiable {
     func setRedactStyle(_ style: RedactStyle) {
         redactStyle = style
         AppSettings.shared.redactStyle = style
-        guard let sel = selected, sel.kind == .redact else { return }
+        guard let sel = selected, sel.kind == .redact, sel.redactStyle != style else { return }
         checkpoint()
         update(sel.id) { $0.redactStyle = style }
     }
 
     func setFilled(_ value: Bool) {
         filled = value
-        guard let sel = selected, sel.kind == .rectangle || sel.kind == .ellipse else { return }
+        guard let sel = selected, sel.kind == .rectangle || sel.kind == .ellipse, sel.filled != value else { return }
         checkpoint()
         update(sel.id) { $0.filled = value }
     }

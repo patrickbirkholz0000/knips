@@ -228,7 +228,7 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
     /// Ausgabe (Datei + Zwischenablage): ggf. verkleinert, im gewählten Format — im Hintergrund.
     func outputPromise(sourceScale: CGFloat, format: ImageFormat? = nil, render: @escaping @Sendable () -> CGImage?) -> ImagePromise {
         let factor = outputFactor(sourceScale: sourceScale)
-        return ImagePromise(format: format ?? imageFormat) {
+        return ImagePromise(format: format ?? imageFormat, pointScale: sourceScale * factor) {
             render().map { ImageIOHelper.scaled($0, by: factor) }
         }
     }

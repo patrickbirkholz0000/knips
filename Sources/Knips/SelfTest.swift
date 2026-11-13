@@ -353,6 +353,47 @@ import Vision
         let ok = (0.3...0.5).contains(earlyAlpha) && lateAlpha > 0.99
         print("   \(ok ? "ok    " : "FALSCH") vor dem Standbild durchsichtig abgedunkelt (Deckkraft \(String(format: "%.2f", earlyAlpha))), danach deckend (\(String(format: "%.2f", lateAlpha)))")
         if !ok { throw CheckFailed(message: "Overlay vor dem Standbild nicht durchsichtig") }
+
+        // Tasten und Ziehen (nur Modell und Ansicht, nie auf dem Bildschirm).
+        var failed: [String] = []
+        func check(_ name: String, _ ok: Bool) {
+            print("   \(ok ? "ok    " : "FALSCH") \(name)")
+            if !ok { failed.append(name) }
+        }
+        var results: [SelectionResult] = []
+        let input = SelectionOverlay(screens: [screen], windows: windows, purpose: .screenshot, windowMode: false) { results.append($0) }
+        let inputView = SelectionView(screen: screen, overlay: input)
+        inputView.frame = NSRect(origin: .zero, size: size)
+        // Gehaltene Tasten: Die Wiederholungen dürfen weder umschalten noch aufnehmen.
+        _ = input.debugKey(49)
+        for _ in 0..<5 { _ = input.debugKey(49, isRepeat: true) }
+        check("gehaltene Leertaste schaltet nur einmal um", input.windowMode)
+        _ = input.debugKey(49)
+        check("zweiter Druck der Leertaste schaltet zurück", !input.windowMode)
+        _ = input.debugKey(36, isRepeat: true)
+        check("Wiederholung von ⏎ nimmt nichts auf", results.isEmpty)
+        // Ziehen mit halben Punkten (Retina): Der Bereich liegt auf ganzen Punkten — genau der gezeichnete Rahmen.
+        func mouse(_ type: NSEvent.EventType, _ p: CGPoint) -> NSEvent? {
+            NSEvent.mouseEvent(with: type, location: p, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0,
+                               clickCount: 1, pressure: 1)
+        }
+        if let down = mouse(.leftMouseDown, CGPoint(x: 100.5, y: 200.5)), let drag = mouse(.leftMouseDragged, CGPoint(x: 301.4, y: 320.6)),
+           let up = mouse(.leftMouseUp, CGPoint(x: 301.4, y: 320.6)) {
+            inputView.mouseDown(with: down)
+            inputView.mouseDragged(with: drag)
+            inputView.mouseUp(with: up)
+        }
+        var area = CGRect.null
+        if case .area(_, let rect)? = results.first { area = rect }
+        check("Ziehen von (100,5 | 200,5) nach (301,4 | 320,6) → ganzer Bereich 101, 201, 200 × 120 (\(area))",
+              area == CGRect(x: 101, y: 201, width: 200, height: 120))
+        results.removeAll()
+        let enter = SelectionOverlay(screens: [screen], windows: windows, purpose: .screenshot, windowMode: false) { results.append($0) }
+        _ = enter.debugKey(36)
+        var full = false
+        if case .fullScreen? = results.first { full = true }
+        check("frisches ⏎ = ganzer Bildschirm", full && results.count == 1)
+        if !failed.isEmpty { throw CheckFailed(message: "Auswahl falsch: \(failed.joined(separator: "; "))") }
     }
 
     private static func renderContext(_ layer: CALayer, size: CGSize, scale: CGFloat) -> CGContext {
@@ -1502,8 +1543,162 @@ import Vision
         try write(image, file)
         board.clearContents()
         board.writeObjects([file as NSURL])
-        check(Clipboard.image()?.width == image.width, "Bilddatei wird geladen")
+        check(Clipboard.image()?.image.width == image.width, "Bilddatei wird geladen")
+
+        try outputPixels(image, board: board, check: check)
+        try editorSteps(image, check: check)
         if !failed.isEmpty { throw CheckFailed(message: "Ausgabe falsch: \(failed.joined(separator: "; "))") }
+    }
+
+    /// „Widerrufen“ ohne leere Schritte und gehaltene Tasten im Bild-Editor (nur Modell und Ansicht, kein Fenster auf
+    /// dem Bildschirm).
+    @MainActor private static func editorSteps(_ image: CGImage, check: (Bool, String) -> Void) throws {
+        print("Bild-Editor: Widerrufen und gehaltene Tasten:")
+        let item = try CaptureStore.shared.addImage(image, scale: 2)
+        let editor = EditorWindowController(item: item, base: image, document: ImageDocument(), tool: .redact)
+        defer { editor.window?.orderOut(nil) }
+        let model = editor.model
+        func bar(_ x: CGFloat) -> Annotation { Annotation(kind: .rectangle, start: CGPoint(x: x, y: 100), end: CGPoint(x: x + 200, y: 180)) }
+
+        // Klick auf einen Griff ohne Ziehen: Checkpoint, aber keine Änderung → kein Schritt.
+        model.checkpoint()
+        model.settleCheckpoint()
+        check(!model.canUndo && !model.dirty, "Geste ohne Änderung hinterlässt keinen Schritt und nichts Ungespeichertes")
+
+        // Echte Änderung, dann zwei Aktionen ohne Wirkung: ein ⌘Z nimmt die echte Änderung zurück.
+        model.checkpoint()
+        model.annotations.append(bar(100))
+        model.selectedID = model.annotations[0].id
+        model.settleCheckpoint()
+        model.setColor(model.annotations[0].color)          // dieselbe Farbe noch einmal
+        model.setSize(model.annotations[0].size)            // dieselbe Stärke
+        model.setFilled(model.annotations[0].filled)
+        model.checkpoint()                                  // z. B. Pfeiltaste ohne Wirkung
+        model.undo()
+        check(model.annotations.isEmpty && !model.canUndo, "ein ⌘Z nimmt die letzte echte Änderung zurück (leere Schritte übersprungen)")
+        check(model.canRedo, "Wiederholen steht danach bereit")
+
+        // Verirrter Klick (Checkpoint, dann verworfen): „Wiederholen“ bleibt.
+        model.checkpoint()
+        model.annotations.append(bar(400))
+        model.remove(model.annotations[0].id)
+        model.dropCheckpoint()
+        check(model.canRedo && !model.canUndo, "verirrter Klick löscht „Wiederholen“ nicht")
+        model.redo()
+        check(model.annotations.count == 1, "Wiederholen bringt die Form zurück")
+
+        // Gehaltenes Esc: Die Wiederholungen heben weder die Auswahl auf noch schließen sie das Fenster.
+        func key(_ code: UInt16, _ chars: String, repeating: Bool) throws {
+            guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                               windowNumber: editor.window?.windowNumber ?? 0, context: nil, characters: chars,
+                                               charactersIgnoringModifiers: chars, isARepeat: repeating, keyCode: code)
+            else { throw CheckFailed(message: "Tastenereignis nicht erzeugt") }
+            editor.canvas.keyDown(with: event)
+        }
+        model.tool = .select
+        model.selectedID = model.annotations[0].id
+        for _ in 0..<4 { try key(53, "\u{1b}", repeating: true) }
+        check(model.selectedID != nil, "Wiederholung von Esc lässt die Auswahl stehen")
+        try key(53, "\u{1b}", repeating: false)
+        check(model.selectedID == nil, "frisches Esc hebt die Auswahl auf")
+    }
+
+    /// Pixel der Ausgabe: Retina → 1× als genaues Mittel aus 2×2, deckende Bilder ohne Alphakanal, Auflösung in der
+    /// Datei bei Retina-Ausgabe, JPEG mit weißen statt schwarzen Ecken, Anpinnen in der gemeinten Größe.
+    @MainActor private static func outputPixels(_ image: CGImage, board: NSPasteboard, check: (Bool, String) -> Void) throws {
+        print("Pixel der Ausgabe:")
+        /// BGRA-Bytes eines Bildes (vormultipliziert).
+        func bytes(_ image: CGImage) -> [UInt8] {
+            var buffer = [UInt8](repeating: 0, count: image.width * image.height * 4)
+            buffer.withUnsafeMutableBytes { raw in
+                let ctx = CGContext(data: raw.baseAddress, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                                    space: Renderer.rgbSpace(image.colorSpace),
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+                ctx?.setBlendMode(.copy)
+                ctx?.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            }
+            return buffer
+        }
+        func hasAlpha(_ data: Data?) -> Bool? {
+            guard let data, let src = CGImageSourceCreateWithData(data as CFData, nil),
+                  let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] else { return nil }
+            return props[kCGImagePropertyHasAlpha] as? Bool ?? false
+        }
+        func dpi(_ data: Data?) -> Double? {
+            guard let data, let src = CGImageSourceCreateWithData(data as CFData, nil),
+                  let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] else { return nil }
+            return (props[kCGImagePropertyDPIWidth] as? NSNumber)?.doubleValue ?? 72
+        }
+        // Genaues Mittel: jedes Pixel der halben Fassung gegen die vier Pixel des Originals (höher als ein Streifen).
+        let tall = sampleImage(width: 600, height: 1300, scale: 2)
+        for (name, source) in [("Testbild 2800×1760", image), ("hohes Bild 600×1300", tall)] {
+            let half = ImageIOHelper.scaled(source, by: 0.5)
+            let a = bytes(source), b = bytes(half)
+            var wrong = 0
+            let w = source.width, ow = half.width
+            for y in 0..<half.height {
+                for x in 0..<ow {
+                    for c in 0..<3 {
+                        let i = (2 * y * w + 2 * x) * 4 + c
+                        let mean = (Int(a[i]) + Int(a[i + 4]) + Int(a[i + w * 4]) + Int(a[i + w * 4 + 4]) + 2) >> 2
+                        if Int(b[(y * ow + x) * 4 + c]) != mean { wrong += 1 }
+                    }
+                }
+            }
+            check(half.width * 2 == source.width && half.height * 2 == source.height && wrong == 0,
+                  "\(name) → 1× ist das Mittel aus 2×2 Pixeln (\(wrong) Abweichungen)")
+            check(half.alphaInfo == .noneSkipFirst, "\(name) → 1× ohne Alphakanal")
+        }
+        // Ungerade Maße: nicht halbierbar, allgemeiner Weg mit gerundeter Größe.
+        if let odd = image.cropping(to: CGRect(x: 0, y: 0, width: 1401, height: 881)) {
+            let small = ImageIOHelper.scaled(odd, by: 0.5)
+            check(small.width == 701 && small.height == 441, "ungerade Maße 1401×881 → \(small.width)×\(small.height)")
+        }
+        // Deckend → PNG ohne Alphakanal, gleiche Pixel; mit durchsichtigen Ecken bleibt er.
+        let plain = image.pngData()
+        check(hasAlpha(plain) == false, "PNG eines deckenden Bildes hat keinen Alphakanal")
+        if let plain, let src = CGImageSourceCreateWithData(plain as CFData, nil), let back = CGImageSourceCreateImageAtIndex(src, 0, nil) {
+            check(bytes(back) == bytes(image), "PNG ohne Alphakanal: Pixel unverändert")
+        } else {
+            check(false, "PNG ohne Alphakanal lesbar")
+        }
+        let cw = 400, ch = 240
+        guard let ctx = CGContext(data: nil, width: cw, height: ch, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else { return }
+        ctx.addPath(CGPath(roundedRect: CGRect(x: 0, y: 0, width: cw, height: ch), cornerWidth: 40, cornerHeight: 40, transform: nil))
+        ctx.setFillColor(CGColor(srgbRed: 0.1, green: 0.3, blue: 0.8, alpha: 1))
+        ctx.fillPath()
+        guard let rounded = ctx.makeImage() else { return }
+        check(hasAlpha(rounded.pngData()) == true, "PNG mit durchsichtigen Ecken behält den Alphakanal")
+        check(ImageIOHelper.scaled(rounded, by: 0.5).alphaInfo == .premultipliedFirst, "1× mit durchsichtigen Ecken behält den Alphakanal")
+        if let jpeg = rounded.encoded(as: .jpeg), let src = CGImageSourceCreateWithData(jpeg as CFData, nil),
+           let back = CGImageSourceCreateImageAtIndex(src, 0, nil) {
+            let corner = brightness(back, CGRect(x: 0, y: 0, width: 6, height: 6)), middle = brightness(back, CGRect(x: 190, y: 110, width: 20, height: 20))
+            check(corner > 0.97 && middle < 0.6, "JPEG: durchsichtige Ecken weiß (Helligkeit \(String(format: "%.2f", corner))), Fläche unverändert")
+        } else {
+            check(false, "JPEG mit durchsichtigen Ecken lesbar")
+        }
+        // Auflösung: Retina-Ausgabe trägt 144 dpi, 1× keine Angabe.
+        let settings = AppSettings.shared
+        let wasScreenSize = settings.exportAtScreenSize
+        defer { settings.exportAtScreenSize = wasScreenSize }
+        settings.exportAtScreenSize = true
+        let one = settings.outputPromise(sourceScale: 2, format: .png) { image }
+        settings.exportAtScreenSize = false
+        let retina = settings.outputPromise(sourceScale: 2, format: .png) { image }, retinaJPEG = settings.outputPromise(sourceScale: 2, format: .jpeg) { image }
+        check(dpi(one.data) == 72 && one.image?.width == image.width / 2, "1×-Ausgabe: halbe Größe, keine Auflösung in der Datei")
+        check(dpi(retina.data) == 144 && retina.image?.width == image.width, "Retina-Ausgabe PNG: volle Größe, 144 dpi")
+        check(dpi(retinaJPEG.data) == 144, "Retina-Ausgabe JPEG: 144 dpi")
+        // Anpinnen aus der Zwischenablage: so groß wie gemeint (1× → 1 Pixel je Punkt, Retina → 2).
+        Clipboard.copy(one, fileURL: nil)
+        let pinnedOne = Clipboard.image()
+        check(pinnedOne?.scale == 1 && pinnedOne?.image.width == image.width / 2, "Anpinnen einer 1×-Aufnahme: Faktor 1 (so groß wie der Bereich)")
+        Clipboard.copy(retina, fileURL: nil)
+        let pinnedRetina = Clipboard.image()
+        check(pinnedRetina?.scale == 2 && pinnedRetina?.image.width == image.width, "Anpinnen einer Retina-Aufnahme: Faktor 2")
+        board.clearContents()
+        let size = { (p: ImagePromise) in p.data?.count ?? 0 }
+        print("  Größen: 1× PNG \(size(one) / 1024) KB · Retina PNG \(size(retina) / 1024) KB · Retina JPEG \(size(retinaJPEG) / 1024) KB")
     }
 
     /// Mittlere Helligkeit (0…1) eines Ausschnitts (Pixel, Ursprung oben links).

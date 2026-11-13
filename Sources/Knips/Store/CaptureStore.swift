@@ -143,7 +143,7 @@ struct VideoDocument: Codable {
         if Self.format(promise.format, width: width, height: height) != promise.format {
             // Zu lang für JPEG (z. B. Scroll-Screenshot): als PNG speichern statt still gar nicht.
             let rendered = promise
-            promise = ImagePromise(format: .png) { rendered.image }
+            promise = ImagePromise(format: .png, pointScale: rendered.pointScale) { rendered.image }
         }
         let output = try uniqueOutputURL(base: name ?? "Knips \(Format.fileDate.string(from: Date()))", ext: promise.format.fileExtension)
         reservedNames.insert(output.path)

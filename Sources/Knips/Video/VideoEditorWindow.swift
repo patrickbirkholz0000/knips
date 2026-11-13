@@ -322,7 +322,7 @@ final class VideoCanvasView: NSView {
 
     override func keyDown(with event: NSEvent) {
         switch event.keyCode {
-        case 49: model.togglePlay()
+        case 49: if !event.isARepeat { model.togglePlay() }   // gehaltene Leertaste schaltete sonst hin und her
         case 51, 117: model.deleteSelected()
         case 53: model.selectedID = nil
         case 123: model.seek(to: model.currentTime - (event.modifierFlags.contains(.shift) ? 1 : 1.0 / 30))
@@ -479,7 +479,8 @@ private struct VideoTimelineCard: View {
     var body: some View {
         VStack(spacing: 10) {
             HStack(spacing: 14) {
-                Button { model.togglePlay() } label: {
+                // Der Knopf hört auch auf die Leertaste — ihre Wiederholungen (Taste gehalten) zählen nicht.
+                Button { if !NSApp.currentEventIsKeyRepeat { model.togglePlay() } } label: {
                     Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 14, weight: .semibold))
                         .frame(width: 36, height: 36)

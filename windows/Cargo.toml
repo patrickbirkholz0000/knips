@@ -19,7 +19,7 @@ log = "0.4"
 regex = "1"
 parking_lot = "0.12"
 gif = "0.14"
-color_quant = "1"
+color_quant = "2"
 # Farbreduktion auf 256 Farben für die Ausgabe „Automatisch“ (libimagequant in Rust, GPL-3.0-or-later wie Knips).
 # Ohne die Standard-Funktion „threads“: ein Thread genügt, und rayon käme sonst als weitere Abhängigkeit dazu.
 imagequant = { version = "4.4", default-features = false }
